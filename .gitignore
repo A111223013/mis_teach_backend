@@ -1,0 +1,28 @@
+# ========== Python ==========
+__pycache__/
+*.pyc
+*.pyo
+*.py[cod]
+.env
+venv/
+*.egg-info/
+*.egg
+dist/
+build/
+
+# ========== IDE & 系統檔案 ==========
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+.history/
+*.sublime-workspace
+.project
+.classpath
+.c9/
+*.launch
+.settings/
+
+# ========== 測試與暫存檔 ==========
+coverage/
+tmp/
