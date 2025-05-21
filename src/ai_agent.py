@@ -3,7 +3,7 @@ from langgraph.graph import StateGraph
 from langchain.schema.document import Document
 from langchain.text_splitter import CharacterTextSplitter
 from langchain_google_genai import ChatGoogleGenerativeAI, GoogleGenerativeAIEmbeddings
-from langchain.vectorstores import FAISS
+from langchain_community.vectorstores import FAISS
 from langchain_core.messages import HumanMessage, AIMessage, BaseMessage
 from flask import Blueprint, request, jsonify
 from typing import TypedDict, List
