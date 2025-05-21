@@ -13,6 +13,7 @@ jobs:
     steps:
       - name: Checkout Submodule Code
         uses: actions/checkout@v4
+        with: token: ${{ secrets.PARENT_REPO_PAT }}
 
       # --- 你可以選擇在這裡添加子模組自己的 CI/CD 步驟 ---
       # 例如，如果這是前端專案，你可以在這裡執行測試和構建
