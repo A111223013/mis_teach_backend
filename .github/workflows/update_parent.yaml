@@ -1,0 +1,63 @@
+name: Update Parent Repo Submodule # 工作流程的名稱，對所有子模組都一樣
+
+on:
+  push:
+    branches:
+      - main # 當該子模組的 main 分支有新提交時觸發
+      # - master
+
+jobs:
+  update_parent_submodule:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Submodule Code
+        uses: actions/checkout@v4
+
+      # --- 你可以選擇在這裡添加子模組自己的 CI/CD 步驟 ---
+      # 例如，如果這是前端專案，你可以在這裡執行測試和構建
+      # - name: Setup Node.js
+      #   uses: actions/setup-node@v4
+      #   with:
+      #     node-version: '18'
+      # - name: Install dependencies (frontend)
+      #   run: npm install
+      # - name: Build frontend
+      #   run: npm run build
+
+      # --- 核心部分：觸發父倉庫更新 ---
+      - name: Configure Git for Parent Repo Update
+        run: |
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git config --global user.name "github-actions[bot]"
+
+      - name: Clone and Update Parent Repository
+        env:
+          GH_TOKEN: ${{ secrets.PARENT_REPO_PAT }}
+          PARENT_OWNER: A111223013 # 這將是你所有子模組都相同的 GitHub 用戶名
+          PARENT_REPO: MIS_teach_all # 這將是你所有子模組都相同的父倉庫名稱
+          # ----------------------------------------------------
+          # 這裡是你需要根據當前子模組進行修改的地方：
+          # ----------------------------------------------------
+          SUBMODULE_PATH: backend # <-- 【重要！替換為當前子模組的資料夾名稱】
+          # 如果是 frontend/ 裡的檔案，這裡就是 frontend
+          # 如果是 backend/ 裡的檔案，這裡就是 backend
+          # 如果是 ocr/ 裡的檔案，這裡就是 ocr
+          # 如果是 yolo/ 裡的檔案，這裡就是 yolo
+          # ----------------------------------------------------
+          COMMIT_MESSAGE: "CI(${SUBMODULE_PATH}): Update ${SUBMODULE_PATH} submodule to latest commit"
+
+        run: |
+          git clone https://${GH_TOKEN}@github.com/${PARENT_OWNER}/${PARENT_REPO}.git parent_repo_clone
+          cd parent_repo_clone
+
+          git submodule update --remote ${SUBMODULE_PATH}
+
+          if ! git diff --exit-code ${SUBMODULE_PATH}; then
+              echo "Changes detected in submodule ${SUBMODULE_PATH}. Committing to parent repo."
+              git add ${SUBMODULE_PATH}
+              git commit -m "${COMMIT_MESSAGE}"
+              git push
+          else
+              echo "No changes in submodule ${SUBMODULE_PATH}. Parent repo already up-to-date."
+          fi
