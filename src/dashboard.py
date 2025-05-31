@@ -99,3 +99,20 @@ def get_exam_to_object():
         exam_list.append(exam_dict)
 
     return jsonify({'exams': exam_list}), 200
+
+@dashboard_bp.route('/submit-answers', methods=['POST', 'OPTIONS'])
+def submit_answers():
+    if request.method == 'OPTIONS':
+        return '', 204
+
+    auth_header = request.headers.get('Authorization')
+    token = auth_header.split(" ")[1]
+
+    answers = request.json.get('answers')
+    print(answers)
+    for answer in answers:
+        print(answer)
+        mongo.db.user_answer.insert_one(answer)
+        
+    return jsonify({'message': '答案提交成功'}), 200
+
