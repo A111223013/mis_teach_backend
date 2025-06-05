@@ -14,6 +14,7 @@ from langchain.text_splitter import CharacterTextSplitter
 from langchain.chains import RetrievalQA
 from langchain.schema.document import Document
 from src.ai_agent import ai_agent_bp, init_embeddings_from_txt
+from src.rag_ai_assistant import rag_assistant_bp
 
 
 app = Flask(__name__)
@@ -50,6 +51,7 @@ app.register_blueprint(login_bp, url_prefix='/login')
 app.register_blueprint(register_bp, url_prefix='/register')
 app.register_blueprint(dashboard_bp, url_prefix='/dashboard')
 app.register_blueprint(ai_agent_bp, url_prefix='/ai_agent')
+app.register_blueprint(rag_assistant_bp, url_prefix='/rag_assistant')
 
 #with app.app_context():
 #    sqldb.create_all()

@@ -13,10 +13,11 @@ def get_user_name():
     if request.method == 'OPTIONS':
         return '', 204
     auth_header = request.headers.get('Authorization')
-    
-    
     if not auth_header:
         return jsonify({'message': '未提供token'}), 401
+    # 檢查Authorization header格式
+    if not auth_header.startswith('Bearer '):
+        return jsonify({'message': 'Token格式錯誤'}), 401
     token = auth_header.split(" ")[1]
     user_name = get_user_info(token, 'name')
     return jsonify({'name': user_name}), 200
@@ -82,7 +83,6 @@ def get_exam_to_object():
         examdata = mongo.db.exam.find(query)
     exam_list = []
     for exam in examdata:
-        print(exam)
         exam_dict = {
             'id': str(exam['_id']),
             'school': exam['school'],

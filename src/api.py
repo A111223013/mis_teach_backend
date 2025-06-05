@@ -16,6 +16,12 @@ def verify_token(token):
     return False
 
 def get_user_info(token, key):
+    # 檢查token是否為空或None
+    if not token or token == 'null' or token.strip() == '':
+        raise ValueError("Token is empty or null")
     decoded_token = jwt.decode(token, current_app.config['SECRET_KEY'], algorithms=["HS256"])
     user = mongo.db.students.find_one({"email": decoded_token['user']})
+    if not user:
+        raise ValueError("User not found")
     return user[key]
+

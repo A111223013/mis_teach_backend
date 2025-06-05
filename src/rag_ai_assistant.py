@@ -1,0 +1,616 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+RAG智能教學助理服務 - Backend整合版本
+提供完整的RAG智能教學功能，包括問答、引導教學和學習分析
+"""
+
+import os
+import sys
+import json
+import logging
+from pathlib import Path
+from typing import Dict, List, Any, Optional
+from datetime import datetime
+from flask import Blueprint, request, jsonify, session
+from functools import wraps
+
+# 導入RAG系統模組
+try:
+    # 嘗試從rag_sys包導入
+    from .rag_sys.config import *
+    from .rag_sys.rag_processor import RAGProcessor
+    from .rag_sys.rag_ai_responder import AIResponder
+    from .rag_sys.multi_ai_tutor import MultiAITutor
+
+    RAG_AVAILABLE = True
+    print("✅ 成功導入RAG系統模組")
+
+except ImportError as e:
+    print(f"⚠️ RAG系統模組導入失敗: {e}")
+    print("💡 使用簡化模式")
+
+    # 簡化的模擬類
+    class MockRAGProcessor:
+        def __init__(self, *args, **kwargs):
+            self.initialized = False
+
+    class MockAIResponder:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def answer_question(self, question):
+            # 簡單的問題分類
+            question_lower = question.lower()
+            if any(word in question_lower for word in ['你好', '自我介紹', '你是誰', '介紹', '謝謝']):
+                return {
+                    "詳細回答": f"您好！我是資管系智能教學助理。關於「{question}」，我很樂意為您介紹。我專門協助學生學習資訊管理相關知識，包括作業系統、資料庫、網路等領域。有什麼資管問題想要討論嗎？",
+                    "問題類型": "非學術問題"
+                }
+            else:
+                return {
+                    "詳細回答": f"關於「{question}」的回答：這是一個重要的概念，建議查閱相關教材深入學習。",
+                    "問題類型": "學術問題"
+                }
+
+        def format_response_for_display(self, response):
+            if isinstance(response, dict) and '詳細回答' in response:
+                return response['詳細回答']
+            elif isinstance(response, dict) and 'answer' in response:
+                return response['answer']
+            return str(response)
+
+    class MockMultiAITutor:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def start_new_question(self, question):
+            return f"🎓 關於「{question}」的引導教學：讓我們一步步來探討這個概念。您對此有什麼初步了解嗎？"
+
+        def continue_conversation(self, answer):
+            return "很好的回答！讓我們繼續深入探討。您還有其他想法嗎？"
+
+        def reset(self):
+            pass
+
+    # 基本配置
+    EMBEDDING_MODEL = "paraphrase-multilingual-MiniLM-L12-v2"
+    LOGGING_CONFIG = {"level": "INFO", "format": "%(asctime)s - %(name)s - %(levelname)s - %(message)s"}
+    SEARCH_CONFIG = {"default_top_k": 5, "similarity_threshold": 0.3}
+    AI_CONFIG = {"temperature": 0.7, "max_tokens": 500}
+
+    RAGProcessor = MockRAGProcessor
+    AIResponder = MockAIResponder
+    MultiAITutor = MockMultiAITutor
+    RAG_AVAILABLE = False
+
+# 設定日誌
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+# 創建Blueprint
+rag_assistant_bp = Blueprint('rag_assistant', __name__, url_prefix='/rag_assistant')
+
+class RAGAssistantService:
+    """RAG智能教學助理服務"""
+    
+    def __init__(self):
+        """初始化服務"""
+        self.tutors = {}  # 存儲每個用戶的tutor實例
+        self.processors = {}  # 存儲每個用戶的processor實例
+        self.user_sessions = {}  # 存儲用戶會話數據
+        self.conversation_histories = {}  # 存儲對話歷史
+        
+        # 初始化RAG處理器（共享）
+        if RAG_AVAILABLE:
+            try:
+                self.shared_processor = RAGProcessor(verbose=False, use_gpu=True)
+                self.shared_ai_responder = AIResponder(
+                    language='chinese',
+                    rag_processor=self.shared_processor
+                )
+                logger.info("✅ RAG系統初始化成功")
+            except Exception as e:
+                logger.error(f"❌ RAG系統初始化失敗: {e}")
+                self.shared_processor = None
+                self.shared_ai_responder = None
+        else:
+            logger.info("⚠️ RAG系統不可用，使用簡化模式")
+            self.shared_processor = None
+            self.shared_ai_responder = None
+    
+    def get_user_id(self) -> str:
+        """獲取用戶ID（從session或生成臨時ID）"""
+        if 'user_id' in session:
+            return str(session['user_id'])
+        else:
+            # 生成臨時用戶ID
+            temp_id = f"temp_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+            session['temp_user_id'] = temp_id
+            return temp_id
+    
+    def get_user_session_data(self, user_id: str) -> Dict:
+        """獲取用戶會話數據"""
+        if user_id not in self.user_sessions:
+            self.user_sessions[user_id] = {
+                'current_ai_model': 'gemini',  # 預設使用Gemini
+                'in_conversation': False,
+                'conversation_count': 0,
+                'last_activity': datetime.now().isoformat(),
+                'user_profile': {
+                    'learning_style': 'unknown',
+                    'weak_topics': [],
+                    'strong_topics': [],
+                    'total_questions': 0,
+                    'correct_answers': 0
+                }
+            }
+        return self.user_sessions[user_id]
+    
+    def get_conversation_history(self, user_id: str) -> List[Dict]:
+        """獲取用戶對話歷史"""
+        if user_id not in self.conversation_histories:
+            self.conversation_histories[user_id] = []
+        return self.conversation_histories[user_id]
+    
+    def add_conversation_record(self, user_id: str, question: str, response: str, conversation_type: str = 'general'):
+        """添加對話記錄"""
+        history = self.get_conversation_history(user_id)
+        record = {
+            'timestamp': datetime.now().isoformat(),
+            'question': question,
+            'response': response,
+            'type': conversation_type,
+            'ai_model': self.get_user_session_data(user_id)['current_ai_model']
+        }
+        history.append(record)
+        
+        # 限制歷史記錄數量
+        if len(history) > 100:
+            history.pop(0)
+    
+    def get_user_tutor(self, user_id: str) -> any:
+        """獲取用戶的Gemini教學系統實例"""
+        if RAG_AVAILABLE:
+            if user_id not in self.tutors:
+                try:
+                    self.tutors[user_id] = MultiAITutor(rag_processor=self.shared_processor)
+                except Exception as e:
+                    logger.error(f"❌ 創建Gemini教學系統失敗: {e}")
+                    return None
+            return self.tutors[user_id]
+        else:
+            # 簡化模式
+            return MockMultiAITutor()
+    
+    def analyze_user_learning_data(self, user_id: str) -> Dict:
+        """分析用戶學習數據"""
+        session_data = self.get_user_session_data(user_id)
+        conversation_history = self.get_conversation_history(user_id)
+        
+        # 基本統計
+        total_conversations = len(conversation_history)
+        recent_conversations = [c for c in conversation_history 
+                              if (datetime.now() - datetime.fromisoformat(c['timestamp'])).days <= 7]
+        
+        # 分析問題類型
+        question_types = {}
+        for conv in conversation_history:
+            q_type = self._classify_question_type(conv['question'])
+            question_types[q_type] = question_types.get(q_type, 0) + 1
+        
+        # 分析薄弱領域
+        weak_areas = self._identify_weak_areas(conversation_history)
+        
+        # 計算學習進度
+        learning_progress = self._calculate_learning_progress(session_data, conversation_history)
+        
+        return {
+            'learning_summary': {
+                'total_conversations': total_conversations,
+                'recent_activity': len(recent_conversations),
+                'most_discussed_topics': list(question_types.keys())[:3],
+                'preferred_question_types': list(question_types.keys())[:2],
+                'learning_frequency': 'high' if total_conversations > 20 else 'medium' if total_conversations > 5 else 'low'
+            },
+            'question_analysis': question_types,
+            'weak_areas': weak_areas,
+            'learning_progress': learning_progress,
+            'learning_recommendations': self._generate_learning_recommendations(session_data, conversation_history)
+        }
+    
+    def _classify_question_type(self, question: str) -> str:
+        """分類問題類型"""
+        question_lower = question.lower()
+        
+        if any(word in question_lower for word in ['什麼是', 'what is', '定義', 'definition']):
+            return '定義類'
+        elif any(word in question_lower for word in ['如何', 'how to', '怎麼', '方法']):
+            return '方法類'
+        elif any(word in question_lower for word in ['為什麼', 'why', '原因', 'reason']):
+            return '原理類'
+        elif any(word in question_lower for word in ['比較', 'compare', '差異', 'difference']):
+            return '比較類'
+        elif any(word in question_lower for word in ['應用', 'application', '實例', 'example']):
+            return '應用類'
+        else:
+            return '其他'
+    
+    def _identify_weak_areas(self, conversation_history: List[Dict]) -> List[str]:
+        """識別薄弱領域"""
+        # 簡化的薄弱領域識別
+        topic_counts = {}
+        for conv in conversation_history:
+            # 基於問題內容識別主題
+            question = conv['question'].lower()
+            if '作業系統' in question or 'operating system' in question:
+                topic_counts['作業系統'] = topic_counts.get('作業系統', 0) + 1
+            elif '資料庫' in question or 'database' in question:
+                topic_counts['資料庫'] = topic_counts.get('資料庫', 0) + 1
+            elif '網路' in question or 'network' in question:
+                topic_counts['網路'] = topic_counts.get('網路', 0) + 1
+            elif '程式' in question or 'programming' in question:
+                topic_counts['程式設計'] = topic_counts.get('程式設計', 0) + 1
+        
+        # 問題次數多的可能是薄弱領域
+        weak_areas = [topic for topic, count in topic_counts.items() if count > 2]
+        return weak_areas
+    
+    def _calculate_learning_progress(self, session_data: Dict, conversation_history: List[Dict]) -> Dict:
+        """計算學習進度"""
+        total_conversations = len(conversation_history)
+        
+        # 簡化的進度計算
+        if total_conversations < 5:
+            level = "入門"
+            percentage = min(total_conversations * 10, 30)
+        elif total_conversations < 15:
+            level = "初級"
+            percentage = 30 + (total_conversations - 5) * 5
+        elif total_conversations < 30:
+            level = "中級"
+            percentage = 60 + (total_conversations - 15) * 2
+        else:
+            level = "進階"
+            percentage = min(90 + (total_conversations - 30), 100)
+        
+        return {
+            'level': level,
+            'percentage': percentage,
+            'total_interactions': total_conversations,
+            'estimated_study_time': f"{total_conversations * 5} 分鐘"
+        }
+    
+    def _generate_learning_recommendations(self, session_data: Dict, conversation_history: List[Dict]) -> List[str]:
+        """生成學習建議"""
+        recommendations = []
+        total_conversations = len(conversation_history)
+        
+        if total_conversations < 5:
+            recommendations.append("建議多提問不同類型的問題，擴展學習範圍")
+            recommendations.append("可以從基礎概念開始，逐步深入")
+        elif total_conversations < 15:
+            recommendations.append("嘗試更深入的問題，挑戰自己的理解")
+            recommendations.append("可以嘗試實作練習，加深理解")
+        else:
+            recommendations.append("考慮學習更高級的主題")
+            recommendations.append("嘗試將不同概念結合，建立知識網絡")
+        
+        return recommendations
+
+# 全局服務實例
+rag_service = RAGAssistantService()
+
+def require_rag_system(f):
+    """裝飾器：確保RAG系統可用，如果不可用則使用簡化模式"""
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        # 不再阻止執行，而是讓函數處理RAG不可用的情況
+        return f(*args, **kwargs)
+    return decorated_function
+
+# ==================== API 端點 ====================
+
+@rag_assistant_bp.route('/chat', methods=['POST'])
+@require_rag_system
+def chat_with_assistant():
+    """與AI助理對話"""
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({'success': False, 'error': '無效的請求數據'}), 400
+        
+        question = data.get('question', '').strip()
+        if not question:
+            return jsonify({'success': False, 'error': '問題不能為空'}), 400
+        
+        ai_model = data.get('ai_model', 'gemini')
+        conversation_type = data.get('type', 'general')
+        
+        user_id = rag_service.get_user_id()
+        session_data = rag_service.get_user_session_data(user_id)
+        
+        # 更新AI模型選擇
+        if ai_model != session_data['current_ai_model']:
+            session_data['current_ai_model'] = ai_model
+        
+        response_text = ""
+        
+        if conversation_type == 'tutoring':
+            # 使用教學模式
+            if RAG_AVAILABLE:
+                tutor = rag_service.get_user_tutor(user_id)
+                if tutor:
+                    if not session_data['in_conversation']:
+                        response_text = tutor.start_new_question(question)
+                        session_data['in_conversation'] = True
+                    else:
+                        response_text = tutor.continue_conversation(question)
+                else:
+                    response_text = "抱歉，Gemini教學系統暫時無法使用。"
+            else:
+                # RAG系統不可用時的簡化教學回應
+                response_text = f"""
+🎓 **引導教學模式**
+
+關於您的問題「{question}」，讓我們一步步來探討：
+
+這是一個很好的問題！在回答之前，我想先了解您對相關基礎概念的理解。
+
+您能告訴我您對這個主題已經了解多少嗎？這樣我可以更好地引導您學習。
+
+💡 **提示**：不用擔心答錯，這是學習的過程！完整的引導教學功能將在RAG系統配置完成後提供。
+"""
+        
+        elif conversation_type == 'analysis':
+            # 使用分析模式
+            analysis_result = rag_service.analyze_user_learning_data(user_id)
+            response_text = f"""
+📊 **學習成效分析報告**
+
+**學習概況：**
+• 總對話次數：{analysis_result['learning_summary']['total_conversations']}
+• 近期活躍度：{analysis_result['learning_summary']['recent_activity']} 次對話
+• 學習頻率：{analysis_result['learning_summary']['learning_frequency']}
+
+**常討論主題：**
+{', '.join(analysis_result['learning_summary']['most_discussed_topics']) if analysis_result['learning_summary']['most_discussed_topics'] else '暫無數據'}
+
+**學習進度：**
+• 等級：{analysis_result['learning_progress']['level']}
+• 進度：{analysis_result['learning_progress']['percentage']}%
+• 預估學習時間：{analysis_result['learning_progress']['estimated_study_time']}
+
+**學習建議：**
+{chr(10).join(f"• {rec}" for rec in analysis_result['learning_recommendations'])}
+
+**需要加強的領域：**
+{', '.join(analysis_result['weak_areas']) if analysis_result['weak_areas'] else '目前表現良好！'}
+"""
+
+        else:
+            # 使用一般RAG問答模式 - 智能判斷是否為對話延續
+            if RAG_AVAILABLE:
+                tutor = rag_service.get_user_tutor(user_id)
+                if tutor:
+                    # 檢查是否為對話延續
+                    if session_data['in_conversation'] and hasattr(tutor, 'original_question') and tutor.original_question:
+                        # 這是對話的延續，不需要重新查詢資料庫
+                        logging.info(f"💬 延續對話，原始問題: {tutor.original_question}")
+                        response_text = tutor.continue_conversation(question)
+                    else:
+                        # 這是新問題，需要查詢資料庫
+                        logging.info(f"🆕 新問題，開始教學")
+                        response_text = tutor.start_new_question(question)
+                        session_data['in_conversation'] = True
+                else:
+                    response_text = "抱歉，Gemini助理暫時無法使用。"
+            else:
+                # RAG系統不可用時的簡化回應
+                response_text = f"""
+📚 **關於「{question}」的回答**
+
+這是一個很好的問題！由於目前RAG系統正在配置中，我先為您提供一個基本的回答框架：
+
+**概念解釋：**
+這個概念在資管系課程中是一個重要的主題，涉及到理論和實務的結合。
+
+**重要特點：**
+• 具有系統性的特徵
+• 在實際應用中很常見
+• 需要理解其基本原理
+
+**學習建議：**
+建議您可以從基礎概念開始，逐步深入理解其應用場景。
+
+💡 **提示**：完整的RAG系統配置完成後，我將能提供更詳細和準確的回答！
+"""
+        
+        # 記錄對話
+        rag_service.add_conversation_record(user_id, question, response_text, conversation_type)
+        
+        # 更新會話數據
+        session_data['conversation_count'] += 1
+        session_data['last_activity'] = datetime.now().isoformat()
+        
+        return jsonify({
+            'success': True,
+            'response': response_text,
+            'conversation_type': conversation_type,
+            'ai_model': ai_model,
+            'conversation_count': session_data['conversation_count']
+        })
+    
+    except Exception as e:
+        logger.error(f"對話處理錯誤: {e}")
+        return jsonify({
+            'success': False,
+            'error': '處理對話時發生錯誤',
+            'message': str(e)
+        }), 500
+
+@rag_assistant_bp.route('/system-guide', methods=['POST'])
+def get_system_guide():
+    """獲取系統使用指南"""
+    try:
+        data = request.get_json()
+        user_type = data.get('user_type', 'new') if data else 'new'
+
+        if user_type == 'new':
+            guide_text = """
+🎓 **歡迎使用資管系智能教學助理！**
+
+我是您的專屬AI學習夥伴，可以幫助您：
+
+**🔍 智能問答**
+• 直接提問任何資管相關問題
+• 支援中英文混合查詢
+• 提供詳細的概念解釋和實例
+
+**📚 個性化教學**
+• 根據您的問題進行引導式教學
+• 採用蘇格拉底式對話方法
+• 幫助您深入理解概念
+
+**📊 學習分析**
+• 分析您的學習模式和進度
+• 識別薄弱環節並提供建議
+• 追蹤學習成效
+
+**使用方式：**
+1. 直接在對話框中提問
+2. 可以選擇不同的對話模式
+3. 隨時要求學習分析報告
+
+現在就開始提問吧！例如：「什麼是作業系統？」
+
+💡 **注意**：系統會根據您的學習進度提供個性化建議！
+"""
+        else:
+            guide_text = """
+👋 **歡迎回來！**
+
+您可以：
+• 繼續之前的學習主題
+• 提出新的問題
+• 要求分析您的學習進度
+• 切換不同的對話模式
+
+有什麼想學習的嗎？
+"""
+
+        return jsonify({
+            'success': True,
+            'guide': guide_text,
+            'user_type': user_type
+        })
+
+    except Exception as e:
+        logger.error(f"系統指南錯誤: {e}")
+        return jsonify({
+            'success': False,
+            'error': '獲取系統指南時發生錯誤'
+        }), 500
+
+@rag_assistant_bp.route('/learning-analysis', methods=['GET'])
+def get_learning_analysis():
+    """獲取學習分析報告"""
+    try:
+        user_id = rag_service.get_user_id()
+        analysis_result = rag_service.analyze_user_learning_data(user_id)
+
+        return jsonify({
+            'success': True,
+            'analysis': analysis_result
+        })
+
+    except Exception as e:
+        logger.error(f"學習分析錯誤: {e}")
+        return jsonify({
+            'success': False,
+            'error': '生成學習分析時發生錯誤'
+        }), 500
+
+
+
+@rag_assistant_bp.route('/system-status', methods=['GET'])
+def get_system_status():
+    """獲取系統狀態"""
+    try:
+        user_id = rag_service.get_user_id()
+        session_data = rag_service.get_user_session_data(user_id)
+
+        return jsonify({
+            'success': True,
+            'rag_system': {
+                'processor_available': RAG_AVAILABLE and rag_service.shared_processor is not None,
+                'ai_responder_available': RAG_AVAILABLE and rag_service.shared_ai_responder is not None
+            },
+            'tutor_system': {
+                'tutor_initialized': RAG_AVAILABLE,
+                'current_ai_model': session_data['current_ai_model'],
+                'in_conversation': session_data['in_conversation']
+            },
+            'user_session': {
+                'conversation_count': session_data['conversation_count'],
+                'last_activity': session_data['last_activity']
+            }
+        })
+
+    except Exception as e:
+        logger.error(f"獲取系統狀態錯誤: {e}")
+        return jsonify({
+            'success': False,
+            'error': '獲取系統狀態時發生錯誤'
+        }), 500
+
+@rag_assistant_bp.route('/reset-conversation', methods=['POST'])
+def reset_conversation():
+    """重置對話狀態"""
+    try:
+        user_id = rag_service.get_user_id()
+        session_data = rag_service.get_user_session_data(user_id)
+
+        # 重置對話狀態
+        session_data['in_conversation'] = False
+
+        # 重置教學系統
+        tutor = rag_service.get_user_tutor(user_id)
+        if tutor and hasattr(tutor, 'reset'):
+            tutor.reset()
+
+        return jsonify({
+            'success': True,
+            'message': '對話狀態已重置'
+        })
+
+    except Exception as e:
+        logger.error(f"重置對話錯誤: {e}")
+        return jsonify({
+            'success': False,
+            'error': '重置對話時發生錯誤'
+        }), 500
+
+@rag_assistant_bp.route('/conversation-history', methods=['GET'])
+def get_conversation_history():
+    """獲取對話歷史"""
+    try:
+        user_id = rag_service.get_user_id()
+        history = rag_service.get_conversation_history(user_id)
+
+        # 限制返回最近的對話
+        limit = request.args.get('limit', 20, type=int)
+        recent_history = history[-limit:] if len(history) > limit else history
+
+        return jsonify({
+            'success': True,
+            'history': recent_history,
+            'total_count': len(history)
+        })
+
+    except Exception as e:
+        logger.error(f"獲取對話歷史錯誤: {e}")
+        return jsonify({
+            'success': False,
+            'error': '獲取對話歷史時發生錯誤'
+        }), 500
