@@ -396,11 +396,8 @@ def chat_with_assistant():
                     # 檢查是否為對話延續
                     if session_data['in_conversation'] and hasattr(tutor, 'original_question') and tutor.original_question:
                         # 這是對話的延續，不需要重新查詢資料庫
-                        logging.info(f"💬 延續對話，原始問題: {tutor.original_question}")
                         response_text = tutor.continue_conversation(question)
                     else:
-                        # 這是新問題，需要查詢資料庫
-                        logging.info(f"🆕 新問題，開始教學")
                         response_text = tutor.start_new_question(question)
                         session_data['in_conversation'] = True
                 else:

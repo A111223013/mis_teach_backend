@@ -35,8 +35,6 @@ class AIResponder:
         self.rag_processor = rag_processor
         # AI模型配置
         self.ai_model = ai_model 
-        
-        logger.info(f"🤖 AI回應器初始化完成 (模型: {self.ai_model})")
     
     def answer_question(self, question: str, use_ai: bool = True) -> Dict[str, Any]:
         """
@@ -58,8 +56,6 @@ class AIResponder:
                 # 非學術問題，不需要查詢資料庫
                 return self._handle_non_academic(question)
             else:
-                # 資管學術問題 - 查詢向量資料庫
-                logger.info("📚 資管學術問題，查詢向量資料庫")
                 return self._handle_academic(question)
                 
         except Exception as e:
@@ -164,15 +160,12 @@ class AIResponder:
         """
         處理資管學術問題，查詢向量資料庫
         """
-        logger.info(f"📚 處理資管學術問題，查詢向量資料庫")
         
         # 如果有RAG處理器，使用完整的RAG流程
         if self.rag_processor and hasattr(self.rag_processor, 'collection') and self.rag_processor.collection:
             try:
                 # 搜索相關知識
                 search_results = self.rag_processor.search_knowledge(question, top_k=5)
-                logger.info(f"🔍 搜索到 {len(search_results)} 個相關結果")
-
                 if search_results:
                     # 基於搜索結果生成回答
                     return self._generate_answer_from_search(question, search_results)

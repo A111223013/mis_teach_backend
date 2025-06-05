@@ -26,3 +26,9 @@ Thumbs.db
 # ========== 測試與暫存檔 ==========
 coverage/
 tmp/
+
+# ========== RAG資料 ========== 
+src/rag_sys/data/outputs/
+src/rag_sys/data/pdfs/
+src/rag_sys/data/knowledge_db/
+/src/rag_sys/data/

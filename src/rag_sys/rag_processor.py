@@ -127,10 +127,6 @@ class RAGProcessor:
         # 檢查GPU可用性
         self.gpu_info = config.check_gpu_availability()
         self.device = self._setup_device()
-
-        # 初始化向量化模型 (GPU優化)
-        logger.info(f"🔄 正在載入向量化模型: {self.embedding_model_name}")
-        logger.info(f"🖥️ 使用設備: {self.device}")
         try:
             # 使用GPU優化配置載入模型
             self.embedding_model = SentenceTransformer(
@@ -143,14 +139,9 @@ class RAGProcessor:
                 # 設定模型為半精度模式 (FP16) 以加速和節省記憶體
                 if config.EMBEDDING_CONFIG.get('precision') == 'float16':
                     self.embedding_model.half()
-                    logger.info("🚀 啟用FP16半精度模式，提升GPU處理速度")
-
                 # 設定最大序列長度
                 max_seq_length = config.EMBEDDING_CONFIG.get('max_seq_length', 512)
                 self.embedding_model.max_seq_length = max_seq_length
-                logger.info(f"📏 設定最大序列長度: {max_seq_length}")
-
-            logger.info("✅ 向量化模型載入成功 (GPU優化)")
         except Exception as e:
             logger.error(f"❌ 向量化模型載入失敗: {e}")
             raise
@@ -166,10 +157,6 @@ class RAGProcessor:
             # 如果沒有FAISS-GPU，仍然可以使用CPU FAISS
             self.faiss_index = None
             self.faiss_metadata = []
-            if self.use_gpu:
-                logger.info("💡 建議安裝 faiss-gpu 以獲得更好的GPU加速效果")
-
-        logger.info("🚀 RAG處理器初始化完成")
 
     def _setup_device(self):
         """
@@ -180,15 +167,11 @@ class RAGProcessor:
         """
         if self.use_gpu and self.gpu_info['available']:
             device = config.GPU_CONFIG['device']
-            logger.info(f"🚀 使用GPU: {self.gpu_info['device_name']}")
-            logger.info(f"💾 GPU記憶體: {self.gpu_info['memory_total']}GB 總計, {self.gpu_info['memory_free']}GB 可用")
-
             # 設定GPU記憶體使用比例
             if device == 'cuda':
                 try:
                     import torch
                     torch.cuda.set_per_process_memory_fraction(config.GPU_CONFIG['gpu_memory_fraction'])
-                    logger.info(f"🔧 GPU記憶體使用比例設定為: {config.GPU_CONFIG['gpu_memory_fraction']}")
                 except Exception as e:
                     logger.warning(f"⚠️ 設定GPU記憶體比例失敗: {e}")
 
@@ -205,13 +188,10 @@ class RAGProcessor:
         try:
             self.chroma_client = chromadb.PersistentClient(path=config.CHROMA_DB_PATH)
             self.collection = None
-            logger.info(f"✅ ChromaDB初始化成功，路徑: {config.CHROMA_DB_PATH}")
-
             # 嘗試載入現有的collection
             try:
                 self.collection = self.chroma_client.get_collection(config.COLLECTION_NAME)
                 count = self.collection.count()
-                logger.info(f"✅ 成功載入現有向量資料庫，包含 {count} 個知識點")
             except Exception:
                 logger.info("💡 未找到現有向量資料庫，需要先建立知識庫")
 
@@ -239,9 +219,6 @@ class RAGProcessor:
         # 設定輸出路徑
         if output_json is None:
             output_json = config.OUTPUT_DIR / config.OUTPUT_FILES['structured_content']
-
-        logger.info(f"📚 開始批量處理 {len(pdf_paths)} 個PDF檔案")
-
         # 清空之前的數據
         self.structured_data = []
 
@@ -287,9 +264,6 @@ class RAGProcessor:
         if not os.path.exists(pdf_path):
             logger.error(f"❌ 檔案不存在: {pdf_path}")
             return False
-
-        logger.info(f"📖 正在處理: {os.path.basename(pdf_path)}")
-
         try:
             # 使用unstructured解析PDF
             elements = partition_pdf(

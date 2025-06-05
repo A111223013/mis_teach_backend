@@ -103,25 +103,15 @@ class MultiAITutor:
             if response and hasattr(response, 'text') and response.text:
                 result = response.text.strip()
 
-                logging.info(f"🤖 AI原始回應: '{result}'")
-                logging.info(f"🤖 回應長度: {len(result)} 字符")
-
                 # 修復字符串匹配邏輯 - 先檢查「不需要查詢」
                 should_search = False  # 預設不查詢
 
                 if "不需要查詢" in result:
                     should_search = False
-                    logging.info(f"💬 匹配到「不需要查詢」")
                 elif "需要查詢" in result:
                     should_search = True
-                    logging.info(f"🔍 匹配到「需要查詢」")
                 else:
-                    # 如果回應格式不標準，使用關鍵詞判斷
-                    logging.warning(f"⚠️ AI回應格式不標準，未匹配到預期字符串")
-                    logging.warning(f"⚠️ 回應內容: '{result}'")
                     should_search = False  # 預設不查詢
-
-                logging.info(f"🤖 AI最終判斷問題「{question}」{'需要' if should_search else '不需要'}查詢資料庫")
                 return should_search
             else:
                 logging.warning("⚠️ AI無回應，使用備用判斷")
@@ -145,12 +135,10 @@ class MultiAITutor:
 
             # 如果包含一般對話關鍵詞，不查詢
             if any(keyword in question_lower for keyword in general_keywords):
-                logging.info(f"📝 關鍵詞判斷問題「{question}」不需要查詢資料庫（一般對話）")
                 return False
 
             # 如果包含學術關鍵詞，查詢
             should_search = any(keyword in question_lower for keyword in academic_keywords)
-            logging.info(f"📝 關鍵詞判斷問題「{question}」{'需要' if should_search else '不需要'}查詢資料庫")
             return should_search
 
     def get_topic_knowledge(self, question: str) -> str:
@@ -158,15 +146,10 @@ class MultiAITutor:
         try:
             # 智能判斷是否需要查詢向量資料庫
             if not self._should_search_database(question):
-                logging.info(f"💬 問題「{question}」不需要查詢資料庫，使用一般對話模式")
                 return ""
-
-            logging.info(f"🔍 問題「{question}」需要查詢資料庫")
 
             # 先翻譯成英文搜索，因為向量資料庫是英文教材
             english_question = self._translate_to_english(question)
-            logging.info(f"🌐 翻譯結果: {english_question}")
-
             # 使用RAG處理器搜索
             if hasattr(self.ai_responder, 'rag_processor') and self.ai_responder.rag_processor:
                 search_results = self.ai_responder.rag_processor.search_knowledge(english_question, top_k=3)
@@ -177,7 +160,6 @@ class MultiAITutor:
                         result.get('content', '')[:400]
                         for result in search_results[:4]
                     ])
-                    logging.info(f"✅ 成功獲取到 {len(search_results)} 個相關知識點")
                     return knowledge
                 else:
                     logging.info("⚠️ 未找到相關知識點")
@@ -277,8 +259,6 @@ class MultiAITutor:
         """開始新問題"""
         self.original_question = question
         self.context = ""
-
-        logging.info(f"開始新問題: {question}")
         self.topic_knowledge = self.get_topic_knowledge(question)
 
         response = self.ask_ai(question, is_new_question=True)
@@ -290,8 +270,6 @@ class MultiAITutor:
         """繼續對話"""
         if not self.original_question:
             return "請先提出一個問題開始學習。"
-
-        logging.info(f"學生回答: {student_answer}")
         response = self.ask_ai(student_answer, is_new_question=False)
 
         # 更新上下文
