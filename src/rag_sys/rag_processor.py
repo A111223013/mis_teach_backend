@@ -883,3 +883,198 @@ class RAGProcessor:
         except Exception as e:
             logger.error(f"❌ 搜索知識點時發生錯誤: {e}")
             return []
+
+    def build_knowledge_base(self) -> bool:
+        """
+        一鍵建立完整的知識庫
+
+        Returns:
+            bool: 建立是否成功
+        """
+        try:
+            # 1. 檢查PDF文件
+            pdf_dir = Path(config.PDF_DIR)
+            if not pdf_dir.exists():
+                logger.error(f"❌ PDF目錄不存在: {pdf_dir}")
+                return False
+
+            pdf_files = list(pdf_dir.glob("*.pdf"))
+            if not pdf_files:
+                logger.error(f"❌ 在 {pdf_dir} 中沒有找到PDF文件")
+                return False
+
+            logger.info(f"📚 找到 {len(pdf_files)} 個PDF文件")
+
+            # 2. 處理PDF文件
+            logger.info("🔄 開始處理PDF文件...")
+            if not self.process_multiple_pdfs([str(f) for f in pdf_files]):
+                logger.error("❌ PDF處理失敗")
+                return False
+
+            # 3. 創建知識點
+            logger.info("🧠 創建知識點...")
+            if not self.create_knowledge_points():
+                logger.error("❌ 知識點創建失敗")
+                return False
+
+            # 4. 建立向量資料庫
+            logger.info("🔧 建立向量資料庫...")
+            if not self.build_knowledge_database():
+                logger.error("❌ 向量資料庫建立失敗")
+                return False
+
+            # 5. 保存知識點
+            logger.info("💾 保存知識點...")
+            self.save_knowledge_points()
+
+            logger.info("✅ 知識庫建立完成！")
+            return True
+
+        except Exception as e:
+            logger.error(f"❌ 建立知識庫時發生錯誤: {e}")
+            return False
+        
+    def get_database_stats(self) -> Dict[str, Any]:
+        """
+        獲取資料庫統計信息
+
+        Returns:
+            Dict: 統計信息
+        """
+        try:
+            stats = {
+                'total_chunks': 0,
+                'document_count': 0,
+                'collection_name': config.COLLECTION_NAME,
+                'database_type': 'ChromaDB' if self.use_chromadb else 'FAISS'
+            }
+
+            if self.use_chromadb and self.collection:
+                stats['total_chunks'] = self.collection.count()
+                # 獲取所有文檔的source_file
+                all_metadata = self.collection.get()['metadatas']
+                source_files = set()
+                for metadata in all_metadata:
+                    if 'source_file' in metadata:
+                        source_files.add(metadata['source_file'])
+                stats['document_count'] = len(source_files)
+
+            return stats
+        except Exception as e:
+            logger.error(f"❌ 獲取資料庫統計失敗: {e}")
+            return {}
+
+def main():
+    """主執行函數 - 重建向量資料庫"""
+    print("🚀 RAG向量資料庫重建工具")
+    print("=" * 60)
+
+    try:
+        # 檢查GPU狀態
+        print("🔍 檢查GPU狀態...")
+        gpu_info = config.check_gpu_availability()
+        print(f"   GPU可用: {gpu_info['available']}")
+        if gpu_info['available']:
+            print(f"   設備: {gpu_info['device_name']}")
+            print(f"   記憶體: {gpu_info['memory_free']:.1f}GB / {gpu_info['memory_total']:.1f}GB")
+
+        # 檢查PDF文件
+        print("\n📚 檢查PDF文件...")
+        pdf_dir = Path(config.PDF_DIR)
+        if not pdf_dir.exists():
+            pdf_dir.mkdir(parents=True, exist_ok=True)
+            print(f"   創建PDF目錄: {pdf_dir}")
+
+        pdf_files = list(pdf_dir.glob("*.pdf"))
+        if not pdf_files:
+            print(f"   ❌ 在 {pdf_dir} 中沒有找到PDF文件")
+            print(f"   請將PDF文檔放置在此目錄中")
+            return False
+
+        print(f"   ✅ 找到 {len(pdf_files)} 個PDF文件:")
+        for pdf_file in pdf_files[:5]:  # 只顯示前5個
+            print(f"      - {pdf_file.name}")
+        if len(pdf_files) > 5:
+            print(f"      ... 還有 {len(pdf_files) - 5} 個文件")
+
+        # 詢問是否刪除現有資料庫
+        try:
+            response = input(f"\n是否刪除已有向量資料庫？[y/N]: ").lower().strip()
+            if response == 'y':
+                print("🧹 清理現有向量資料庫...")
+                # 刪除ChromaDB目錄
+                import shutil
+                db_path = Path(config.CHROMA_DB_PATH)
+                if db_path.exists():
+                    shutil.rmtree(db_path)
+                    print("✅ 已刪除現有向量資料庫")
+                else:
+                    print("💬 沒有現有資料庫需要刪除")
+        except KeyboardInterrupt:
+            print("\n❌ 用戶取消操作")
+            return False
+
+        try:
+            response = input(f"\n是否開始重建向量資料庫？[y/N]: ").lower().strip()
+            if response != 'y':
+                print("用戶取消操作")
+                return False
+        except KeyboardInterrupt:
+            print("\n用戶取消操作")
+            return False
+
+        # 初始化RAG處理器
+        print(f"\n🔄 初始化RAG處理器...")
+        processor = RAGProcessor(use_gpu=gpu_info['available'], verbose=True)
+
+        # 重建資料庫
+        print("📊 開始重建向量資料庫...")
+        import time
+        start_time = time.time()
+
+        success = processor.build_knowledge_base()
+
+        end_time = time.time()
+        processing_time = end_time - start_time
+
+        if success:
+            print(f"\n✅ 向量資料庫重建成功！")
+            print(f"⏱️ 總處理時間: {processing_time//60:.0f}分{processing_time%60:.0f}秒")
+
+            # 獲取統計信息
+            try:
+                stats = processor.get_database_stats()
+                print(f"\n📊 資料庫統計:")
+                print(f"   總知識點: {stats.get('total_chunks', 0)}")
+                print(f"   文檔數量: {stats.get('document_count', 0)}")
+            except Exception as e:
+                print(f"⚠️ 無法獲取統計信息: {e}")
+
+            # 測試搜索功能
+            print(f"\n🔍 測試搜索功能...")
+            test_queries = ["operating system", "FIFO", "database"]
+
+            for query in test_queries:
+                try:
+                    results = processor.search_knowledge(query, top_k=3)
+                    if results:
+                        print(f"   ✅ '{query}': 找到 {len(results)} 個結果")
+                    else:
+                        print(f"   ⚠️ '{query}': 沒有找到結果")
+                except Exception as e:
+                    print(f"   ❌ '{query}': 搜索失敗 - {e}")
+
+            print(f"\n🎉 重建完成！現在可以重新啟動後端測試RAG功能")
+            return True
+        else:
+            print("❌ 向量資料庫重建失敗")
+            return False
+
+    except Exception as e:
+        print(f"❌ 重建過程中發生錯誤: {e}")
+        import traceback
+        traceback.print_exc()
+        return False
+
+if __name__ == "__main__":
+    main()
