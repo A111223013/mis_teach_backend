@@ -13,8 +13,8 @@ from langchain_community.vectorstores import FAISS
 from langchain.text_splitter import CharacterTextSplitter
 from langchain.chains import RetrievalQA
 from langchain.schema.document import Document
-from src.ai_agent import ai_agent_bp, init_embeddings_from_txt
-from src.rag_ai_assistant import rag_assistant_bp
+from src.ai_teacher import ai_teacher_bp
+from src.ai_teacher import ai_teacher_bp
 
 
 app = Flask(__name__)
@@ -26,7 +26,6 @@ app.config.from_object(cfg)
 app.config.from_object(developmentCfg)
 
 os.environ["GOOGLE_API_KEY"] = "AIzaSyAIXgxvFlTQe3lq4tuLx2fUiF4oaigBBYE"
-init_embeddings_from_txt("ba.txt")  # 初始化 retriever
 
 domain_name_config = app.config.get('DOMAIN_NAME')
 
@@ -50,8 +49,7 @@ login_manager.login_view = '/login'
 app.register_blueprint(login_bp, url_prefix='/login')
 app.register_blueprint(register_bp, url_prefix='/register')
 app.register_blueprint(dashboard_bp, url_prefix='/dashboard')
-app.register_blueprint(ai_agent_bp, url_prefix='/ai_agent')
-app.register_blueprint(rag_assistant_bp, url_prefix='/rag_assistant')
+app.register_blueprint(ai_teacher_bp, url_prefix='/ai_teacher')
 
 #with app.app_context():
 #    sqldb.create_all()

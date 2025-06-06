@@ -298,6 +298,28 @@ class RAGAssistantService:
         
         return recommendations
 
+    def _generate_learning_path(self, wrong_questions: List[Dict]) -> List[Dict]:
+        """生成智能學習路徑"""
+        # 簡化的學習路徑生成邏輯
+        # 實際應用中可以根據知識點、難度、錯誤類型等進行智能排序
+
+        # 按難度和知識點分組
+        grouped_questions = {}
+        for question in wrong_questions:
+            topic = question.get('topic', '其他')
+            if topic not in grouped_questions:
+                grouped_questions[topic] = []
+            grouped_questions[topic].append(question)
+
+        # 生成學習路徑：先易後難，按知識點聚類
+        learning_path = []
+        for topic, questions in grouped_questions.items():
+            # 按難度排序（如果有難度資訊）
+            sorted_questions = sorted(questions, key=lambda x: x.get('difficulty', 1))
+            learning_path.extend(sorted_questions)
+
+        return learning_path
+
 # 全局服務實例
 rag_service = RAGAssistantService()
 
@@ -610,4 +632,336 @@ def get_conversation_history():
         return jsonify({
             'success': False,
             'error': '獲取對話歷史時發生錯誤'
+        }), 500
+
+# ==================== 學習系統 API 端點 ====================
+
+@rag_assistant_bp.route('/submit-quiz-results', methods=['POST'])
+def submit_quiz_results():
+    """提交測驗結果"""
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({'success': False, 'error': '無效的請求數據'}), 400
+
+        user_id = rag_service.get_user_id()
+
+        # 驗證必要欄位
+        required_fields = ['quiz_id', 'answers', 'submit_time', 'total_time']
+        for field in required_fields:
+            if field not in data:
+                return jsonify({'success': False, 'error': f'缺少必要欄位: {field}'}), 400
+
+        # 處理測驗結果
+        quiz_result = {
+            'user_id': user_id,
+            'quiz_id': data['quiz_id'],
+            'answers': data['answers'],  # 每道題的答案和結果
+            'submit_time': data['submit_time'],
+            'total_time': data['total_time'],
+            'score': data.get('score', 0),
+            'total_questions': len(data['answers']),
+            'correct_count': sum(1 for answer in data['answers'] if answer.get('is_correct', False)),
+            'wrong_count': sum(1 for answer in data['answers'] if not answer.get('is_correct', True)),
+            'marked_count': sum(1 for answer in data['answers'] if answer.get('is_marked', False)),
+            'unanswered_count': sum(1 for answer in data['answers'] if answer.get('user_answer') is None)
+        }
+
+        # 儲存到用戶會話數據中（實際應用中應儲存到資料庫）
+        session_data = rag_service.get_user_session_data(user_id)
+        if 'quiz_results' not in session_data:
+            session_data['quiz_results'] = []
+        session_data['quiz_results'].append(quiz_result)
+
+        # 分析錯題
+        wrong_questions = [answer for answer in data['answers'] if not answer.get('is_correct', True)]
+
+        return jsonify({
+            'success': True,
+            'result_id': f"result_{user_id}_{data['quiz_id']}_{data['submit_time']}",
+            'summary': {
+                'total_questions': quiz_result['total_questions'],
+                'correct_count': quiz_result['correct_count'],
+                'wrong_count': quiz_result['wrong_count'],
+                'marked_count': quiz_result['marked_count'],
+                'unanswered_count': quiz_result['unanswered_count'],
+                'score': quiz_result['score'],
+                'total_time': quiz_result['total_time']
+            },
+            'wrong_questions': wrong_questions,
+            'message': '測驗結果已成功提交'
+        })
+
+    except Exception as e:
+        logger.error(f"提交測驗結果錯誤: {e}")
+        return jsonify({
+            'success': False,
+            'error': '提交測驗結果時發生錯誤',
+            'message': str(e)
+        }), 500
+
+@rag_assistant_bp.route('/get-quiz-result/<result_id>', methods=['GET'])
+def get_quiz_result(result_id):
+    """獲取測驗結果詳情"""
+    try:
+        user_id = rag_service.get_user_id()
+        session_data = rag_service.get_user_session_data(user_id)
+
+        # 查找對應的測驗結果
+        quiz_results = session_data.get('quiz_results', [])
+        target_result = None
+
+        for result in quiz_results:
+            if f"result_{result['user_id']}_{result['quiz_id']}_{result['submit_time']}" == result_id:
+                target_result = result
+                break
+
+        if not target_result:
+            return jsonify({'success': False, 'error': '找不到指定的測驗結果'}), 404
+
+        return jsonify({
+            'success': True,
+            'result': target_result
+        })
+
+    except Exception as e:
+        logger.error(f"獲取測驗結果錯誤: {e}")
+        return jsonify({
+            'success': False,
+            'error': '獲取測驗結果時發生錯誤'
+        }), 500
+
+@rag_assistant_bp.route('/start-error-learning', methods=['POST'])
+def start_error_learning():
+    """開始錯題學習"""
+    print("start_error_learning")   
+    try:
+        data = request.get_json()
+        print(data)
+        if not data:
+            return jsonify({'success': False, 'error': '無效的請求數據'}), 400
+
+        user_id = rag_service.get_user_id()
+        result_id = data.get('result_id')
+        print(user_id)
+        print(result_id)
+        if not result_id:
+            return jsonify({'success': False, 'error': '缺少測驗結果ID'}), 400
+
+        # 獲取測驗結果
+        session_data = rag_service.get_user_session_data(user_id)
+        print(session_data)
+        quiz_results = session_data.get('quiz_results', [])
+        print(quiz_results)
+        target_result = None
+
+        for result in quiz_results:
+            if f"result_{result['user_id']}_{result['quiz_id']}_{result['submit_time']}" == result_id:
+                target_result = result
+                break
+
+        if not target_result:
+            print("找不到指定的測驗結果")   
+            return jsonify({'success': False, 'error': '找不到指定的測驗結果'}), 404
+
+        # 提取錯題
+        wrong_questions = [answer for answer in target_result['answers'] if not answer.get('is_correct', True)]
+        print(wrong_questions)
+        if not wrong_questions:
+            return jsonify({
+                'success': True,
+                'message': '恭喜！您沒有錯題需要學習',
+                'wrong_questions': []
+            })
+
+        # AI 智能安排學習路徑
+        learning_path = rag_service._generate_learning_path(wrong_questions)
+
+        # 儲存學習會話
+        learning_session = {
+            'session_id': f"learning_{user_id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
+            'user_id': user_id,
+            'result_id': result_id,
+            'wrong_questions': wrong_questions,
+            'learning_path': learning_path,
+            'current_question_index': 0,
+            'completed_questions': [],
+            'start_time': datetime.now().isoformat(),
+            'status': 'active'
+        }
+
+        if 'learning_sessions' not in session_data:
+            session_data['learning_sessions'] = []
+        session_data['learning_sessions'].append(learning_session)
+
+        return jsonify({
+            'success': True,
+            'session_id': learning_session['session_id'],
+            'total_wrong_questions': len(wrong_questions),
+            'learning_path': learning_path,
+            'current_question': learning_path[0] if learning_path else None,
+            'message': f'開始學習 {len(wrong_questions)} 道錯題'
+        })
+
+    except Exception as e:
+        logger.error(f"開始錯題學習錯誤: {e}")
+        return jsonify({
+            'success': False,
+            'error': '開始錯題學習時發生錯誤',
+            'message': str(e)
+        }), 500
+
+@rag_assistant_bp.route('/ai-tutoring', methods=['POST'])
+def ai_tutoring():
+    """AI 智能教學 - 簡化版本，直接使用現有的聊天功能"""
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({'success': False, 'error': '無效的請求數據'}), 400
+
+        user_id = rag_service.get_user_id()
+        user_input = data.get('user_input', '')
+
+        if not user_input:
+            return jsonify({'success': False, 'error': '缺少用戶輸入'}), 400
+
+        # 直接使用現有的聊天功能
+        tutor = rag_service.get_user_tutor(user_id)
+        if not tutor:
+            return jsonify({'success': False, 'error': 'AI 教學系統不可用'}), 500
+
+        # 使用 MultiAITutor 的聊天功能
+        if RAG_AVAILABLE:
+            response = tutor.continue_conversation(user_input)
+        else:
+            response = f"""
+            感謝您的問題：「{user_input}」
+
+            這是一個很好的問題。讓我為您詳細解答...
+
+            您還有其他疑問嗎？
+            """
+
+        return jsonify({
+            'success': True,
+            'response': response
+        })
+
+    except Exception as e:
+        logger.error(f"AI 教學錯誤: {e}")
+        return jsonify({
+            'success': False,
+            'error': 'AI 教學時發生錯誤',
+            'message': str(e)
+        }), 500
+
+@rag_assistant_bp.route('/learning-progress/<session_id>', methods=['GET'])
+def get_learning_progress(session_id):
+    """獲取學習進度"""
+    try:
+        user_id = rag_service.get_user_id()
+        session_data = rag_service.get_user_session_data(user_id)
+
+        # 查找學習會話
+        learning_sessions = session_data.get('learning_sessions', [])
+        current_session = None
+
+        for session in learning_sessions:
+            if session['session_id'] == session_id:
+                current_session = session
+                break
+
+        if not current_session:
+            return jsonify({'success': False, 'error': '找不到學習會話'}), 404
+
+        total_questions = len(current_session['wrong_questions'])
+        completed_questions = len(current_session['completed_questions'])
+        current_index = current_session['current_question_index']
+
+        progress_percentage = (completed_questions / total_questions * 100) if total_questions > 0 else 0
+
+        return jsonify({
+            'success': True,
+            'progress': {
+                'total_questions': total_questions,
+                'completed_questions': completed_questions,
+                'current_question_index': current_index,
+                'progress_percentage': round(progress_percentage, 1),
+                'remaining_questions': total_questions - completed_questions,
+                'session_status': current_session['status']
+            }
+        })
+
+    except Exception as e:
+        logger.error(f"獲取學習進度錯誤: {e}")
+        return jsonify({
+            'success': False,
+            'error': '獲取學習進度時發生錯誤'
+        }), 500
+
+@rag_assistant_bp.route('/complete-question-learning', methods=['POST'])
+def complete_question_learning():
+    """完成單題學習"""
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({'success': False, 'error': '無效的請求數據'}), 400
+
+        user_id = rag_service.get_user_id()
+        session_id = data.get('session_id')
+        question_id = data.get('question_id')
+        understanding_level = data.get('understanding_level', 3)  # 1-5 理解程度
+
+        if not session_id or not question_id:
+            return jsonify({'success': False, 'error': '缺少必要參數'}), 400
+
+        # 獲取學習會話
+        session_data = rag_service.get_user_session_data(user_id)
+        learning_sessions = session_data.get('learning_sessions', [])
+        current_session = None
+
+        for session in learning_sessions:
+            if session['session_id'] == session_id:
+                current_session = session
+                break
+
+        if not current_session:
+            return jsonify({'success': False, 'error': '找不到學習會話'}), 404
+
+        # 標記題目為已完成
+        completed_question = {
+            'question_id': question_id,
+            'completed_time': datetime.now().isoformat(),
+            'understanding_level': understanding_level
+        }
+
+        current_session['completed_questions'].append(completed_question)
+        current_session['current_question_index'] += 1
+
+        # 檢查是否完成所有題目
+        if current_session['current_question_index'] >= len(current_session['wrong_questions']):
+            current_session['status'] = 'completed'
+            current_session['end_time'] = datetime.now().isoformat()
+
+        # 獲取下一題
+        next_question = None
+        if current_session['current_question_index'] < len(current_session['learning_path']):
+            next_question = current_session['learning_path'][current_session['current_question_index']]
+
+        return jsonify({
+            'success': True,
+            'message': '題目學習完成',
+            'next_question': next_question,
+            'session_completed': current_session['status'] == 'completed',
+            'progress': {
+                'completed': len(current_session['completed_questions']),
+                'total': len(current_session['wrong_questions'])
+            }
+        })
+
+    except Exception as e:
+        logger.error(f"完成題目學習錯誤: {e}")
+        return jsonify({
+            'success': False,
+            'error': '完成題目學習時發生錯誤'
         }), 500

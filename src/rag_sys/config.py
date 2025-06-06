@@ -280,3 +280,48 @@ def validate_config():
     except Exception as e:
         print(f"❌ 配置驗證失敗: {e}")
         return False
+
+# =============================================================================
+# Config 類別 - 為了向後兼容性
+# =============================================================================
+
+class Config:
+    """配置類別，包含所有系統配置"""
+
+    # 路徑配置
+    PROJECT_ROOT = PROJECT_ROOT
+    DATA_DIR = DATA_DIR
+    PDF_DIR = PDF_DIR
+    KNOWLEDGE_DB_DIR = KNOWLEDGE_DB_DIR
+    OUTPUT_DIR = OUTPUT_DIR
+
+    # AI 模型配置
+    GEMINI_CONFIG = GEMINI_CONFIG
+    GEMINI_API_KEY = GEMINI_CONFIG.get('api_key')
+    DEFAULT_AI_MODEL = DEFAULT_AI_MODEL
+
+    # 向量化配置
+    EMBEDDING_MODEL_NAME = EMBEDDING_MODEL
+    EMBEDDING_CONFIG = EMBEDDING_CONFIG
+    DEVICE = GPU_CONFIG.get('device', 'cpu')
+
+    # 資料庫配置
+    CHROMA_DB_PATH = CHROMA_DB_PATH
+    COLLECTION_NAME = COLLECTION_NAME
+
+    # 搜索配置
+    SEARCH_CONFIG = SEARCH_CONFIG
+
+    # 其他配置
+    DEBUG_MODE = DEBUG_MODE
+    VERBOSE_MODE = VERBOSE_MODE
+
+    @classmethod
+    def get_gpu_info(cls):
+        """獲取 GPU 資訊"""
+        return check_gpu_availability()
+
+    @classmethod
+    def validate(cls):
+        """驗證配置"""
+        return validate_config()

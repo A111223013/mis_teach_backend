@@ -17,22 +17,31 @@ try:
 except ImportError as e:
     print(f"⚠️ config導入失敗: {e}")
 
+# 從整合的 rag_ai_role 模組導入
 try:
-    from .rag_processor import RAGProcessor
-    __all__.append('RAGProcessor')
+    from .rag_ai_role import MultiAITutor
+    __all__.append('MultiAITutor')
 except ImportError as e:
-    print(f"⚠️ RAGProcessor導入失敗: {e}")
+    print(f"⚠️ MultiAITutor導入失敗: {e}")
 
 try:
-    from .rag_ai_responder import AIResponder
+    from .rag_ai_role import AIResponder
     __all__.append('AIResponder')
 except ImportError as e:
     print(f"⚠️ AIResponder導入失敗: {e}")
 
 try:
-    from .multi_ai_tutor import MultiAITutor
-    __all__.append('MultiAITutor')
+    from .rag_ai_role import RAGAssistantService
+    __all__.append('RAGAssistantService')
 except ImportError as e:
-    print(f"⚠️ MultiAITutor導入失敗: {e}")
+    print(f"⚠️ RAGAssistantService導入失敗: {e}")
+
+# 從 rag_build 模組導入
+try:
+    from .rag_build import RAGBuilder
+    __all__.append('RAGBuilder')
+except ImportError as e:
+    print(f"⚠️ RAGBuilder導入失敗: {e}")
+
 
 print(f"✅ RAG系統模組導入完成，可用模組: {__all__}")
