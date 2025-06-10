@@ -14,6 +14,8 @@ from sqlalchemy import text
 import jwt
 from sqlalchemy.exc import OperationalError
 import time
+import json
+import os
 
 login_manager = LoginManager()
 login_manager.login_view = "login"
@@ -133,3 +135,47 @@ def verify_token(token, expiration=3600):
     except Exception as e:
         return None
     return user_id
+
+def init_mongo_data():
+    try:
+        exam_count = mongo.db.exam.count_documents({})
+        
+        if exam_count == 0:
+            print("檢測到exam collection為空，開始初始化資料...")
+            
+            current_dir = os.path.dirname(os.path.abspath(__file__))
+            json_file_path = os.path.join(current_dir, 'data', 'cls_data.json')
+            
+            if not os.path.exists(json_file_path):
+                print(f"錯誤：找不到檔案 {json_file_path}")
+                return False
+            
+            with open(json_file_path, 'r', encoding='utf-8') as file:
+                exam_data = json.load(file)
+            
+            if not exam_data:
+                print("錯誤：json檔案為空或格式不正確")
+                return False
+            
+           
+            result = mongo.db.exam.insert_many(exam_data)
+            
+            print(f"成功初始化考試資料，共插入 {len(result.inserted_ids)} 筆資料")
+            return True
+            
+        else:
+            print(f"exam collection已有 {exam_count} 筆資料，無需初始化")
+            return True
+            
+    except FileNotFoundError:
+        print("錯誤：找不到cls_113.json檔案")
+        return False
+    except json.JSONDecodeError:
+        print("錯誤：json檔案格式不正確")
+        return False
+    except Exception as e:
+        print(f"初始化考試資料時發生錯誤：{str(e)}")
+        return False
+
+
+

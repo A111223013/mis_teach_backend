@@ -5,6 +5,8 @@ import uuid
 from accessories import mail, redis_client, mongo, save_json_to_mongo
 from src.api import get_user_info, verify_token
 from bson.objectid import ObjectId
+import jwt
+from datetime import datetime
 
 dashboard_bp = Blueprint('dashboard', __name__)
 
@@ -107,12 +109,68 @@ def submit_answers():
 
     auth_header = request.headers.get('Authorization')
     token = auth_header.split(" ")[1]
+     
+    try:
+        decoded_token = jwt.decode(token, current_app.config['SECRET_KEY'], algorithms=["HS256"])
+        user_email = decoded_token['user']
+        user = mongo.db.students.find_one({"email": user_email})
+        user_name = get_user_info(token, 'name')
+    except:
+        return jsonify({'message': '無效的token'}), 401
 
     answers = request.json.get('answers')
-    print(answers)
+    print("收到的答案資料:", answers)
+    
+    if not answers or len(answers) == 0:
+        return jsonify({'message': '沒有收到答案資料'}), 400
+  
+    current_time = datetime.now().strftime("%Y-%m-%d %H:%M")
+    submission_id = str(uuid.uuid4())
+    
+ 
+    school = answers[0].get('school', '') if answers else ''
+    year = answers[0].get('year', '') if answers else ''
+    subject = answers[0].get('subject', '') if answers else ''
+    department = answers[0].get('department', '') if answers else ''
+    
+    
+    answer_stats = {}
     for answer in answers:
-        print(answer)
-        mongo.db.user_answer.insert_one(answer)
+        answer_type = answer.get('type', 'unknown')
+        if answer_type not in answer_stats:
+            answer_stats[answer_type] = 0
+        answer_stats[answer_type] += 1
+    
+    # 整合的答案文件結構
+    integrated_submission = {
+        'submission_id': submission_id,
+        'user_name': user_name,
+        'user_email': user_email,
+        'submit_time': current_time,
+        'school': school,
+        'department': department,
+        'year': year,
+        'subject': subject,
+        'answer_summary': {
+            'total_questions': len(answers),
+            'answer_stats': answer_stats
+        },
+        'answers': answers,
+        'status': 'submitted'
+    }
+    
+  
+    try:
+        result = mongo.db.user_answer.insert_one(integrated_submission)
+        print(f"成功提交答案，submission_id: {submission_id}")
         
-    return jsonify({'message': '答案提交成功'}), 200
+        return jsonify({
+            'message': '答案提交成功',
+            'submission_id': submission_id,
+            'total_questions': len(answers)
+        }), 200
+        
+    except Exception as e:
+        print(f"提交答案時發生錯誤: {str(e)}")
+        return jsonify({'message': '答案提交失敗'}), 500
 
