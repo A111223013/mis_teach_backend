@@ -34,14 +34,12 @@ class RAGBuilder:
         """初始化組件"""
         try:
             # 初始化嵌入模型
-            logger.info("🔄 初始化嵌入模型...")
             self.embedding_model = SentenceTransformer(
                 self.config.EMBEDDING_MODEL_NAME,
                 device=self.config.DEVICE
             )
             
             # 初始化 ChromaDB
-            logger.info("🔄 初始化 ChromaDB...")
             self.chroma_client = chromadb.PersistentClient(
                 path=self.config.CHROMA_DB_PATH,
                 settings=Settings(anonymized_telemetry=False)
@@ -52,18 +50,15 @@ class RAGBuilder:
                 self.collection = self.chroma_client.get_collection(
                     name=self.config.COLLECTION_NAME
                 )
-                logger.info(f"✅ 找到現有集合: {self.config.COLLECTION_NAME}")
             except:
                 self.collection = self.chroma_client.create_collection(
                     name=self.config.COLLECTION_NAME,
                     metadata={"description": "MIS教學知識庫"}
                 )
-                logger.info(f"✅ 創建新集合: {self.config.COLLECTION_NAME}")
             
             # 配置 Gemini API
             if self.config.GEMINI_API_KEY:
                 genai.configure(api_key=self.config.GEMINI_API_KEY)
-                logger.info("✅ Gemini API 配置完成")
             
         except Exception as e:
             logger.error(f"❌ 初始化組件失敗: {e}")

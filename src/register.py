@@ -50,6 +50,7 @@ def verify_email(token):
             "name": name,
             "password": password,
             "email": email,
+            'new_user': True
         })
         redis_client.delete(token)
         return jsonify({"message": "Email verified successfully."}), 200

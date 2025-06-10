@@ -43,5 +43,3 @@ try:
 except ImportError as e:
     print(f"⚠️ RAGBuilder導入失敗: {e}")
 
-
-print(f"✅ RAG系統模組導入完成，可用模組: {__all__}")

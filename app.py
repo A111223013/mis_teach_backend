@@ -14,7 +14,8 @@ from langchain.text_splitter import CharacterTextSplitter
 from langchain.chains import RetrievalQA
 from langchain.schema.document import Document
 from src.ai_teacher import ai_teacher_bp
-from src.ai_teacher import ai_teacher_bp
+from src.user_guide import user_guide_bp
+from src.web_ai_assistant import web_ai_bp
 
 
 app = Flask(__name__)
@@ -50,6 +51,8 @@ app.register_blueprint(login_bp, url_prefix='/login')
 app.register_blueprint(register_bp, url_prefix='/register')
 app.register_blueprint(dashboard_bp, url_prefix='/dashboard')
 app.register_blueprint(ai_teacher_bp, url_prefix='/ai_teacher')
+app.register_blueprint(user_guide_bp, url_prefix='/user-guide')
+app.register_blueprint(web_ai_bp, url_prefix='/web-ai')
 
 #with app.app_context():
 #    sqldb.create_all()

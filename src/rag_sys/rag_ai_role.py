@@ -1,9 +1,3 @@
-"""
-RAG AI 角色和邏輯模組
-整合 MultiAITutor、AIResponder 和 RAG Assistant 的完整邏輯
-照搬原有三個文件的邏輯，不做修改
-"""
-
 import json
 import logging
 from typing import Dict, List, Any, Optional
@@ -89,7 +83,6 @@ class MultiAITutor:
             genai.configure(api_key=api_key)
             self.gemini_model = genai.GenerativeModel(config.GEMINI_CONFIG.get('model', 'gemini-1.5-flash'))
             self.model_config = config.GEMINI_CONFIG
-            logging.info("✅ Gemini模型初始化成功")
         except Exception as e:
             logging.error(f"❌ Gemini初始化失敗: {e}")
             raise RuntimeError(f"Gemini初始化失敗: {e}")
@@ -109,7 +102,6 @@ class MultiAITutor:
             try:
                 self.collection = self.chroma_client.get_collection(config.COLLECTION_NAME)
                 count = self.collection.count()
-                logger.info(f"✅ 連接到現有向量資料庫，包含 {count} 個知識點")
             except Exception:
                 logger.warning("⚠️ 未找到現有向量資料庫")
                 self.collection = None
@@ -377,7 +369,6 @@ class MultiAITutor:
                         'chapter': metadata.get('chapter', '相關章節'),
                         'keywords': metadata.get('keywords', [])
                     })
-            logger.info(f"🔍 搜索到 {len(formatted_results)} 個相關結果")
             return formatted_results
 
         except Exception as e:
@@ -535,7 +526,6 @@ class AIResponder:
             # 嘗試獲取現有集合
             try:
                 self.collection = self.chroma_client.get_collection(config.COLLECTION_NAME)
-                logger.info(f"✅ AIResponder 連接到向量資料庫")
             except Exception:
                 logger.warning("⚠️ AIResponder 未找到向量資料庫")
                 self.collection = None
@@ -645,7 +635,6 @@ class AIResponder:
                 search_results = self._search_knowledge(question, top_k=5)
                 if search_results:
                     # 基於搜索結果生成回答
-                    logger.info(f"🔍 搜索到 {len(search_results)} 個相關結果")
                     return self._generate_answer_from_search(question, search_results)
             except Exception as e:
                 logger.warning(f"⚠️ 向量資料庫查詢錯誤: {e}")
@@ -758,7 +747,6 @@ class RAGAssistantService:
                 language='chinese',
                 rag_processor=self.shared_processor
             )
-            logger.info("✅ RAG系統初始化成功")
         except Exception as e:
             logger.error(f"❌ RAG系統初始化失敗: {e}")
             self.shared_processor = None

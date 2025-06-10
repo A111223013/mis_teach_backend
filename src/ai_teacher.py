@@ -20,7 +20,6 @@ try:
     from .rag_sys.rag_ai_role import MultiAITutor, AIResponder
     RAG_AVAILABLE = True
     logger = logging.getLogger(__name__)
-    logger.info("✅ RAG 系統模組導入成功")
 except ImportError as e:
     logger = logging.getLogger(__name__)
     logger.warning(f"⚠️ RAG 系統模組導入失敗: {e}")
@@ -44,7 +43,6 @@ class AITeacherService:
                 # 使用整合後的 MultiAITutor 和 AIResponder
                 self.tutor = MultiAITutor()
                 self.responder = AIResponder()
-                logger.info("✅ AI 教學服務初始化成功")
             except Exception as e:
                 logger.error(f"❌ AI 教學服務初始化失敗: {e}")
                 # 不修改全局變數，只記錄錯誤
