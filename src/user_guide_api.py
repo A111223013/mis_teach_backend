@@ -2,7 +2,9 @@ from flask import Blueprint, request, jsonify, session
 from flask_cors import cross_origin
 from datetime import datetime
 import logging
-from src.config import get_db_connection
+import jwt
+from flask import current_app
+from accessories import mongo
 
 # 創建藍圖
 user_guide_bp = Blueprint('user_guide', __name__)
@@ -11,54 +13,65 @@ user_guide_bp = Blueprint('user_guide', __name__)
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-@user_guide_bp.route('/api/user-guide/status', methods=['GET'])
+def get_user_email_from_token():
+    """從 JWT token 獲取用戶 email"""
+    try:
+        token = request.headers.get('Authorization', '').replace('Bearer ', '')
+        if not token:
+            return None
+
+        decoded = jwt.decode(token, current_app.config['SECRET_KEY'], algorithms=['HS256'])
+        return decoded.get('user')
+    except:
+        return None
+
+@user_guide_bp.route('/api/user-guide/status', methods=['GET', 'OPTIONS'])
 @cross_origin()
 def get_user_guide_status():
     """
     獲取用戶導覽狀態
     """
+    if request.method == 'OPTIONS':
+        return '', 204
+
     try:
-        # 從 session 獲取用戶 ID，如果沒有則使用預設值
-        user_id = session.get('user_id', 'anonymous_user')
-        
-        # 連接 MongoDB
-        db = get_db_connection()
-        users_collection = db.users
-        
-        # 查找用戶記錄
-        user_record = users_collection.find_one({'user_id': user_id})
-        
+        # 優先從 JWT token 獲取用戶 email
+        user_email = get_user_email_from_token()
+
+        if not user_email:
+            # 如果沒有 token，從 session 獲取用戶 ID
+            user_id = session.get('user_id', 'anonymous_user')
+            user_record = mongo.db.students.find_one({'user_id': user_id})
+        else:
+            # 使用 email 查詢用戶
+            user_record = mongo.db.students.find_one({'email': user_email})
+
         if user_record:
             # 用戶存在，返回實際狀態
             status = {
-                'user_id': user_id,
+                'user_id': str(user_record.get('_id', 'unknown')),
+                'email': user_record.get('email', ''),
                 'new_user': user_record.get('new_user', True),
                 'guide_completed': user_record.get('guide_completed', False),
                 'last_login': user_record.get('last_login', datetime.now().isoformat()),
                 'guide_completion_date': user_record.get('guide_completion_date')
             }
+
+            logger.info(f"用戶 {user_email or user_id} 導覽狀態: new_user={status['new_user']}, guide_completed={status['guide_completed']}")
         else:
-            # 用戶不存在，創建新用戶記錄
-            new_user_record = {
-                'user_id': user_id,
-                'new_user': True,
-                'guide_completed': False,
-                'last_login': datetime.now().isoformat(),
-                'created_at': datetime.now().isoformat()
-            }
-            
-            users_collection.insert_one(new_user_record)
-            
+            # 用戶不存在，返回預設狀態
             status = {
-                'user_id': user_id,
+                'user_id': 'anonymous',
+                'email': user_email or '',
                 'new_user': True,
                 'guide_completed': False,
-                'last_login': new_user_record['last_login']
+                'last_login': datetime.now().isoformat()
             }
-        
-        logger.info(f"用戶 {user_id} 導覽狀態: {status}")
+
+            logger.info(f"用戶不存在，返回預設狀態: {status}")
+
         return jsonify(status), 200
-        
+
     except Exception as e:
         logger.error(f"獲取用戶導覽狀態失敗: {str(e)}")
         return jsonify({
@@ -66,23 +79,32 @@ def get_user_guide_status():
             'message': str(e)
         }), 500
 
-@user_guide_bp.route('/api/user-guide/mark-guided', methods=['POST'])
+@user_guide_bp.route('/api/user-guide/mark-guided', methods=['POST', 'OPTIONS'])
 @cross_origin()
 def mark_user_as_guided():
     """
     標記用戶已完成導覽
     """
+    if request.method == 'OPTIONS':
+        return '', 204
+
     try:
-        # 從 session 獲取用戶 ID
-        user_id = session.get('user_id', 'anonymous_user')
-        
-        # 連接 MongoDB
-        db = get_db_connection()
-        users_collection = db.users
-        
+        # 優先從 JWT token 獲取用戶 email
+        user_email = get_user_email_from_token()
+
+        if not user_email:
+            # 如果沒有 token，從 session 獲取用戶 ID
+            user_id = session.get('user_id', 'anonymous_user')
+            query = {'user_id': user_id}
+            identifier = user_id
+        else:
+            # 使用 email 查詢用戶
+            query = {'email': user_email}
+            identifier = user_email
+
         # 更新用戶記錄
-        update_result = users_collection.update_one(
-            {'user_id': user_id},
+        update_result = mongo.db.students.update_one(
+            query,
             {
                 '$set': {
                     'new_user': False,
@@ -90,25 +112,24 @@ def mark_user_as_guided():
                     'guide_completion_date': datetime.now().isoformat(),
                     'last_updated': datetime.now().isoformat()
                 }
-            },
-            upsert=True  # 如果用戶不存在則創建
+            }
         )
-        
-        if update_result.modified_count > 0 or update_result.upserted_id:
-            logger.info(f"用戶 {user_id} 已完成導覽")
+
+        if update_result.modified_count > 0:
+            logger.info(f"用戶 {identifier} 已完成導覽")
             return jsonify({
                 'success': True,
                 'message': '導覽狀態已更新',
-                'user_id': user_id,
+                'user_identifier': identifier,
                 'completion_date': datetime.now().isoformat()
             }), 200
         else:
-            logger.warning(f"用戶 {user_id} 導覽狀態更新失敗")
+            logger.warning(f"用戶 {identifier} 導覽狀態更新失敗 - 可能用戶不存在或狀態未變更")
             return jsonify({
                 'success': False,
-                'message': '導覽狀態更新失敗'
+                'message': '導覽狀態更新失敗 - 用戶不存在或狀態未變更'
             }), 400
-            
+
     except Exception as e:
         logger.error(f"標記用戶導覽完成失敗: {str(e)}")
         return jsonify({
@@ -127,8 +148,7 @@ def reset_user_guide_status():
         user_id = session.get('user_id', 'anonymous_user')
         
         # 連接 MongoDB
-        db = get_db_connection()
-        users_collection = db.users
+        users_collection = mongo.db.students
         
         # 重置用戶記錄
         update_result = users_collection.update_one(
@@ -175,8 +195,7 @@ def get_guide_statistics():
     """
     try:
         # 連接 MongoDB
-        db = get_db_connection()
-        users_collection = db.users
+        users_collection = mongo.db.students
         
         # 統計數據
         total_users = users_collection.count_documents({})

@@ -14,7 +14,7 @@ from langchain.text_splitter import CharacterTextSplitter
 from langchain.chains import RetrievalQA
 from langchain.schema.document import Document
 from src.ai_teacher import ai_teacher_bp
-from src.user_guide import user_guide_bp
+from src.user_guide_api import user_guide_bp
 from src.web_ai_assistant import web_ai_bp
 
 

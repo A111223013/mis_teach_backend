@@ -21,8 +21,21 @@ def login():
             'user': user_data['email'],
             'exp': exp_time.strftime("%Y%m%d%H%M%S")
         }, current_app.config['SECRET_KEY'])
-        print(f"Generated token: {token}")
-        return jsonify({'token': token}), 200
+
+        # 獲取用戶的 new_user 狀態
+        new_user = user_data.get('new_user', True)
+        guide_completed = user_data.get('guide_completed', False)
+
+        # 返回 token 和導覽狀態
+        return jsonify({
+            'token': token,
+            'new_user': new_user,
+            'guide_completed': guide_completed,
+            'guide_info': {
+                'new_user': new_user,
+                'guide_completed': guide_completed
+            }
+        }), 200
     else:
         return jsonify({'message': '用戶名或密碼不正確'}), 401
 
