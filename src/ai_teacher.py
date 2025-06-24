@@ -8,6 +8,16 @@ from datetime import datetime
 from flask import Blueprint, request, jsonify, session
 from typing import Dict, Any, List, Optional
 import uuid
+from src.api import get_user_info, verify_token
+from werkzeug.security import generate_password_hash
+from flask_mail import Message
+from flask import jsonify, request, redirect, url_for, Blueprint, current_app
+import uuid
+from accessories import mail, redis_client, mongo, save_json_to_mongo
+from src.api import get_user_info, verify_token
+from bson.objectid import ObjectId
+import jwt
+from datetime import datetime
 
 # 導入 RAG 系統模組
 RAG_AVAILABLE = False
@@ -555,4 +565,82 @@ def get_exam_guidance():
         return jsonify({
             'success': False,
             'error': '獲取考試指導時發生錯誤'
+        }), 500
+
+@ai_teacher_bp.route('/get_user_answer_object', methods=['GET', 'OPTIONS'])
+def get_user_answer_object():
+    """獲取學生作答資料"""
+    try:
+        # 檢查請求方法
+        if request.method == 'OPTIONS':
+            return '', 204
+            
+        # 檢查授權標頭
+        try:
+            auth_header = request.headers.get('Authorization')
+            if not auth_header:
+                return jsonify({
+                    'success': False,
+                    'error': '未提供授權標頭'
+                }), 401
+        except Exception as e:
+            logger.error(f"❌ 檢查授權標頭錯誤: {e}")
+            return jsonify({
+                'success': False,
+                'error': '檢查授權標頭時發生錯誤'
+            }), 500
+
+        # 解析 token 並獲取用戶資訊
+        try:
+            token = auth_header.split(" ")[1]
+            user = get_user_info(token, 'name')
+            if not user:
+                return jsonify({
+                    'success': False,
+                    'error': '無法獲取用戶資訊'
+                }), 401
+        except Exception as e:
+            logger.error(f"❌ 解析用戶資訊錯誤: {e}")
+            return jsonify({
+                'success': False,
+                'error': '解析用戶資訊時發生錯誤'
+            }), 500
+
+        # 從資料庫獲取用戶答案
+        try:
+            user_answer_collection = mongo.db.user_answer
+            user_answer_data = user_answer_collection.find_one(
+                {"user_name": user}
+            )
+            if not user_answer_data:
+                return jsonify({
+                    'success': False,
+                    'error': '找不到用戶答案資料'
+                }), 404
+        except Exception as e:
+            logger.error(f"❌ 獲取用戶答案資料錯誤: {e}")
+            return jsonify({
+                'success': False,
+                'error': '獲取用戶答案資料時發生錯誤'
+            }), 500
+
+        # 處理並返回資料
+        try:
+            session_data = user_answer_data
+            return jsonify({
+                'success': True,    
+                'user_answer_object': session_data
+            })
+        except Exception as e:
+            logger.error(f"❌ 處理返回資料錯誤: {e}")
+            return jsonify({
+                'success': False,
+                'error': '處理返回資料時發生錯誤'
+            }), 500
+            
+    except Exception as e:
+        logger.error(f"❌ 獲取學生作答資料錯誤: {e}")
+        return jsonify({
+            'success': False,
+            'error': '獲取學生作答資料時發生錯誤'
         }), 500

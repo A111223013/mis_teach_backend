@@ -144,7 +144,7 @@ def init_mongo_data():
             print("檢測到exam collection為空，開始初始化資料...")
             
             current_dir = os.path.dirname(os.path.abspath(__file__))
-            json_file_path = os.path.join(current_dir, 'data', 'cls_data.json')
+            json_file_path = os.path.join(current_dir, 'data', 'correct_exam.json')
             
             if not os.path.exists(json_file_path):
                 print(f"錯誤：找不到檔案 {json_file_path}")
@@ -157,8 +157,32 @@ def init_mongo_data():
                 print("錯誤：json檔案為空或格式不正確")
                 return False
             
+            # 扁平化資料結構
+            flattened_data = []
+            for item in exam_data:
+                flattened_item = {
+                    'total_question_number': item.get('total_question_number'),
+                    'status': item.get('status'),
+                    'school': item.get('question_data', {}).get('school'),
+                    'department': item.get('question_data', {}).get('department'),
+                    'year': item.get('question_data', {}).get('year'),
+                    'question_number': item.get('question_data', {}).get('question_number'),
+                    'question_text': item.get('question_data', {}).get('question_text'),
+                    'options': item.get('question_data', {}).get('options'),
+                    'type': item.get('question_data', {}).get('type'),
+                    'image_file': item.get('question_data', {}).get('image_file'),
+                    'answer': item.get('question_data', {}).get('answer'),
+                    '主要學科': item.get('主要學科'),
+                    '教科書來源': item.get('教科書來源'),
+                    '教科書章節': item.get('教科書章節'),
+                    '考點單元': item.get('考點單元'),
+                    '相關概念': item.get('相關概念'),
+                    '分析說明': item.get('分析說明'),
+                    'gemini_process_timestamp': item.get('gemini_process_timestamp')
+                }
+                flattened_data.append(flattened_item)
            
-            result = mongo.db.exam.insert_many(exam_data)
+            result = mongo.db.exam.insert_many(flattened_data)
             
             print(f"成功初始化考試資料，共插入 {len(result.inserted_ids)} 筆資料")
             return True
@@ -168,7 +192,7 @@ def init_mongo_data():
             return True
             
     except FileNotFoundError:
-        print("錯誤：找不到cls_113.json檔案")
+        print("錯誤：找不到correct_exam.json檔案")
         return False
     except json.JSONDecodeError:
         print("錯誤：json檔案格式不正確")

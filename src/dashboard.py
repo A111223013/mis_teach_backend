@@ -7,8 +7,29 @@ from src.api import get_user_info, verify_token
 from bson.objectid import ObjectId
 import jwt
 from datetime import datetime
+import os
+import base64
 
 dashboard_bp = Blueprint('dashboard', __name__)
+
+def get_image_base64(image_filename):
+    """讀取圖片檔案並轉換為 base64 編碼"""
+    try:
+        # 取得當前檔案所在目錄，圖片在同層的 picture 資料夾
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+        image_path = os.path.join(current_dir, 'picture', image_filename)
+        
+        if os.path.exists(image_path):
+            with open(image_path, 'rb') as image_file:
+                image_data = image_file.read()
+                base64_encoded = base64.b64encode(image_data).decode('utf-8')
+                return base64_encoded
+        else:
+            print(f"圖片檔案不存在: {image_path}")
+            return None
+    except Exception as e:
+        print(f"讀取圖片時發生錯誤: {str(e)}")
+        return None
 
 @dashboard_bp.route('/get-user-name', methods=['POST', 'OPTIONS'])
 def get_user_name():
@@ -34,15 +55,34 @@ def get_exam():
     exam_list = []
     for exam in examdata:
         exam_dict = {
-            'id': str(exam['_id']),
-            'school': exam['school'],
-            'department': exam['department'],
-            'year': exam['year'],
-            'question_number': exam['question_number'],
-            'question_text': exam['question_text'],
-            'type': exam['type'],
-            'predicted_category': exam['predicted_category']
+            'school': exam.get('school', ''),
+            'department': exam.get('department', ''),
+            'year': exam.get('year', ''),
+            'question_number': exam.get('question_number', ''),
+            'question_text': exam.get('question_text', ''),
+            'type': exam.get('type', ''),
+            'option': exam.get('option', []),
+            'subject': exam.get('主要學科', ''),
+            'textbook_source': exam.get('教科書來源', ''),
+            'textbook_chapter': exam.get('教科書章節', ''),
+            'exam_unit': exam.get('考點單元', ''),
+            'related_concepts': exam.get('相關概念', []),
+            'analysis_description': exam.get('分析說明', ''),
+            'image_file': exam.get('image_file', []),
         }
+        
+        # 處理圖片檔案
+        if exam_dict['image_file']:
+            image_data_list = []
+            for image_filename in exam_dict['image_file']:
+                image_base64 = get_image_base64(image_filename)
+                if image_base64:
+                    image_data_list.append({
+                        'filename': image_filename,
+                        'data': image_base64
+                    })
+            exam_dict['images'] = image_data_list
+        
         exam_list.append(exam_dict)
     
 
@@ -86,18 +126,35 @@ def get_exam_to_object():
     exam_list = []
     for exam in examdata:
         exam_dict = {
-            'id': str(exam['_id']),
-            'school': exam['school'],
-            'department': exam['department'],
-            'year': exam['year'],
-            'question_number': exam['question_number'],
-            'question_text': exam['question_text'],
-            'type': exam['type'],
-            'predicted_category': exam['predicted_category'],
+
+            'school': exam.get('school', ''),
+            'department': exam.get('department', ''),
+            'year': exam.get('year', ''),
+            'question_number': exam.get('question_number', ''),
+            'question_text': exam.get('question_text', ''),
+            'type': exam.get('type', ''),
+            'subject': exam.get('主要學科', ''),
             'options': exam.get('options', []),
+            'textbook_source': exam.get('教科書來源', ''),
+            'textbook_chapter': exam.get('教科書章節', ''),
+            'exam_unit': exam.get('考點單元', ''),
+            'related_concepts': exam.get('相關概念', []),
+            'analysis_description': exam.get('分析說明', ''),
             'image_file': exam.get('image_file', []),
-            'image_regions': exam.get('image_regions', [])
         }
+        
+        # 處理圖片檔案
+        if exam_dict['image_file']:
+            image_data_list = []
+            for image_filename in exam_dict['image_file']:
+                image_base64 = get_image_base64(image_filename)
+                if image_base64:
+                    image_data_list.append({
+                        'filename': image_filename,
+                        'data': image_base64
+                    })
+            exam_dict['images'] = image_data_list
+        
         exam_list.append(exam_dict)
 
     return jsonify({'exams': exam_list}), 200
