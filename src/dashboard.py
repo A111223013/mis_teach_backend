@@ -717,7 +717,7 @@ def submit_answers():
             grading_stats[grading_type] = 0
         grading_stats[grading_type] += 1
     
-    # 整合的答案文件結構（包含評分結果）
+    # 整合的答案文件結構（包含評分结果）
     integrated_submission = {
         'submission_id': submission_id,
         'user_name': user_name,
@@ -778,13 +778,22 @@ def submit_answers():
 def getUserSubmissions():
     if request.method == 'OPTIONS':
         return '', 204
-    auth_header = request.headers.get('Authorization')
-    token = auth_header.split(" ")[1]
+    
     try:
+        auth_header = request.headers.get('Authorization')
+        if not auth_header:
+            return jsonify({'message': '未提供授權標頭'}), 401
+            
+        token = auth_header.split(" ")[1]
         decoded_token = jwt.decode(token, current_app.config['SECRET_KEY'], algorithms=["HS256"])
         user_email = decoded_token['user']
-        user = mongo.db.students.find_one({"email": user_email})
-        user_name = get_user_info(token, 'name')
+        
+        # 獲取用戶資訊
+        try:
+            user_name = get_user_info(token, 'name')
+        except Exception as e:
+            print(f"獲取用戶資訊錯誤: {str(e)}")
+            user_name = user_email  # 使用 email 作為備用
         
         # 獲取請求參數
         data = request.json or {}
@@ -1026,3 +1035,163 @@ def getSubmissionDetail():
     except Exception as e:
         print(f"獲取提交詳情時發生錯誤: {str(e)}")
         return jsonify({'message': f'查詢失敗: {str(e)}'}), 500
+
+
+@dashboard_bp.route('/get-quiz', methods=['POST', 'OPTIONS'])
+def get_quiz():
+    """獲取測驗詳情 API"""
+    if request.method == 'OPTIONS':
+        return jsonify({'message': 'CORS preflight'}), 200
+    
+    try:
+        # 驗證token
+        token = request.headers.get('Authorization')
+        if not token:
+            return jsonify({'message': '缺少授權token'}), 401
+        
+        token = token.replace('Bearer ', '')
+        decoded_token = jwt.decode(token, current_app.config['SECRET_KEY'], algorithms=['HS256'])
+        user_email = decoded_token.get('email')
+        
+        if not user_email:
+            return jsonify({'message': '無效的token'}), 401
+        
+        # 獲取請求參數
+        data = request.get_json()
+        quiz_id = data.get('quiz_id')
+        
+        if not quiz_id:
+            return jsonify({'message': '缺少 quiz_id 參數'}), 400
+        
+        # 這裡可以從數據庫或其他來源獲取測驗數據
+        # 目前使用模擬數據作為示例
+        sample_quiz = {
+            'quiz_id': quiz_id,
+            'title': f'測驗 {quiz_id}',
+            'time_limit': 60,  # 分鐘
+            'questions': [
+                {
+                    'id': 1,
+                    'question_text': '下列何者是 Python 的資料型別？',
+                    'type': 'single-choice',
+                    'options': ['list', 'dict', 'tuple', '以上皆是'],
+                    'image_file': None
+                },
+                {
+                    'id': 2,
+                    'question_text': '請選擇所有正確的 JavaScript 變數宣告方式：',
+                    'type': 'multiple-choice',
+                    'options': ['var x = 1;', 'let y = 2;', 'const z = 3;', 'define a = 4;'],
+                    'image_file': None
+                },
+                {
+                    'id': 3,
+                    'question_text': '填空：Python 中用於迴圈的關鍵字是 _____ 和 _____。',
+                    'type': 'fill-in-the-blank',
+                    'options': None,
+                    'image_file': None
+                },
+                {
+                    'id': 4,
+                    'question_text': 'HTML 是一種程式語言。',
+                    'type': 'true-false',
+                    'options': ['是', '否'],
+                    'image_file': None
+                },
+                {
+                    'id': 5,
+                    'question_text': '請簡述 MVC 架構的概念。',
+                    'type': 'short-answer',
+                    'options': None,
+                    'image_file': None
+                }
+            ]
+        }
+        
+        return jsonify({
+            'message': '獲取測驗成功',
+            **sample_quiz
+        }), 200
+        
+    except jwt.InvalidTokenError:
+        return jsonify({'message': '無效的token'}), 401
+    except Exception as e:
+        print(f"獲取測驗時發生錯誤: {str(e)}")
+        return jsonify({'message': f'獲取測驗失敗: {str(e)}'}), 500
+
+
+@dashboard_bp.route('/submit-quiz', methods=['POST', 'OPTIONS'])
+def submit_quiz():
+    """提交測驗答案 API"""
+    if request.method == 'OPTIONS':
+        return jsonify({'message': 'CORS preflight'}), 200
+    
+    try:
+        # 驗證token
+        token = request.headers.get('Authorization')
+        if not token:
+            return jsonify({'message': '缺少授權token'}), 401
+        
+        token = token.replace('Bearer ', '')
+        decoded_token = jwt.decode(token, current_app.config['SECRET_KEY'], algorithms=['HS256'])
+        user_email = decoded_token.get('email')
+        
+        if not user_email:
+            return jsonify({'message': '無效的token'}), 401
+        
+        # 獲取請求參數
+        data = request.get_json()
+        quiz_id = data.get('quiz_id')
+        answers = data.get('answers', {})
+        time_taken = data.get('time_taken', 0)
+        
+        if not quiz_id:
+            return jsonify({'message': '缺少 quiz_id 參數'}), 400
+        
+        if not answers:
+            return jsonify({'message': '缺少答案數據'}), 400
+        
+        # 獲取用戶信息
+        user_info = get_user_info(user_email)
+        if not user_info:
+            return jsonify({'message': '用戶不存在'}), 404
+        
+        # 生成提交ID
+        submission_id = str(uuid.uuid4())
+        
+        # 準備保存到數據庫的數據
+        submission_data = {
+            'submission_id': submission_id,
+            'quiz_id': quiz_id,
+            'user_email': user_email,
+            'user_name': user_info.get('name', ''),
+            'answers': answers,
+            'time_taken': time_taken,
+            'submit_time': datetime.now().isoformat(),
+            'status': 'submitted',
+            'type': 'quiz'  # 區分測驗和考試
+        }
+        
+        # 保存到MongoDB
+        try:
+            result = mongo.db.submissions.insert_one(submission_data)
+            if result.inserted_id:
+                print(f"測驗提交成功保存，ID: {submission_id}")
+                
+                return jsonify({
+                    'message': '測驗提交成功',
+                    'submission_id': submission_id,
+                    'status': 'success'
+                }), 200
+            else:
+                return jsonify({'message': '保存失敗'}), 500
+                
+        except Exception as db_error:
+            print(f"數據庫保存錯誤: {str(db_error)}")
+            return jsonify({'message': f'保存失敗: {str(db_error)}'}), 500
+        
+    except jwt.InvalidTokenError:
+        return jsonify({'message': '無效的token'}), 401
+    except Exception as e:
+        print(f"提交測驗時發生錯誤: {str(e)}")
+        return jsonify({'message': f'提交測驗失敗: {str(e)}'}), 500
