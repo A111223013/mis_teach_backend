@@ -32,7 +32,7 @@ API_KEYS = [
 
 def create_gemini_model(api_key):
     """為指定的API key創建Gemini模型"""
-    try:
+    try:    
         genai.configure(api_key=api_key)
         # 使用正確的模型名稱
         model = genai.GenerativeModel('gemini-1.5-flash')
@@ -435,25 +435,6 @@ def create_not_found_result(answer):
         'question_found': False
     }
 
-def get_image_base64(image_filename):
-    """讀取圖片檔案並轉換為 base64 編碼"""
-    try:
-        # 取得當前檔案所在目錄，圖片在同層的 picture 資料夾
-        current_dir = os.path.dirname(os.path.abspath(__file__))
-        image_path = os.path.join(current_dir, 'picture', image_filename)
-        
-        if os.path.exists(image_path):
-            with open(image_path, 'rb') as image_file:
-                image_data = image_file.read()
-                base64_encoded = base64.b64encode(image_data).decode('utf-8')
-                return base64_encoded
-        else:
-            print(f"圖片檔案不存在: {image_path}")
-            return None
-    except Exception as e:
-        print(f"讀取圖片時發生錯誤: {str(e)}")
-        return None
-
 @dashboard_bp.route('/get-user-name', methods=['POST', 'OPTIONS'])
 def get_user_name():
     if request.method == 'OPTIONS':
@@ -465,122 +446,23 @@ def get_user_name():
     if not auth_header.startswith('Bearer '):
         return jsonify({'message': 'Token格式錯誤'}), 401
     token = auth_header.split(" ")[1]
-    user_name = get_user_info(token, 'name')
-    return jsonify({'name': user_name}), 200
-
-@dashboard_bp.route('/get-exam', methods=['POST', 'OPTIONS'])
-def get_exam():
-    if request.method == 'OPTIONS':
-        return '', 204
-    auth_header = request.headers.get('Authorization')
     
-    examdata = mongo.db.exam.find()
-    exam_list = []
-    for exam in examdata:
-        exam_dict = {
-            'school': exam.get('school', ''),
-            'department': exam.get('department', ''),
-            'year': exam.get('year', ''),
-            'question_number': exam.get('question_number', ''),
-            'question_text': exam.get('question_text', ''),
-            'type': exam.get('type', ''),
-            'option': exam.get('option', []),
-            'subject': exam.get('主要學科', ''),
-            'textbook_source': exam.get('教科書來源', ''),
-            'textbook_chapter': exam.get('教科書章節', ''),
-            'exam_unit': exam.get('考點單元', ''),
-            'related_concepts': exam.get('相關概念', []),
-            'analysis_description': exam.get('分析說明', ''),
-            'image_file': exam.get('image_file', []),
-        }
-        
-        # 處理圖片檔案
-        if exam_dict['image_file']:
-            image_data_list = []
-            for image_filename in exam_dict['image_file']:
-                image_base64 = get_image_base64(image_filename)
-                if image_base64:
-                    image_data_list.append({
-                        'filename': image_filename,
-                        'data': image_base64
-                    })
-            exam_dict['images'] = image_data_list
-        
-        exam_list.append(exam_dict)
-    
+    try:
+        user_name = get_user_info(token, 'name')
+        return jsonify({'name': user_name}), 200
+    except ValueError as e:
+        error_msg = str(e)
+        if "expired" in error_msg.lower():
+            return jsonify({'message': 'Token已過期，請重新登錄', 'code': 'TOKEN_EXPIRED'}), 401
+        elif "invalid" in error_msg.lower():
+            return jsonify({'message': '無效的token', 'code': 'TOKEN_INVALID'}), 401
+        else:
+            return jsonify({'message': '認證失敗', 'code': 'AUTH_FAILED'}), 401
+    except Exception as e:
+        print(f"獲取用戶名稱時發生錯誤: {str(e)}")
+        return jsonify({'message': '服務器內部錯誤', 'code': 'SERVER_ERROR'}), 500
 
-    if not auth_header:
-        return jsonify({'message': '未提供token'}), 401
-    token = auth_header.split(" ")[1]
- 
-    return jsonify({'exams': exam_list}), 200
-
-@dashboard_bp.route('/get-exam-to-object', methods=['POST', 'OPTIONS'])
-def get_exam_to_object():
-    if request.method == 'OPTIONS':
-        return '', 204
-    auth_header = request.headers.get('Authorization')
-    school = request.json.get('school')
-    year = request.json.get('year')
-    subject = request.json.get('subject')
-
-    # 計算有效查詢條件的數量
-    valid_conditions = sum(1 for x in [school, year, subject] if x)
-
-    # 建立查詢條件
-    query = {}
-    if school:
-        query['school'] = school
-    if year:
-        query['year'] = year
-    if subject:
-        query['predicted_category'] = subject
-
-
-    if valid_conditions == 0:
-      
-        examdata = mongo.db.exam.find()
-    elif valid_conditions == 1:
-      
-        examdata = mongo.db.exam.find(query)
-    else:
- 
-        examdata = mongo.db.exam.find(query)
-    exam_list = []
-    for exam in examdata:
-        exam_dict = {
-
-            'school': exam.get('school', ''),
-            'department': exam.get('department', ''),
-            'year': exam.get('year', ''),
-            'question_number': exam.get('question_number', ''),
-            'question_text': exam.get('question_text', ''),
-            'type': exam.get('type', ''),
-            'subject': exam.get('主要學科', ''),
-            'options': exam.get('options', []),
-            'textbook_source': exam.get('教科書來源', ''),
-            'textbook_chapter': exam.get('教科書章節', ''),
-            'exam_unit': exam.get('考點單元', ''),
-            'related_concepts': exam.get('相關概念', []),
-            'analysis_description': exam.get('分析說明', ''),
-            'image_file': exam.get('image_file', []),
-        }
-        
-        # 處理圖片檔案
-        if exam_dict['image_file']:
-            image_data_list = []
-            for image_filename in exam_dict['image_file']:
-                image_base64 = get_image_base64(image_filename)
-                if image_base64:
-                    image_data_list.append({
-                        'filename': image_filename,
-                        'data': image_base64
-                    })
-            exam_dict['images'] = image_data_list
-        
-        exam_list.append(exam_dict)
-
-    return jsonify({'exams': exam_list}), 200
+# 注意：get-exam和get-exam-to-object函數已移動到quiz.py
 
 @dashboard_bp.route('/submit-answers', methods=['POST', 'OPTIONS'])
 def submit_answers():
@@ -1035,163 +917,3 @@ def getSubmissionDetail():
     except Exception as e:
         print(f"獲取提交詳情時發生錯誤: {str(e)}")
         return jsonify({'message': f'查詢失敗: {str(e)}'}), 500
-
-
-@dashboard_bp.route('/get-quiz', methods=['POST', 'OPTIONS'])
-def get_quiz():
-    """獲取測驗詳情 API"""
-    if request.method == 'OPTIONS':
-        return jsonify({'message': 'CORS preflight'}), 200
-    
-    try:
-        # 驗證token
-        token = request.headers.get('Authorization')
-        if not token:
-            return jsonify({'message': '缺少授權token'}), 401
-        
-        token = token.replace('Bearer ', '')
-        decoded_token = jwt.decode(token, current_app.config['SECRET_KEY'], algorithms=['HS256'])
-        user_email = decoded_token.get('email')
-        
-        if not user_email:
-            return jsonify({'message': '無效的token'}), 401
-        
-        # 獲取請求參數
-        data = request.get_json()
-        quiz_id = data.get('quiz_id')
-        
-        if not quiz_id:
-            return jsonify({'message': '缺少 quiz_id 參數'}), 400
-        
-        # 這裡可以從數據庫或其他來源獲取測驗數據
-        # 目前使用模擬數據作為示例
-        sample_quiz = {
-            'quiz_id': quiz_id,
-            'title': f'測驗 {quiz_id}',
-            'time_limit': 60,  # 分鐘
-            'questions': [
-                {
-                    'id': 1,
-                    'question_text': '下列何者是 Python 的資料型別？',
-                    'type': 'single-choice',
-                    'options': ['list', 'dict', 'tuple', '以上皆是'],
-                    'image_file': None
-                },
-                {
-                    'id': 2,
-                    'question_text': '請選擇所有正確的 JavaScript 變數宣告方式：',
-                    'type': 'multiple-choice',
-                    'options': ['var x = 1;', 'let y = 2;', 'const z = 3;', 'define a = 4;'],
-                    'image_file': None
-                },
-                {
-                    'id': 3,
-                    'question_text': '填空：Python 中用於迴圈的關鍵字是 _____ 和 _____。',
-                    'type': 'fill-in-the-blank',
-                    'options': None,
-                    'image_file': None
-                },
-                {
-                    'id': 4,
-                    'question_text': 'HTML 是一種程式語言。',
-                    'type': 'true-false',
-                    'options': ['是', '否'],
-                    'image_file': None
-                },
-                {
-                    'id': 5,
-                    'question_text': '請簡述 MVC 架構的概念。',
-                    'type': 'short-answer',
-                    'options': None,
-                    'image_file': None
-                }
-            ]
-        }
-        
-        return jsonify({
-            'message': '獲取測驗成功',
-            **sample_quiz
-        }), 200
-        
-    except jwt.InvalidTokenError:
-        return jsonify({'message': '無效的token'}), 401
-    except Exception as e:
-        print(f"獲取測驗時發生錯誤: {str(e)}")
-        return jsonify({'message': f'獲取測驗失敗: {str(e)}'}), 500
-
-
-@dashboard_bp.route('/submit-quiz', methods=['POST', 'OPTIONS'])
-def submit_quiz():
-    """提交測驗答案 API"""
-    if request.method == 'OPTIONS':
-        return jsonify({'message': 'CORS preflight'}), 200
-    
-    try:
-        # 驗證token
-        token = request.headers.get('Authorization')
-        if not token:
-            return jsonify({'message': '缺少授權token'}), 401
-        
-        token = token.replace('Bearer ', '')
-        decoded_token = jwt.decode(token, current_app.config['SECRET_KEY'], algorithms=['HS256'])
-        user_email = decoded_token.get('email')
-        
-        if not user_email:
-            return jsonify({'message': '無效的token'}), 401
-        
-        # 獲取請求參數
-        data = request.get_json()
-        quiz_id = data.get('quiz_id')
-        answers = data.get('answers', {})
-        time_taken = data.get('time_taken', 0)
-        
-        if not quiz_id:
-            return jsonify({'message': '缺少 quiz_id 參數'}), 400
-        
-        if not answers:
-            return jsonify({'message': '缺少答案數據'}), 400
-        
-        # 獲取用戶信息
-        user_info = get_user_info(user_email)
-        if not user_info:
-            return jsonify({'message': '用戶不存在'}), 404
-        
-        # 生成提交ID
-        submission_id = str(uuid.uuid4())
-        
-        # 準備保存到數據庫的數據
-        submission_data = {
-            'submission_id': submission_id,
-            'quiz_id': quiz_id,
-            'user_email': user_email,
-            'user_name': user_info.get('name', ''),
-            'answers': answers,
-            'time_taken': time_taken,
-            'submit_time': datetime.now().isoformat(),
-            'status': 'submitted',
-            'type': 'quiz'  # 區分測驗和考試
-        }
-        
-        # 保存到MongoDB
-        try:
-            result = mongo.db.submissions.insert_one(submission_data)
-            if result.inserted_id:
-                print(f"測驗提交成功保存，ID: {submission_id}")
-                
-                return jsonify({
-                    'message': '測驗提交成功',
-                    'submission_id': submission_id,
-                    'status': 'success'
-                }), 200
-            else:
-                return jsonify({'message': '保存失敗'}), 500
-                
-        except Exception as db_error:
-            print(f"數據庫保存錯誤: {str(db_error)}")
-            return jsonify({'message': f'保存失敗: {str(db_error)}'}), 500
-        
-    except jwt.InvalidTokenError:
-        return jsonify({'message': '無效的token'}), 401
-    except Exception as e:
-        print(f"提交測驗時發生錯誤: {str(e)}")
-        return jsonify({'message': f'提交測驗失敗: {str(e)}'}), 500

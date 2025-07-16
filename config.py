@@ -6,7 +6,17 @@ class Config:
             'max_overflow': 10
         }
     MONGO_URI = "mongodb://localhost:27017/MIS_Teach"
-    SECRET_KEY = open('./security_key','r').read()
+    # 添加錯誤處理以防security_key文件不存在
+    try:
+        with open('./security_key', 'r') as f:
+            SECRET_KEY = f.read().strip()
+    except FileNotFoundError:
+        # 如果security_key文件不存在，使用默認密鑰
+        print("⚠️ security_key文件不存在，使用默認密鑰")
+        SECRET_KEY = 'default-secret-key-for-development-only'
+    except Exception as e:
+        print(f"⚠️ 讀取security_key失敗: {e}")
+        SECRET_KEY = 'default-secret-key-for-development-only'
     MAIL_SERVER = 'smtp.gmail.com'
     MAIL_PORT = 587
     MAIL_USE_TLS = True

@@ -4,6 +4,8 @@ from datetime import datetime, timedelta
 import jwt
 from accessories import mongo
 from flask_login import logout_user
+import time
+
 login_bp = Blueprint('login', __name__)
 
 @login_bp.route('/login_user', methods=['POST', 'OPTIONS'])
@@ -15,16 +17,18 @@ def login():
     password = data.get('password')
     user_data = mongo.db.students.find_one({"email": email})
     if user_data and check_password_hash(user_data['password'], password):
-        # 修復JWT token生成
+        # 修復JWT token生成 - 使用標準Unix時間戳
         exp_time = datetime.now() + timedelta(hours=3)
         token = jwt.encode({
             'user': user_data['email'],
-            'exp': exp_time.strftime("%Y%m%d%H%M%S")
-        }, current_app.config['SECRET_KEY'])
+            'exp': int(exp_time.timestamp())  # 使用Unix時間戳而不是字符串
+        }, current_app.config['SECRET_KEY'], algorithm='HS256')
 
         # 獲取用戶的 new_user 狀態
         new_user = user_data.get('new_user', True)
         guide_completed = user_data.get('guide_completed', False)
+
+        print(f"✅ 用戶 {email} 登錄成功，token已生成")
 
         # 返回 token 和導覽狀態
         return jsonify({
@@ -37,6 +41,7 @@ def login():
             }
         }), 200
     else:
+        print(f"❌ 用戶 {email} 登錄失敗：用戶名或密碼不正確")
         return jsonify({'message': '用戶名或密碼不正確'}), 401
 
 
