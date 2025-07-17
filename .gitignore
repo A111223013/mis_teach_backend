@@ -32,3 +32,4 @@ src/rag_sys/data/outputs/
 src/rag_sys/data/pdfs/
 src/rag_sys/data/knowledge_db/
 /src/rag_sys/data/
+/src/picture/
