@@ -331,7 +331,7 @@ def create_quiz():
                 'id': i + 1,
                 'question_text': exam.get('question_text', ''),
                 'type': exam.get('type', 'single-choice'),
-                'options': exam.get('option', []),
+                'options': exam.get('options', []),
                 'correct_answer': exam.get('answer', ''),
                 'original_exam_id': str(exam.get('_id', '')),
                 'image_file': ''

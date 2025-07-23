@@ -144,7 +144,7 @@ def init_mongo_data():
             print("檢測到exam collection為空，開始初始化資料...")
             
             current_dir = os.path.dirname(os.path.abspath(__file__))
-            json_file_path = os.path.join(current_dir, 'data', 'correct_exam.json')
+            json_file_path = os.path.join(current_dir, 'backup', '105~113_exam.json')
             
             if not os.path.exists(json_file_path):
                 print(f"錯誤：找不到檔案 {json_file_path}")
