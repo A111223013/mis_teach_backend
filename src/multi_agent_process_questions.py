@@ -85,7 +85,18 @@ arbiter_agent_prompt_template = """
 
 ---
 
-請以 `[{{...}}]` 的形式回傳整合後的 JSON 陣列，**不要回傳任何解釋說明或額外文字**。
+【輸出格式】
+
+請以如下格式（list of one dict）回傳整合後的仲裁判斷結果，不要回傳任何解釋說明或額外文字，並以嚴格的 JSON 格式輸出：
+
+[{{  
+  "answer": "請按照仲裁結果填入簡要答案",  
+  "detail-answer": "請按照仲裁結果填入詳細答案",  
+  "key-points": "按照主代理人提供的關鍵點填寫，從以下選項中擇一：基本計概、數位邏輯、作業系統、程式語言、資料結構、網路、資料庫、AI與機器學習、資訊安全、雲端與虛擬化、MIS、軟體工程與系統開發",  
+  "difficulty level": "按照仲裁結果填寫難度等級，只能填入：簡單、中等、困難",  
+  "error reason": "若主代理人與次代理人有「衝突或不同意見」，請填入簡短說明，否則留空字串"  
+}}]
+
 """
 
 
@@ -247,7 +258,6 @@ def process_all_questions(questions):
         else:
             count += 1
             print(f"🔄 處理第 {count} 題...")
-            print(arbiter_agent_prompt_template.format(main_response="test", secondary_response="test"))
             result = process_question(q)
             results.append(result)
 
@@ -261,7 +271,6 @@ if __name__ == "__main__":
         questions = json.load(f)
 
     results = process_all_questions(questions)
-
     with open("../data/results.json", "w", encoding="utf-8") as f:
         json.dump(results, f, ensure_ascii=False, indent=2)
 

@@ -9,11 +9,11 @@
     "options": [],
     "answer_type": "short-answer",
     "image_file": [],
-    "answer": "",
-    "detail-answer":"",
-    "key-points": "",
-    "difficulty level": "",
-    "error reason": ""
+    "answer": "請按照仲裁結果填入簡要答案",
+    "detail-answer":"請按照仲裁結果填入詳細答案",
+    "key-points": "按照主代理人提供的關鍵點填寫",
+    "difficulty level": "按照仲裁結果填寫難度等級只能填入簡單、中等 或 困難",
+    "error reason": "若主代理人與次代理人有「衝突或不同意見」，請填入簡短說明，否則留空字串"
   },
   {
     "type": "group",
@@ -74,31 +74,5 @@
     "image_file": [
       "105-計算機概論-國立臺北科技大學-資訊工程研究所_page_2_1.png"
     ]
-  },
-  {
-    "type": "single",
-    "school": "國立臺北科技大學",
-    "department": "資訊工程研究所",
-    "year": "105",
-    "question_number": "4-2-2",
-    "question_text": "Consider the following set of processes, with the length of the CPU burst given in milliseconds:\n\n2.The processes are assumed to have arrived at the ready queue in the order P1, P2, P3, P4, P5, all at time 0. Answer the questions using the following scheduling algorithms: shortest-job-first (SJF), and round-robin (RR, with quantum=2).\n\n(2) What is the turnaround time of each process for each of the scheduling algorithms? (5%)",
-    "options": [],
-    "answer": null,
-    "answer_type": "short-answer",
-    "image_file": [
-      "105-計算機概論-國立臺北科技大學-資訊工程研究所_page_2_1.png"
-    ]
-  },
-  {
-    "type": "single",
-    "school": "國立臺北科技大學",
-    "department": "資訊工程研究所",
-    "year": "105",
-    "question_number": "5-1",
-    "question_text": "Answer the following questions regarding memory management. (11%)\n\n1.Please describe the mechanism of the following two memory management schemes: pure paging and pure segmentation. (6%)",
-    "options": [],
-    "answer": null,
-    "answer_type": "short-answer",
-    "image_file": []
   }
 ]

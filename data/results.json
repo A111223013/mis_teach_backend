@@ -77,39 +77,5 @@
     "key-points": "",
     "difficulty level": "",
     "error reason": "仲裁解析錯誤: Expecting value: line 1 column 1 (char 0)"
-  },
-  {
-    "type": "single",
-    "school": "國立臺北科技大學",
-    "department": "資訊工程研究所",
-    "year": "105",
-    "question_number": "4-2-2",
-    "question_text": "Consider the following set of processes, with the length of the CPU burst given in milliseconds:\n\n2.The processes are assumed to have arrived at the ready queue in the order P1, P2, P3, P4, P5, all at time 0. Answer the questions using the following scheduling algorithms: shortest-job-first (SJF), and round-robin (RR, with quantum=2).\n\n(2) What is the turnaround time of each process for each of the scheduling algorithms? (5%)",
-    "options": [],
-    "answer": "",
-    "answer_type": "short-answer",
-    "image_file": [
-      "105-計算機概論-國立臺北科技大學-資訊工程研究所_page_2_1.png"
-    ],
-    "detail-answer": "",
-    "key-points": "",
-    "difficulty level": "",
-    "error reason": "仲裁解析錯誤: Expecting value: line 1 column 1 (char 0)"
-  },
-  {
-    "type": "single",
-    "school": "國立臺北科技大學",
-    "department": "資訊工程研究所",
-    "year": "105",
-    "question_number": "5-1",
-    "question_text": "Answer the following questions regarding memory management. (11%)\n\n1.Please describe the mechanism of the following two memory management schemes: pure paging and pure segmentation. (6%)",
-    "options": [],
-    "answer": "",
-    "answer_type": "short-answer",
-    "image_file": [],
-    "detail-answer": "",
-    "key-points": "",
-    "difficulty level": "",
-    "error reason": "仲裁解析錯誤: Expecting value: line 1 column 1 (char 0)"
   }
 ]
