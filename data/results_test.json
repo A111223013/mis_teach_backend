@@ -1,0 +1,81 @@
+[
+  {
+    "type": "single",
+    "school": "國立臺北科技大學",
+    "department": "資訊工程研究所",
+    "year": "105",
+    "question_number": "2-3",
+    "question_text": "This problem is related to a typical big-endian 8-bit CPU with a 16-bit accumulator (abbreviated as A). (15%)\n\nGive a general algorithm to show how the CPU sets overflow and carry flags during performing addition. (5%)",
+    "options": [],
+    "answer_type": "short-answer",
+    "image_file": [],
+    "answer": "1. **執行 8 位元加法：**  將兩個 8 位元運算元相加，得到一個 9 位元的結果（包含可能的進位位元）。\n2. **設定進位旗標：**  檢查第 9 位元（最高位元的進位）。如果該位元為 1，則設定進位旗標；否則，清除進位旗標。\n3. **設定溢位旗標：**\n    *   取得兩個 8 位元運算元的最高有效位元 (MSB)。\n    *   取得加法結果的最高有效位元 (MSB)。\n    *   如果兩個運算元的 MSB 相同，但與結果的 MSB 不同，則設定溢位旗標；否則，清除溢位旗標。",
+    "detail-answer": "此題要求描述一個通用的演算法，說明一個使用 16 位元累加器 (A) 的 8 位元大端 CPU 如何在執行加法時設定溢位 (overflow) 和進位 (carry) 旗標。\n\n*   **進位旗標 (Carry Flag):**  進位旗標的設定相對簡單。在執行 8 位元加法時，如果加法結果超出 8 位元所能表示的範圍 (0-255)，則會產生進位。 這個進位會被設定到進位旗標。更精確地說，如果加法結果的第 9 位元是 1，則設定進位旗標。\n*   **溢位旗標 (Overflow Flag):**  溢位旗標的設定稍微複雜，因為它與有號數的表示有關。 溢位表示加法結果超出有號數所能表示的範圍。 在 8 位元有號數中，這個範圍通常是 -128 到 127。溢位發生的條件是：\n    *   兩個正數相加，結果為負數。\n    *   兩個負數相加，結果為正數。\n    一個常見的判斷溢位的方式是檢查最高有效位元 (MSB) 的進位情況。如果加法運算的兩個輸入的 MSB 進位情況不一致（一個有進位，另一個沒有），則發生溢位。\n\n**通用演算法描述：**\n\n1.  **執行 8 位元加法：**  將兩個 8 位元運算元相加，得到一個 9 位元的結果（包含可能的進位位元）。\n2.  **設定進位旗標：**  檢查第 9 位元（最高位元的進位）。如果該位元為 1，則設定進位旗標；否則，清除進位旗標。\n3.  **設定溢位旗標：**\n    *   取得兩個 8 位元運算元的最高有效位元 (MSB)。\n    *   取得加法結果的最高有效位元 (MSB)。\n    *   如果兩個運算元的 MSB 相同，但與結果的 MSB 不同，則設定溢位旗標；否則，清除溢位旗標。 換句話說，判斷運算元的 MSB 進位情況是否一致。",
+    "key-points": "數位邏輯",
+    "difficulty level": "中等",
+    "error reason": ""
+  },
+  {
+    "type": "group",
+    "school": "國立臺北科技大學",
+    "department": "資訊工程研究所",
+    "year": "105",
+    "group_question_text": "Answer the following questions regarding process management.",
+    "sub_questions": [
+      {
+        "question_number": "4-1-1",
+        "question_text": " (16%)\n\n1.Please indicate whether each of the following statements is true or false. If a statement is incorrect, please explain the reasons. \n\n(1) Multithreaded programs can always provide better performance than a single-threaded solution. (2%)",
+        "options": [],
+        "answer_type": "true-false",
+        "image_file": [],
+        "answer": "False",
+        "detail-answer": "多執行緒程式在某些情況下可以提高效能，尤其是在任務可以同時執行或等待 I/O 操作時。但是，它們並不*總是*提供比單執行緒解決方案更好的效能。以下是一些可能導致多執行緒程式效能較差的原因：\n\n*   **Overhead:** 建立和管理執行緒會產生 overhead。執行緒之間的 context switching 也會消耗 CPU 時間。\n*   **Synchronization:** 執行緒通常需要共享資料，這需要同步機制（例如，locks, mutexes）。不正確或過多的同步可能導致 contention、blocking 和效能下降。\n*   **Complexity:** 多執行緒程式通常比單執行緒程式更難設計、實現和 debug。這種複雜性可能會引入對效能產生負面影響的錯誤。\n*   **Limited Parallelism:** 如果問題本質上是循序的，或者並行執行資源有限（例如，單核心處理器），則多執行緒可能無法提供任何效能優勢。事實上，由於執行緒管理的 overhead，它可能會降低效能。\n*   **False sharing:** 當執行緒存取位於同一 cache line 中的資料時，即使它們存取的是不同的變數，也可能由於 cache 失效和更新而導致效能下降。\n",
+        "key-points": "作業系統",
+        "difficulty level": "中等",
+        "error reason": ""
+      },
+      {
+        "question_number": "4-1-2",
+        "question_text": " (16%)\n\n1.Please indicate whether each of the following statements is true or false. If a statement is incorrect, please explain the reasons. \n \n(2) A program can always run faster in a multicore system than in a single-core system. (2%)",
+        "options": [],
+        "answer_type": "true-false",
+        "image_file": [],
+        "answer": "False",
+        "detail-answer": "雖然多核心系統具有並行處理的能力，但並非所有程式都能在多核心系統上運行得更快。以下是一些原因：\n* 程式本身並非設計為並行執行：如果程式是循序執行的，沒有利用多執行緒或多進程，那麼它無法充分利用多核心的優勢。\n* 額外的開銷：多執行緒或多進程的創建、同步和通訊會產生額外的開銷。如果這些開銷超過了並行處理帶來的收益，程式在多核心系統上反而會變慢。\n* 資源競爭：多個核心可能競爭相同的資源（例如記憶體、快取、I/O），導致效能下降。\n* Amdahl's Law（阿姆達爾定律）：指出程式中可並行化的部分比例限制了並行化所能帶來的最大加速比。",
+        "key-points": "作業系統",
+        "difficulty level": "中等",
+        "error reason": ""
+      },
+      {
+        "question_number": "4-1-3",
+        "question_text": " (16%)\n\n1.Please indicate whether each of the following statements is true or false. If a statement is incorrect, please explain the reasons. \n\n(3) A multithreaded program using multiple user-level threads achieves better performance on a multiprocessor system than on a single-processor system. (2%)",
+        "options": [],
+        "answer_type": "true-false",
+        "image_file": [],
+        "answer": "False",
+        "detail-answer": "User-level threads (ULTs) 是由使用者空間的程式庫管理的，核心 (Kernel) 並不知道它們的存在。在單處理器系統上，即使程式是多執行緒的，作業系統核心一次也只會排程一個處理序 (Process) 執行。ULTs 的切換是由程式庫負責，不需要核心介入，所以能提升程式的反應速度和並行性 (Concurrency)。在多處理器系統上，如果核心只將包含多個 ULTs 的單一處理序分配到一個處理器上，那這些 ULTs 仍然無法真正並行執行。它們仍然需要在同一個處理器上進行切換。要讓多執行緒程式在多處理器系統上獲得更好的效能，需要使用 Kernel-level threads (KLTs)。KLTs 是由核心直接管理的，核心可以將不同的 KLTs 分配到不同的處理器上並行執行。基於以上理解，可以得出結論：即使程式使用了多個 ULTs，在多處理器系統上，如果核心仍然只將包含這些 ULTs 的處理序分配到一個處理器上，那麼這些 ULTs 仍然無法真正並行執行，效能提升有限。因此，題目中的敘述是錯誤的。",
+        "key-points": "作業系統",
+        "difficulty level": "中等",
+        "error reason": ""
+      }
+    ]
+  },
+  {
+    "type": "single",
+    "school": "國立臺北科技大學",
+    "department": "資訊工程研究所",
+    "year": "105",
+    "question_number": "4-2-1",
+    "question_text": "Consider the following set of processes, with the length of the CPU burst given in milliseconds:\n\n2.The processes are assumed to have arrived at the ready queue in the order P1, P2, P3, P4, P5, all at time 0. Answer the questions using the following scheduling algorithms: shortest-job-first (SJF), and round-robin (RR, with quantum=2).\n\n(1) What is the waiting time of each process for each of the scheduling algorithms? (5%)",
+    "options": [],
+    "answer": "請參考詳細解答",
+    "answer_type": "short-answer",
+    "image_file": [
+      "105-計算機概論-國立臺北科技大學-資訊工程研究所_page_2_1.png"
+    ],
+    "detail-answer": "好的，我來分析這道題目。\n\n1. **正確答案與理由：**\n\n由於題目要求計算在 SJF 和 RR (quantum=2) 排程算法下，每個 Process 的等待時間，因此正確答案需要分別針對兩種算法，列出每個 Process 的等待時間。\n\n| Process | SJF Waiting Time | RR Waiting Time |\n|---|---|---|\n| P1 |  |  |\n| P2 |  |  |\n| P3 |  |  |\n| P4 |  |  |\n| P5 |  |  |\n\n以下提供計算思路 (詳細的數值結果需要根據 Process 及其 burst time 進行計算)。\n\n*   **SJF (Shortest Job First):**  SJF 是一種非搶佔式排程算法 (題目未明確說明，但通常 SJF 指的是 non-preemptive SJF)。它會優先執行 burst time 最短的 process。  需要按照 burst time 排序 process，然後計算每個 process 的等待時間。等待時間 = 完成時間 - 到達時間 - burst time。\n*   **RR (Round Robin):** RR 是一種搶佔式排程算法，每個 process 會被分配一個時間片 (quantum)。如果 process 在時間片結束前完成，則 CPU 會立即分配給下一個 process。如果 process 在時間片結束時仍未完成，則它會被放回 ready queue 的末尾。  需要模擬 RR 排程的執行過程，記錄每個 process 的開始執行時間，然後計算等待時間。等待時間 = 開始執行時間 - 到達時間 的總和。\n\n2. **題型：**\n\n*   \"short-answer\"：簡答題／問答題\n\n題目要求計算每個 process 的等待時間，需要簡要地呈現計算結果。題目描述中沒有發現題意錯誤或敘述模糊之處。\n\n3. **題目敘述是否有誤：**\n\n題目描述本身沒有錯誤，但是缺少了Process 及其 burst time 的數據。因此無法給出具體數值答案，只能提供解題思路。以下假設題目中缺少下表所示的資料：\n\n| Process | Burst Time (ms) |\n|---|---|\n| P1 | 8 |\n| P2 | 4 |\n| P3 | 9 |\n| P4 | 5 |\n| P5 | 2 |\n\n如果確實缺少這部分的資訊，則應該要求出題者補充相關資訊。\n\n4. **相關知識點：**\n\n*   作業系統\n\n5. **難易度：**\n\n*   中等\n\n6. **解析與思路：**\n\n(基於上方假設的Burst Time 數據)\n\n*   **SJF:**\n\n    1.  根據 Burst Time 排序 processes: P5 (2), P2 (4), P4 (5), P1 (8), P3 (9)\n    2.  計算每個 process 的等待時間:\n\n        *   P5: 0\n        *   P2: 2\n        *   P4: 2 + 4 = 6\n        *   P1: 2 + 4 + 5 = 11\n        *   P3: 2 + 4 + 5 + 8 = 19\n\n*   **RR (Quantum = 2):**\n\n    1.  模擬排程過程，計算每個 process 的完成時間。\n    2.  P1(0-2), P2(2-4), P3(4-6), P4(6-8), P5(8-10), P1(10-12), P2(12-14), P3(14-16), P4(16-18), P1(18-20), P3(20-22), P1(22-24), P3(24-26)\n    3.  計算每個 process 的等待時間:\n        *   P1: (0 + 10 + 18 + 22) - 0 = 50\n        *   P2: (2 + 12) - 0 = 14\n        *   P3: (4 + 14 + 20 + 24) - 0 = 62\n        *   P4: (6 + 16) - 0 = 22\n        *   P5: (8) - 0 = 8\n    4.  由於 RR 的等待時間計算方式為每次進程被調度時的時間總和,因此需要調整計算公式。\n    5.  P1: (0 + 10 + 18 + 22) - (4 * 0) = 50\n    6.  P2: (2 + 12) - (2 * 0) = 14\n    7.  P3: (4 + 14 + 20 + 24) - (4 * 0) = 62\n    8.  P4: (6 + 16) - (2 * 0) = 22\n    9.  P5: (8) - (1 * 0) = 8\n\n**最終答案範例 (基於 Burst Time 假設):**\n\n| Process | SJF Waiting Time | RR Waiting Time |\n|---|---|---|\n| P1 | 11 | 50 |\n| P2 | 2 | 14 |\n| P3 | 19 | 62 |\n| P4 | 6 | 22 |\n| P5 | 0 | 8 |\n\n**注意：** 以上答案基於假設的 Burst Time 數據。請用實際的 Burst Time 數據重新計算。如果沒有 Burst Time 的資料，請告知出題者補充資訊。\n\n**補充：**\n\n*   **關於 SJF：**  主代理人正確地指出 SJF 通常指的是 non-preemptive SJF。若題目有明確說明是 preemptive SJF (也稱為 Shortest Remaining Time First, SRTF)，則計算方式會不同。\n\n*   **關於 RR Waiting Time 計算：** 主代理人對於 RR 的等待時間計算思路是正確的，但可以更精簡地描述：每個 Process 的等待時間是它所有「開始執行時間 - 上次執行結束時間」的總和。 第一次開始執行時間 - 到達時間 也可以納入。\n\n*   **建議：** 主代理人可以更明確地指出，在 RR 排程中，如果某個 process 的 burst time 小於 quantum，則該 process 不會被放回 ready queue 末尾。",
+    "key-points": "作業系統",
+    "difficulty level": "中等",
+    "error reason": "缺少 Process burst time 數據"
+  }
+]

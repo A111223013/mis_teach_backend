@@ -7,7 +7,7 @@ import google.generativeai as genai
 
 
 # ========== Gemini API Key ==========
-GEMINI_API_KEY = os.environ.get("AIzaSyCYsh5zsAH-DE4ChAD8PMT1xIvNw1YSWzQ", "AIzaSyBad7mpaX-fPPtpjbcgZ1JpKOBPJZJkmf4")
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "AIzaSyBad7mpaX-fPPtpjbcgZ1JpKOBPJZJkmf4")
 
 # ========== 提示詞定義 ==========
 main_agent_prompt_template = """
@@ -31,12 +31,17 @@ main_agent_prompt_template = """
 5. 評估難易度（簡單、中等、困難）。
 6. 詳細說明解析與思路。
 
+【重要要求】
+- 請用中文回答所有分析內容
+- 不要修改原始題目內容
+- 保持題目的原始語言（英文題目保持英文，中文題目保持中文）
+
 【題目內容】
 {question_text}
 """
 
 secondary_agent_prompt_template = """
-你是「計算機概論判題系統」中的次要代理人 LLaMA 3.1。
+你是「計算機概論判題系統」中的次要代理人 Gemini 2.0。
 
 請閱讀以下主代理人 Gemini 2.0 的分析結果，並依下列規則做出回應：
 
@@ -53,9 +58,9 @@ secondary_agent_prompt_template = """
 """
 
 arbiter_agent_prompt_template = """
-你是「計算機概論判題系統」中的仲裁代理人 Gemini 2.5，當主代理人與次代理人意見不一致時，由你做出最終判斷。
+你是「計算機概論判題系統」中的仲裁代理人。
 
-請閱讀以下兩位代理人的意見後，完成以下任務，並將輸出結果**嚴格按照指定的 JSON 陣列格式（list of dict）**產出：
+請根據以下兩位代理人的分析，輸出一個JSON格式的題目結果。
 
 【主代理人分析】
 {main_response}
@@ -63,40 +68,44 @@ arbiter_agent_prompt_template = """
 【次代理人回應】
 {secondary_response}
 
-【任務說明】
+【任務】
+請整合上述分析，輸出一個包含完整題目資訊的JSON陣列。
 
-請整合上述兩位代理人的回答，完成題目欄位的整合與補全，並遵守以下格式規範：
-
----
-
-【輸出規則】
-
-1. 請輸出一個「包含 1 筆題目資料的 JSON 陣列」（即 `[{{...}}]` 形式），即使只有一題，也不要省略 list 包裝。
-2. 必須保留題目原本的所有欄位（例如：type、question_text、question_id、school、department、year... 等）。
-3. 將 `"answer"` 欄位移動到 `"image_file"` 欄位之後。
-4. 新增以下 4 個欄位（請務必補齊）：
-   - `"detail-answer"`：提供清楚且完整的解題詳解。
-   - `"key-points"`：請從以下 12 個選項中擇一填入（必填）：
-     `"基本計概"、"數位邏輯"、"作業系統"、"程式語言"、"資料結構"、"網路"、"資料庫"、"AI與機器學習"、"資訊安全"、"雲端與虛擬化"、"MIS"、"軟體工程與系統開發"`
-   - `"difficulty level"`：只能填入 `"簡單"`、`"中等"` 或 `"困難"`（必填）。
-   - `"error reason"`：若主代理人與次代理人有「衝突或不同意見」，請填入簡短說明，否則留空字串。
-5. 若題型與原始 `"answer_type"` 不一致，請採用主代理人提供的答案更新 `"answer_type"` 欄位。
-6. 除上述調整，其餘原始欄位請勿遺漏，並保留原始順序與內容。
-
----
+【重要要求】
+1. 保持原始題目內容不變（英文題目保持英文，中文題目保持中文）
+2. 保持所有原始欄位不變（school、department、year、question_number等）
+3. 只有以下欄位使用中文：
+   - detail-answer：對於答案的詳細詳細說明解釋（中文）
+   - key-points：知識點分類（中文）
+   - difficulty level：難度等級（中文）
+   - error reason：錯誤原因（中文）
+4. answer欄位必須是明確、簡短、直接的正確答案，**不能出現「請參考詳細解答」、「見上」等無意義內容**，要直接給出答案本身。
+   - 簡答題、問答題：用中文直接給出正確答案
+   - 選擇題：直接給出正確選項（如A、B、True、False等，或選項內容）
+5. detail-answer 是對 answer 的詳細說明、推導、理由，並說明為什麼知識點式著個跟為甚麼難易度是這樣（中文）
+6. difficulty level 判斷原則：
+   - 若題目為定義、事實、基礎知識，請填「簡單」
+   - 若需推理、計算、綜合，請填「中等」或「困難」
+7. 不要修改或覆蓋原始欄位
 
 【輸出格式】
-
-請以如下格式（list of one dict）回傳整合後的仲裁判斷結果，不要回傳任何解釋說明或額外文字，並以嚴格的 JSON 格式輸出：
+請直接輸出以下格式的JSON陣列（不要包含任何其他文字）：
 
 [{{  
-  "answer": "請按照仲裁結果填入簡要答案",  
-  "detail-answer": "請按照仲裁結果填入詳細答案",  
-  "key-points": "按照主代理人提供的關鍵點填寫，從以下選項中擇一：基本計概、數位邏輯、作業系統、程式語言、資料結構、網路、資料庫、AI與機器學習、資訊安全、雲端與虛擬化、MIS、軟體工程與系統開發",  
-  "difficulty level": "按照仲裁結果填寫難度等級，只能填入：簡單、中等、困難",  
-  "error reason": "若主代理人與次代理人有「衝突或不同意見」，請填入簡短說明，否則留空字串"  
+  "answer": "答案（明確簡短直接，不能是請參考詳細解答）",
+  "detail-answer": "詳細解答（中文）",
+  "key-points": "基本計概",
+  "difficulty level": "簡單",
+  "error reason": ""
 }}]
 
+注意：
+1. 只輸出新增的欄位，不要包含原始欄位
+2. key-points 必須從以下選項選擇：基本計概、數位邏輯、作業系統、程式語言、資料結構、網路、資料庫、AI與機器學習、資訊安全、雲端與虛擬化、MIS、軟體工程與系統開發
+3. difficulty level 只能填入：簡單、中等、困難
+4. 直接輸出JSON，不要有任何解釋文字
+5. 必須包含 key-points 欄位
+6. 不要修改原始題目內容
 """
 
 
@@ -134,22 +143,15 @@ def call_gemini_model(prompt, image_base64=None):
     return response.text.strip()
 
 def call_llama_model(prompt):
-    response = requests.post(
-        "http://localhost:11434/api/generate",
-        json={
-            "model": "llama3:8b",
-            "prompt": prompt,
-            "stream": False,
-            "options": {
-                "temperature": 0.7,
-                "max_tokens": 1024
-            }
-        }
-    )
-    if response.status_code == 200:
-        return response.json()["response"].strip()
-    else:
-        raise Exception(f"Ollama 回應失敗：{response.status_code} - {response.text}")
+    """調用次代理人模型（改為使用 Gemini）"""
+    try:
+        # 使用 Gemini 作為次代理人，而不是本地 Ollama
+        model = genai.GenerativeModel("gemini-2.0-flash")
+        response = model.generate_content(prompt)
+        return response.text.strip()
+    except Exception as e:
+        print(f"⚠️ 次代理人調用失敗，使用備用方案：{e}")
+       
 
 # ========== 處理 single ==========
 def process_question(question):
@@ -166,32 +168,54 @@ def process_question(question):
     if image_file:
         image_base64 = read_image_base64(os.path.join("backend", "src", "picture", image_file))
 
+    print(f"🔄 處理題目：{question_text[:50]}...")
+
     main_prompt = main_agent_prompt_template.format(question_text=question_text)
     main_response = call_gemini_model(main_prompt, image_base64=image_base64)
+    print("✅ 主代理人分析完成")
 
     secondary_prompt = secondary_agent_prompt_template.format(main_response=main_response)
     secondary_response = call_llama_model(secondary_prompt)
+    print("✅ 次代理人分析完成")
 
     arbiter_prompt = arbiter_agent_prompt_template.format(
         main_response=main_response,
         secondary_response=secondary_response
     )
     arbiter_response = call_gemini_model(arbiter_prompt)
+    print("✅ 仲裁代理人分析完成")
 
     try:
+        # 嘗試清理回應，移除可能的非JSON內容
+        arbiter_response = arbiter_response.strip()
+        if arbiter_response.startswith('```json'):
+            arbiter_response = arbiter_response[7:]
+        if arbiter_response.endswith('```'):
+            arbiter_response = arbiter_response[:-3]
+        arbiter_response = arbiter_response.strip()
+        
+        print(f"🔍 仲裁回應：{arbiter_response[:100]}...")
+        
         result = json.loads(arbiter_response)
         if isinstance(result, list) and result:
-            return result[0]  # 回傳題目結構（仲裁後格式）
+            # 確保結果包含所有原始欄位
+            processed_question = copy.deepcopy(question)
+            processed_question.update(result[0])
+            print("✅ JSON解析成功")
+            return processed_question
         else:
             raise ValueError("仲裁輸出格式不正確")
     except Exception as e:
+        print(f"⚠️ JSON解析失敗：{e}")
         # 若解析失敗，回傳原始題目但補齊新欄位
         fallback = copy.deepcopy(question)
-        fallback["answer"] = ""
-        fallback["detail-answer"] = ""
-        fallback["key-points"] = ""
-        fallback["difficulty level"] = ""
-        fallback["error reason"] = f"仲裁解析錯誤: {e}"
+        # 確保所有新增欄位都有預設值
+        fallback.setdefault("answer", "")
+        fallback.setdefault("detail-answer", "")
+        fallback.setdefault("key-points", "")
+        fallback.setdefault("difficulty level", "")
+        fallback.setdefault("error reason", f"仲裁解析錯誤: {e}")
+        print("✅ 使用fallback機制")
         return fallback
     
 # ========== 處理 group ==========
@@ -200,7 +224,9 @@ def process_group_question(group):
     group_copy = copy.deepcopy(group)
     processed_sub_questions = []
 
-    for sub_question in group_copy["sub_questions"]:
+    print(f"🔄 處理群組題目：{group_copy.get('group_question_text', '')}")
+
+    for i, sub_question in enumerate(group_copy["sub_questions"]):
         question_text = sub_question["question_text"]
         image_path = sub_question.get("image_file")
         image_base64 = None
@@ -213,31 +239,53 @@ def process_group_question(group):
         if image_file:
             image_base64 = read_image_base64(os.path.join("backend", "src", "picture", image_file))
 
+        print(f"🔄 處理子題目 {i+1}：{question_text[:50]}...")
+
         main_prompt = main_agent_prompt_template.format(question_text=question_text)
         main_response = call_gemini_model(main_prompt, image_base64=image_base64)
+        print(f"✅ 子題目 {i+1} 主代理人分析完成")
 
         secondary_prompt = secondary_agent_prompt_template.format(main_response=main_response)
         secondary_response = call_llama_model(secondary_prompt)
+        print(f"✅ 子題目 {i+1} 次代理人分析完成")
 
         arbiter_prompt = arbiter_agent_prompt_template.format(
             main_response=main_response,
             secondary_response=secondary_response
         )
         arbiter_response = call_gemini_model(arbiter_prompt)
+        print(f"✅ 子題目 {i+1} 仲裁代理人分析完成")
 
         try:
+            # 嘗試清理回應，移除可能的非JSON內容
+            arbiter_response = arbiter_response.strip()
+            if arbiter_response.startswith('```json'):
+                arbiter_response = arbiter_response[7:]
+            if arbiter_response.endswith('```'):
+                arbiter_response = arbiter_response[:-3]
+            arbiter_response = arbiter_response.strip()
+            
+            print(f"🔍 子題目 {i+1} 仲裁回應：{arbiter_response[:100]}...")
+            
             result = json.loads(arbiter_response)
             if isinstance(result, list) and result:
-                processed_sub_questions.append(result[0])
+                # 確保結果包含所有原始欄位
+                processed_sub_question = copy.deepcopy(sub_question)
+                processed_sub_question.update(result[0])
+                print(f"✅ 子題目 {i+1} JSON解析成功")
+                processed_sub_questions.append(processed_sub_question)
             else:
                 raise ValueError("仲裁輸出格式錯誤")
         except Exception as e:
+            print(f"⚠️ 子題目 {i+1} JSON解析失敗：{e}")
             fallback = copy.deepcopy(sub_question)
-            fallback["answer"] = ""
-            fallback["detail-answer"] = ""
-            fallback["key-points"] = ""
-            fallback["difficulty level"] = ""
-            fallback["error reason"] = f"仲裁解析錯誤: {e}"
+            # 確保所有新增欄位都有預設值
+            fallback.setdefault("answer", "")
+            fallback.setdefault("detail-answer", "")
+            fallback.setdefault("key-points", "")
+            fallback.setdefault("difficulty level", "")
+            fallback.setdefault("error reason", f"仲裁解析錯誤: {e}")
+            print(f"✅ 子題目 {i+1} 使用fallback機制")
             processed_sub_questions.append(fallback)
 
     group_copy["sub_questions"] = processed_sub_questions
@@ -247,19 +295,29 @@ def process_group_question(group):
 def process_all_questions(questions):
     results = []
     count = 0
+    total_questions = len(questions)
 
-    for q in questions:
-        if q["type"] == "group":
-            print(f"🔄 處理群組題目：{q.get('group_question_text', '')}，共 {len(q['sub_questions'])} 題")
-            group_result = process_group_question(q)
-            results.append(group_result)
-            count += len(q['sub_questions'])
-            print(f"已處理 {count} 題")
-        else:
-            count += 1
-            print(f"🔄 處理第 {count} 題...")
-            result = process_question(q)
-            results.append(result)
+    for i, q in enumerate(questions, 1):
+        try:
+            if q["type"] == "group":
+                print(f"🔄 處理群組題目 ({i}/{total_questions})：{q.get('group_question_text', '')}，共 {len(q['sub_questions'])} 題")
+                group_result = process_group_question(q)
+                results.append(group_result)
+                count += len(q['sub_questions'])
+                print(f"✅ 群組題目處理完成，已處理 {count} 題")
+            else:
+                count += 1
+                print(f"🔄 處理第 {count} 題 ({i}/{total_questions})...")
+                result = process_question(q)
+                results.append(result)
+                print(f"✅ 第 {count} 題處理完成")
+        except Exception as e:
+            print(f"❌ 處理第 {i} 題時發生錯誤：{e}")
+            # 確保即使出錯也能繼續處理其他題目
+            if q["type"] == "group":
+                results.append(q)  # 保留原始群組題目
+            else:
+                results.append(q)  # 保留原始題目
 
     return results
 
