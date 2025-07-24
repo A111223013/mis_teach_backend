@@ -325,7 +325,7 @@ def process_all_questions(questions):
 
 
 if __name__ == "__main__":
-    with open("../data/grouped_exam_processed_test.json", "r", encoding="utf-8") as f:
+    with open("../data/grouped_exam_processed.json", "r", encoding="utf-8") as f:
         questions = json.load(f)
 
     results = process_all_questions(questions)
