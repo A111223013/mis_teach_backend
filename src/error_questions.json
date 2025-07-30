@@ -2998,22 +2998,22 @@
   "error reason": ""
 }
 ,
-  {
-    "type": "single",
-    "school": "國立中山大學",
-    "department": "電機工程學系碩士班己組",
-    "year": "106",
-    "question_number": "1",
-    "question_text": "Terminology Explanation\n(a) Pipeline Processing (b) Superscalar Processor (c) RISC (d) GPGPU",
-    "options": [],
-    "answer": "題目不完整，無法判斷正確答案，需要明確的提問。",
-    "answer_type": "short-answer",
-    "image_file": [],
-    "detail-answer": "由於題目僅列出Pipeline Processing, Superscalar Processor, RISC, GPGPU四個術語，缺乏明確的提問或要求，因此無法判斷正確答案。需要更明確的題目內容，例如：「以下哪個術語描述的是一種並行處理技術？」。如果題目要求解釋這些術語，則難度中等，因為需要理解它們的概念。如果只是辨識這些術語，則難度簡單。若題目被補全，並且只需從中選擇，則難度較低，但判斷哪一個是正確的需要對這些概念有基本的理解。\n\n可能的題目情境與答案：\n* 假設題目想問：請解釋以下術語。\n    * Pipeline Processing: 指令流水線處理。這是一種允許同時執行多條指令不同階段的技術，從而提高 CPU 的指令吞吐量。\n    * Superscalar Processor: 超標量處理器。這是一種可以同時執行多條指令的 CPU 架構。它包含多個執行單元，可以並行執行多個操作。\n    * RISC (Reduced Instruction Set Computing): 精簡指令集計算。這是一種 CPU 設計理念，旨在簡化指令集，提高指令執行效率。\n    * GPGPU (General-Purpose computing on Graphics Processing Units): 通用圖形處理器。利用 GPU 的并行計算能力來執行非圖形相關的通用計算任務。\n* 假設題目想問：以下哪個術語描述的是一種並行處理技術？\n    * 答案可能是 Pipeline Processing 或 Superscalar Processor。\n* 假設題目想問：以下哪個術語與簡化指令集相關？\n    * 答案是 RISC。",
-    "key-points": "基本計概",
-    "difficulty level": "中等",
-    "error reason": "題目敘述不完整，缺乏明確的目標或任務。"
-  },
+ {
+  "type": "single",
+  "school": "國立中山大學",
+  "department": "電機工程學系碩士班己組",
+  "year": "106",
+  "question_number": "1",
+  "question_text": "Terminology Explanation\n(a) Pipeline Processing (b) Superscalar Processor (c) RISC (d) GPGPU",
+  "options": [],
+  "answer": "請解釋以下術語：(a) 指令流水線處理 (b) 超標量處理器 (c) 精簡指令集計算 (d) 通用圖形處理器",
+  "answer_type": "short-answer",
+  "image_file": [],
+  "detail-answer": "此題為術語解釋題，要求解釋四個計算機相關的重要概念：\n\n(a) **Pipeline Processing (指令流水線處理)**：這是一種電腦處理器中常用的技術，旨在透過將指令的執行過程分解為多個階段，並讓這些階段同時處理不同指令的不同部分，來提高指令的吞吐量和處理器的效率。想像一個工廠的生產線，每個工作站負責一個特定的步驟，不同的產品在不同的工作站上同時進行不同的生產步驟。\n\n(b) **Superscalar Processor (超標量處理器)**：這是一種能夠在單個時鐘週期內啟動多條指令的處理器架構。與指令流水線處理器不同的是，超標量處理器擁有多個執行單元（例如多個ALU、浮點單元等），可以同時執行多個獨立的指令，進一步提高並行處理能力。這就像一個工廠有多條生產線，可以同時生產多個產品。\n\n(c) **RISC (Reduced Instruction Set Computing - 精簡指令集計算)**：這是一種CPU設計理念。RISC處理器採用較少且較簡單的指令集，每條指令通常在一個時鐘週期內完成。這種簡化的設計有助於提高指令的執行速度和效率，並使得編譯器更容易優化程式碼。與之相對的是CISC（複雜指令集計算）。\n\n(d) **GPGPU (General-Purpose computing on Graphics Processing Units - 通用圖形處理器)**：這是一種利用圖形處理器（GPU）的強大並行計算能力來執行傳統上由中央處理器（CPU）處理的非圖形相關的通用計算任務的技術。GPU擁有大量的處理核心，擅長處理大量數據的並行運算，因此非常適合科學計算、機器學習等需要大規模並行處理的應用。\n\n**知識點分析**：這些術語都屬於電腦組織與結構、計算機體系結構的範疇，因此最相關的知識點是**基本計概**。\n\n**難度分析**：理解並解釋這四個術語的概念、原理和應用，需要對電腦科學基礎知識有較為深入的理解，不只停留在表面的記憶，因此將難度判斷為**中等**。",
+  "key-points": "基本計概",
+  "difficulty level": "中等",
+  "error reason": ""
+},
   {
     "type": "single",
     "school": "國立中正大學",
