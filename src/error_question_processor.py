@@ -142,17 +142,17 @@ class ErrorQuestionProcessor:
         ttk.Entry(info_frame, textvariable=self.question_number_var, state='readonly', width=10).grid(row=0, column=7, sticky=tk.W, padx=(5, 0))
         
         # 錯誤原因
-        ttk.Label(info_frame, text="錯誤原因:").grid(row=1, column=0, sticky=tk.W, pady=(10, 0))
+        ttk.Label(info_frame, text="錯誤原因 (可編輯):").grid(row=1, column=0, sticky=tk.W, pady=(10, 0))
         self.error_reason_text = tk.Text(info_frame, height=2, width=80, wrap=tk.WORD)
         self.error_reason_text.grid(row=1, column=1, columnspan=7, sticky=(tk.W, tk.E), padx=(5, 0), pady=(10, 0))
         
         # 題目內容
-        ttk.Label(info_frame, text="題目:").grid(row=2, column=0, sticky=tk.W, pady=(10, 0))
+        ttk.Label(info_frame, text="題目 (可編輯):").grid(row=2, column=0, sticky=tk.W, pady=(10, 0))
         self.question_text = tk.Text(info_frame, height=4, width=80, wrap=tk.WORD)
         self.question_text.grid(row=2, column=1, columnspan=7, sticky=(tk.W, tk.E), padx=(5, 0), pady=(10, 0))
         
         # 選項顯示區域
-        ttk.Label(info_frame, text="選項:").grid(row=3, column=0, sticky=tk.W, pady=(10, 0))
+        ttk.Label(info_frame, text="選項 (可編輯):").grid(row=3, column=0, sticky=tk.W, pady=(10, 0))
         self.options_text = tk.Text(info_frame, height=3, width=80, wrap=tk.WORD)
         self.options_text.grid(row=3, column=1, columnspan=7, sticky=(tk.W, tk.E), padx=(5, 0), pady=(10, 0))
         
@@ -386,6 +386,11 @@ class ErrorQuestionProcessor:
         knowledge = self.knowledge_text.get(1.0, tk.END).strip()
         difficulty = self.difficulty_var.get()
         
+        # 取得題目內容的修改
+        error_reason = self.error_reason_text.get(1.0, tk.END).strip()
+        question_text = self.question_text.get(1.0, tk.END).strip()
+        options_text = self.options_text.get(1.0, tk.END).strip()
+        
         if not answer:
             messagebox.showwarning("警告", "請輸入答案")
             return
@@ -397,6 +402,22 @@ class ErrorQuestionProcessor:
         current_question['detail-answer'] = detail_answer
         current_question['key-points'] = knowledge
         current_question['difficulty level'] = difficulty
+        
+        # 更新題目內容相關字段
+        current_question['error reason'] = error_reason
+        current_question['question_text'] = question_text
+        
+        # 處理選項更新
+        if options_text.strip():
+            # 嘗試解析選項文本為字典格式
+            options = {}
+            lines = options_text.strip().split('\n')
+            for line in lines:
+                line = line.strip()
+                if line and '.' in line:
+                    key, value = line.split('.', 1)
+                    options[key.strip()] = value.strip()
+            current_question['options'] = options
         
         messagebox.showinfo("成功", "題目修正已儲存")
     
@@ -411,14 +432,15 @@ class ErrorQuestionProcessor:
             # 更新有錯誤的題目
             for error_q in self.error_questions:
                 for i, original_q in enumerate(all_questions):
+                    # 使用更可靠的匹配條件：年度、學校、系所、題號
                     if (original_q.get('year') == error_q.get('year') and
                         original_q.get('school') == error_q.get('school') and
                         original_q.get('department') == error_q.get('department') and
-                        original_q.get('question_text') == error_q.get('question_text')):
+                        original_q.get('question_number') == error_q.get('question_number')):
                         # 更新原始檔案中的題目
                         all_questions[i].update(error_q)
                         updated_count += 1
-                        print(f"已更新題目: {error_q.get('year')} {error_q.get('school')} {error_q.get('department')}")
+                        print(f"已更新題目: {error_q.get('year')} {error_q.get('school')} {error_q.get('department')} 題號:{error_q.get('question_number')}")
                         break
             
             # 儲存檔案
