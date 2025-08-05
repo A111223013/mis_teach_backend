@@ -144,7 +144,7 @@ def init_mongo_data():
             print("檢測到exam collection為空，開始初始化資料...")
             
             current_dir = os.path.dirname(os.path.abspath(__file__))
-            json_file_path = os.path.join(current_dir, 'backup', '105~113_exam.json')
+            json_file_path = os.path.join(current_dir, 'data', 'merge_results.json')
             
             if not os.path.exists(json_file_path):
                 print(f"錯誤：找不到檔案 {json_file_path}")
@@ -161,24 +161,19 @@ def init_mongo_data():
             flattened_data = []
             for item in exam_data:
                 flattened_item = {
-                    'total_question_number': item.get('total_question_number'),
-                    'status': item.get('status'),
-                    'school': item.get('question_data', {}).get('school'),
-                    'department': item.get('question_data', {}).get('department'),
-                    'year': item.get('question_data', {}).get('year'),
-                    'question_number': item.get('question_data', {}).get('question_number'),
-                    'question_text': item.get('question_data', {}).get('question_text'),
-                    'options': item.get('question_data', {}).get('options'),
-                    'type': item.get('question_data', {}).get('type'),
-                    'image_file': item.get('question_data', {}).get('image_file'),
-                    'answer': item.get('question_data', {}).get('answer'),
-                    '主要學科': item.get('主要學科'),
-                    '教科書來源': item.get('教科書來源'),
-                    '教科書章節': item.get('教科書章節'),
-                    '考點單元': item.get('考點單元'),
-                    '相關概念': item.get('相關概念'),
-                    '分析說明': item.get('分析說明'),
-                    'gemini_process_timestamp': item.get('gemini_process_timestamp')
+                    'type': item.get('type'),
+                    'school': item.get('school'),
+                    'department': item.get('department'),
+                    'year': item.get('year'),
+                    'question_number': item.get('question_number'),
+                    'question_text': item.get('question_text'),
+                    'options': item.get('options'),
+                    'answer': item.get('answer'),
+                    'answer_type': item.get('answer_type'),
+                    'image_file': item.get('image_file'),
+                    'detail-answer': item.get('detail-answer'),
+                    'key_points': item.get('key-points'),
+                    'difficulty level': item.get('difficulty level'),
                 }
                 flattened_data.append(flattened_item)
            
