@@ -172,9 +172,8 @@ def init_mongo_data():
                     'answer_type': item.get('answer_type'),
                     'image_file': item.get('image_file'),
                     'detail-answer': item.get('detail-answer'),
-                    'key-points': item.get('key-points'),
+                    'key_points': item.get('key-points'),
                     'difficulty level': item.get('difficulty level'),
-                    'error reason': item.get('error reason')
                 }
                 flattened_data.append(flattened_item)
            

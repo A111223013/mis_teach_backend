@@ -148,20 +148,19 @@ def get_exam():
     exam_list = []
     for exam in examdata:
         exam_dict = {
-            'school': exam.get('school', ''),
-            'department': exam.get('department', ''),
-            'year': exam.get('year', ''),
-            'question_number': exam.get('question_number', ''),
-            'question_text': exam.get('question_text', ''),
-            'type': exam.get('type', ''),
-            'option': exam.get('option', []),
-            'subject': exam.get('主要學科', ''),
-            'textbook_source': exam.get('教科書來源', ''),
-            'textbook_chapter': exam.get('教科書章節', ''),
-            'exam_unit': exam.get('考點單元', ''),
-            'related_concepts': exam.get('相關概念', []),
-            'analysis_description': exam.get('分析說明', ''),
-            'image_file': exam.get('image_file', []),
+             'type': exam.get('type'),
+                    'school': exam.get('school'),
+                    'department': exam.get('department'),
+                    'year': exam.get('year'),
+                    'question_number': exam.get('question_number'),
+                    'question_text': exam.get('question_text'),
+                    'options': exam.get('options'),
+                    'answer': exam.get('answer'),
+                    'answer_type': exam.get('answer_type'),
+                    'image_file': exam.get('image_file'),
+                    'detail-answer': exam.get('detail-answer'),
+                    'key_points': exam.get('key-points'),
+                    'difficulty level': exam.get('difficulty level'),
         }
         
         # 處理圖片檔案
@@ -330,11 +329,11 @@ def create_quiz():
             question = {
                 'id': i + 1,
                 'question_text': exam.get('question_text', ''),
-                'type': exam.get('type', 'single-choice'),
-                'options': exam.get('options', []),
+                'type': exam.get('answer_type'),
+                'options': exam.get('options'),
                 'correct_answer': exam.get('answer', ''),
                 'original_exam_id': str(exam.get('_id', '')),
-                'image_file': ''
+                'image_file': exam.get('image_file')
             }
             
             # 處理選項格式
@@ -493,6 +492,7 @@ def get_quiz():
 def submit_quiz():
     """提交測驗答案 API"""
     if request.method == 'OPTIONS':
+        print("Debug: 收到OPTIONS請求，回應CORS preflight")
         return jsonify({'message': 'CORS preflight'}), 200
     
     try:
@@ -506,35 +506,45 @@ def submit_quiz():
         
         # 獲取請求參數
         data = request.get_json()
+        print(f"Debug: 請求資料 data={data}")
         quiz_id = data.get('quiz_id')
         answers = data.get('answers', {})
         time_taken = data.get('time_taken', 0)
+        print(f"Debug: quiz_id={quiz_id}, answers={answers}, time_taken={time_taken}")
         
         if not quiz_id:
+            print("Debug: quiz_id缺失")
             return jsonify({'message': '缺少 quiz_id 參數'}), 400
         
         if not answers:
+            print("Debug: answers缺失")
             return jsonify({'message': '缺少答案數據'}), 400
         
         # 獲取用戶信息
         user_info = get_user_info(request.headers.get('Authorization'), 'name')
+        print(f"Debug: 取得用戶資訊 user_info={user_info}")
         if not user_info:
+            print("Debug: 用戶不存在")
             return jsonify({'message': '用戶不存在'}), 404
         
         # 獲取測驗信息
         quiz_data = mongo.db.quizzes.find_one({'quiz_id': quiz_id})
+        print(f"Debug: 取得quiz_data={quiz_data}")
         if not quiz_data:
+            print("Debug: 測驗不存在")
             return jsonify({'message': '測驗不存在'}), 404
         
         # 評分和分析
         questions = quiz_data.get('questions', [])
         total_questions = len(questions)
+        print(f"Debug: 取得questions數量={total_questions}")
         correct_count = 0
         wrong_questions = []
         scored_answers = {}
         
         # 逐題評分
         for question_index_str, user_answer in answers.items():
+            print(f"Debug: 處理題目 question_index_str={question_index_str}, user_answer={user_answer}")
             question_index = int(question_index_str)
             
             if question_index < len(questions):
@@ -542,6 +552,7 @@ def submit_quiz():
                 question_id = question.get('id', question_index + 1)
                 correct_answer = question.get('correct_answer')
                 question_type = question.get('type', 'single-choice')
+                print(f"Debug: 題目內容 question_id={question_id}, correct_answer={correct_answer}, question_type={question_type}")
                 
                 # 評判正確性
                 is_correct = False
@@ -560,6 +571,7 @@ def submit_quiz():
                         user_text = str(user_answer).strip().lower()
                         correct_text = str(correct_answer).strip().lower()
                         is_correct = user_text == correct_text or user_text in correct_text or correct_text in user_text
+                print(f"Debug: is_correct={is_correct}")
                 
                 # 記錄評分結果
                 scored_answers[question_index_str] = {
@@ -588,14 +600,17 @@ def submit_quiz():
                         'original_exam_id': question.get('original_exam_id', ''),
                         'question_index': question_index
                     })
+                    print(f"Debug: 錯題收集 question_id={question_id}")
         
         # 計算統計數據
         answered_count = len(answers)
         accuracy_rate = (correct_count / answered_count * 100) if answered_count > 0 else 0
         average_score = (correct_count / answered_count * 100) if answered_count > 0 else 0
+        print(f"Debug: 統計 answered_count={answered_count}, correct_count={correct_count}, accuracy_rate={accuracy_rate}, average_score={average_score}")
         
         # 生成提交ID
         submission_id = str(uuid.uuid4())
+        print(f"Debug: 產生submission_id={submission_id}")
         
         # 準備保存到MongoDB的數據
         submission_data = {
@@ -622,10 +637,12 @@ def submit_quiz():
             'wrong_questions': wrong_questions,
             'type': 'quiz_submission'
         }
+        print(f"Debug: 準備存入MongoDB的資料 submission_data={submission_data}")
         
         # 保存到MongoDB
         try:
             result = mongo.db.submissions.insert_one(submission_data)
+            print(f"Debug: MongoDB insert result={result.inserted_id}")
             if result.inserted_id:
                 print(f"測驗提交成功保存到MongoDB，ID: {submission_id}")
                 
@@ -633,6 +650,7 @@ def submit_quiz():
                 try:
                     # 獲取quiz metadata
                     metadata = quiz_data.get('metadata', {})
+                    print(f"Debug: SQL metadata={metadata}")
                     
                     # 插入quiz_history記錄
                     quiz_history_sql = """
@@ -648,6 +666,7 @@ def submit_quiz():
                     
                     with sqldb.engine.connect() as conn:
                         # 插入quiz_history
+                        print("Debug: 開始插入quiz_history")
                         result_sql = conn.execute(quiz_history_sql, (
                             quiz_id, user_email, user_info, quiz_data.get('title', ''),
                             quiz_data.get('type', 'unknown'),
@@ -657,6 +676,7 @@ def submit_quiz():
                             round(accuracy_rate, 2), round(average_score, 2),
                             time_taken, datetime.now(), 'completed'
                         ))
+                        print(f"Debug: quiz_history插入完成，lastrowid={result_sql.lastrowid}")
                         
                         # 獲取插入的quiz_history_id
                         quiz_history_id = result_sql.lastrowid
@@ -673,11 +693,12 @@ def submit_quiz():
                                     %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
                                 )
                             """
-                            
+                            print(f"Debug: 準備插入錯題數量={len(wrong_questions)}")
                             for wrong_q in wrong_questions:
                                 mistake_content = f"用戶回答：{wrong_q['user_answer']}，正確答案：{wrong_q['correct_answer']}"
                                 import json
                                 options_json = json.dumps(wrong_q.get('options', []), ensure_ascii=False)
+                                print(f"Debug: 插入錯題 question_id={wrong_q['question_id']}, mistake_content={mistake_content}")
                                 
                                 conn.execute(error_sql, (
                                     quiz_history_id, user_email, str(wrong_q['question_id']),
@@ -712,6 +733,7 @@ def submit_quiz():
                     'quiz_completed': True
                 }), 200
             else:
+                print("Debug: MongoDB插入失敗")
                 return jsonify({'message': '保存失敗'}), 500
                 
         except Exception as db_error:
@@ -719,6 +741,7 @@ def submit_quiz():
             return jsonify({'message': f'保存失敗: {str(db_error)}'}), 500
         
     except jwt.InvalidTokenError:
+        print("Debug: jwt.InvalidTokenError 無效的token")
         return jsonify({'message': '無效的token'}), 401
     except Exception as e:
         print(f"提交測驗時發生錯誤: {str(e)}")
