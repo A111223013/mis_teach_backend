@@ -179,3 +179,6 @@ pytest>=7.0.0
 black>=22.0.0
 flake8>=5.0.0
 
+google-generativeai==0.4.1
+pyautogen==0.2.20
+python-dotenv==1.0.1
