@@ -20,36 +20,34 @@ from src.ai_teacher import ai_teacher_bp
 from src.user_guide_api import user_guide_bp
 from src.web_ai_assistant import web_ai_bp
 
+# Initialize Flask app
 app = Flask(__name__)
 
+# Load configuration based on environment
 cfg = Config()
 productionCfg = ProductionConfig()
 developmentCfg = DevelopmentConfig()
 app.config.from_object(cfg)
-app.config.from_object(developmentCfg)
+if len(sys.argv) > 1:
+    if sys.argv[-1] == 'production':
+        app.config.from_object(productionCfg)
+    else:
+        app.config.from_object(developmentCfg)
+else:
+    app.config.from_object(developmentCfg)
 
 # Set Google API key if needed
 os.environ["GOOGLE_API_KEY"] = "AIzaSyAIXgxvFlTQe3lq4tuLx2fUiF4oaigBBYE"
 
 domain_name_config = app.config.get('DOMAIN_NAME')
 
-# 修復CORS配置，允許多個域名
-CORS(
-    app,
-    supports_credentials=True,
-    origins=[
-        domain_name_config,
-        "http://localhost:4200", 
-        "http://127.0.0.1:4200",
-        "http://127.0.0.1:5000",
-        "http://localhost:5000"
-    ],
-    methods=["GET", "POST", "OPTIONS", "PUT", "DELETE"],
-    allow_headers=["Content-Type", "Authorization"]
-)
+# Enable CORS
+CORS(app, resources={r"/*": {"origins": app.config['DOMAIN_NAME']}},
+     methods=["GET", "POST", "OPTIONS"],
+     allow_headers=["Content-Type", "Authorization"], supports_credentials=True)
 
 # 初始化數據庫
-# sqldb.init_app(app)  # 暫時註釋掉SQL數據庫
+sqldb.init_app(app)  # 啟用SQL數據庫
 mail.init_app(app)
 redis_client.init_app(app)
 token_store.init_app(app)
@@ -88,14 +86,10 @@ def serve_static_image(filename):
         return jsonify({'error': 'Image service error'}), 500
 
 # 初始化數據庫表格
-# with app.app_context():
-#     sqldb.create_all()
-#     init_quiz_tables()  # 初始化測驗相關表格
+with app.app_context():
+    sqldb.create_all()
+    init_quiz_tables()  # 初始化測驗相關表格
 
 if __name__ == '__main__':
-    print("🚀 Starting Flask application...")
-    print("✅ JWT token format fixed")
-    print("⚠️  Langchain dependencies temporarily disabled")
-    print("⚠️  SQL database temporarily disabled") 
-    print("📸 Static image service enabled at /static/images/")
+
     app.run(debug=True)

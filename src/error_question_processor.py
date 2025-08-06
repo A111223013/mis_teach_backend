@@ -95,17 +95,8 @@ class ErrorQuestionProcessor:
                 if error_reason and error_reason.strip():
                     self.error_questions.append(question)
             
-            print(f"載入了 {len(all_questions)} 個題目，其中 {len(self.error_questions)} 個有錯誤")
-            
-            # 調試信息：顯示前幾個有錯誤的題目
-            if self.error_questions:
-                print(f"前3個有錯誤的題目:")
-                for i, q in enumerate(self.error_questions[:3]):
-                    print(f"  {i+1}. {q.get('year', '')} {q.get('school', '')} {q.get('department', '')} - {q.get('error reason', '')[:100]}...")
-            
         except Exception as e:
             messagebox.showerror("錯誤", f"無法載入 error_questions.json: {e}")
-            print(f"載入錯誤: {e}")
             self.error_questions = []
     
     def setup_ui(self):
@@ -440,7 +431,6 @@ class ErrorQuestionProcessor:
                         # 更新原始檔案中的題目
                         all_questions[i].update(error_q)
                         updated_count += 1
-                        print(f"已更新題目: {error_q.get('year')} {error_q.get('school')} {error_q.get('department')} 題號:{error_q.get('question_number')}")
                         break
             
             # 儲存檔案

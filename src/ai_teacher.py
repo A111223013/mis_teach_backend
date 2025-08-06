@@ -199,44 +199,104 @@ class AITeacherService:
             user_id = self.get_user_id()
             session_data = self.get_user_session_data(user_id)
 
-            # 查找測驗結果
-            target_result = None
-            for result in session_data.get('quiz_results', []):
-                if f"result_{result['user_id']}_{result['quiz_id']}_{result['submit_time']}" == result_id:
-                    target_result = result
-                    break
+            # 首先嘗試從 Redis 獲取用戶的所有錯題數據
+            import json
+            
+            # 從 session 或 token 獲取用戶 email
+            user_email = None
+            try:
+                auth_header = request.headers.get('Authorization')
+                if auth_header and auth_header.startswith('Bearer '):
+                    token = auth_header.split(" ")[1]
+                    user_email = get_user_info(token, 'email')
+            except:
+                pass
+            
+            if user_email:
+                # 創建 Redis 連接
+                r = redis_client
+                user_error_key = f"user_errors:{user_email}"
+                error_data = r.get(user_error_key)
+                
+                if error_data:
+                    logger.info(f"從 Redis 獲取用戶 {user_email} 的錯題數據")
+                    # 處理bytes到string的轉換
+                    if isinstance(error_data, bytes):
+                        error_data = error_data.decode('utf-8')
+                    error_list = json.loads(error_data)
+                    
+                    if error_list:
+                        logger.info(f"成功從 Redis 獲取 {len(error_list)} 道錯題")
+                        
+                        # 創建學習會話ID
+                        session_id = f"learning_{user_id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+                        
+                        # 保存會話 ID 到用戶數據（用於追蹤）
+                        if 'learning_sessions' not in session_data:
+                            session_data['learning_sessions'] = []
+                        session_data['learning_sessions'].append({
+                            'session_id': session_id,
+                            'result_id': result_id,
+                            'start_time': datetime.now().isoformat(),
+                            'source': 'redis',
+                            'error_count': len(error_list)
+                        })
 
-            # 如果找不到真實結果，使用 demo 數據
-            if not target_result:
-                logger.info(f"未找到測驗結果 {result_id}，使用 demo 數據進行錯題學習")
-                target_result = self._generate_demo_quiz_result(result_id)
+                        return {
+                            'success': True,
+                            'session_id': session_id,
+                            'total_wrong_questions': len(error_list),
+                            'message': f'開始學習 {len(error_list)} 道錯題',
+                            'source': 'redis'
+                        }
+
+            # 如果 Redis 中沒有數據，再從 MongoDB 獲取
+            from accessories import mongo
+            submission = mongo.db.submissions.find_one({'submission_id': result_id})
             
-            # 提取錯題
-            wrong_questions = [
-                answer for answer in target_result['answers'] 
-                if not answer.get('is_correct', True)
-            ]
-            
-            if not wrong_questions:
+            if submission:
+                logger.info(f"從 MongoDB 獲取測驗結果 {result_id} 的錯題數據")
+                
+                # 提取錯題數據
+                wrong_questions = submission.get('wrong_questions', [])
+                
+                if not wrong_questions:
+                    return {
+                        'success': True,
+                        'message': '恭喜！您沒有錯題需要學習',
+                        'wrong_questions': []
+                    }
+                
+                logger.info(f"成功從 MongoDB 獲取 {len(wrong_questions)} 道錯題")
+                
+                # 創建學習會話ID
+                session_id = f"learning_{user_id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+                
+                # 保存會話 ID 到用戶數據（用於追蹤）
+                if 'learning_sessions' not in session_data:
+                    session_data['learning_sessions'] = []
+                session_data['learning_sessions'].append({
+                    'session_id': session_id,
+                    'result_id': result_id,
+                    'start_time': datetime.now().isoformat(),
+                    'source': 'mongodb',
+                    'error_count': len(wrong_questions)
+                })
+
                 return {
                     'success': True,
-                    'message': '恭喜！您沒有錯題需要學習',
-                    'wrong_questions': []
+                    'session_id': session_id,
+                    'total_wrong_questions': len(wrong_questions),
+                    'message': f'開始學習 {len(wrong_questions)} 道錯題',
+                    'source': 'mongodb'
                 }
             
-            # 調用 MultiAITutor 創建學習會話
-            result = self.tutor.create_learning_session(user_id, wrong_questions)
-
-            # 保存會話 ID 到用戶數據（用於追蹤）
-            if 'learning_sessions' not in session_data:
-                session_data['learning_sessions'] = []
-            session_data['learning_sessions'].append({
-                'session_id': result['session_id'],
-                'result_id': result_id,
-                'start_time': datetime.now().isoformat()
-            })
-
-            return result
+            # 如果都找不到數據，返回錯誤
+            logger.warning(f"未找到用戶錯題數據")
+            return {
+                'success': False,
+                'error': '未找到錯題數據，請先完成測驗'
+            }
             
         except Exception as e:
             logger.error(f"❌ 開始錯題學習失敗: {e}")
@@ -245,92 +305,16 @@ class AITeacherService:
                 'error': str(e)
             }
 
-    # 移除所有 AI 邏輯，這些已經移到 rag_ai_role.py 中
-
-    def _generate_demo_quiz_result(self, result_id: str) -> Dict[str, Any]:
-        """生成 demo 測驗結果用於測試"""
-        demo_answers = [
-            {
-                'question_id': 'q1',
-                'question_text': '什麼是作業系統中的死鎖（Deadlock）？',
-                'user_answer': '程式停止運行',
-                'correct_answer': '兩個或多個程序互相等待對方釋放資源而無法繼續執行的狀態',
-                'is_correct': False,
-                'is_marked': True,
-                'topic': '作業系統',
-                'difficulty': 3,
-                'answer_time': 45
-            },
-            {
-                'question_id': 'q2',
-                'question_text': 'FIFO 排程演算法的特點是什麼？',
-                'user_answer': '先進先出，按照程序到達的順序執行',
-                'correct_answer': '先進先出，按照程序到達的順序執行',
-                'is_correct': True,
-                'is_marked': False,
-                'topic': '作業系統',
-                'difficulty': 2,
-                'answer_time': 30
-            },
-            {
-                'question_id': 'q3',
-                'question_text': '資料庫中的 ACID 特性包括哪些？',
-                'user_answer': '原子性、一致性',
-                'correct_answer': '原子性（Atomicity）、一致性（Consistency）、隔離性（Isolation）、持久性（Durability）',
-                'is_correct': False,
-                'is_marked': True,
-                'topic': '資料庫',
-                'difficulty': 4,
-                'answer_time': 60
-            },
-            {
-                'question_id': 'q4',
-                'question_text': 'TCP 和 UDP 的主要差異是什麼？',
-                'user_answer': 'TCP 可靠，UDP 不可靠',
-                'correct_answer': 'TCP 是面向連接的可靠傳輸協議，UDP 是無連接的不可靠傳輸協議',
-                'is_correct': True,
-                'is_marked': True,  # 標記但正確的題目
-                'topic': '網路',
-                'difficulty': 3,
-                'answer_time': 40
-            },
-            {
-                'question_id': 'q5',
-                'question_text': '什麼是資料結構中的堆疊（Stack）？',
-                'user_answer': '一種資料結構',
-                'correct_answer': '後進先出（LIFO）的線性資料結構',
-                'is_correct': False,
-                'is_marked': False,
-                'topic': '資料結構',
-                'difficulty': 2,
-                'answer_time': 25
-            }
-        ]
-
-        correct_count = sum(1 for answer in demo_answers if answer['is_correct'])
-        total_questions = len(demo_answers)
-
-        return {
-            'user_id': 'demo_user',
-            'quiz_id': 'demo_quiz',
-            'answers': demo_answers,
-            'submit_time': datetime.now().isoformat(),
-            'total_time': 300,
-            'score': correct_count,
-            'total_questions': total_questions,
-            'correct_count': correct_count,
-            'wrong_count': total_questions - correct_count,
-            'marked_count': sum(1 for answer in demo_answers if answer['is_marked']),
-            'unanswered_count': 0
-        }
-
 # 創建服務實例
 ai_teacher_service = AITeacherService()
 
 # API 端點定義
-@ai_teacher_bp.route('/health', methods=['GET'])
+@ai_teacher_bp.route('/health', methods=['GET', 'OPTIONS'])
 def health_check():
     """健康檢查"""
+    if request.method == 'OPTIONS':
+        return jsonify({'message': 'CORS preflight'}), 200
+    
     return jsonify({
         'success': True,
         'status': 'healthy',
@@ -338,9 +322,12 @@ def health_check():
         'timestamp': datetime.now().isoformat()
     })
 
-@ai_teacher_bp.route('/chat', methods=['POST'])
+@ai_teacher_bp.route('/chat', methods=['POST', 'OPTIONS'])
 def chat():
     """AI 聊天端點"""
+    if request.method == 'OPTIONS':
+        return jsonify({'message': 'CORS preflight'}), 200
+    
     try:
         data = request.get_json()
         if not data:
@@ -367,9 +354,12 @@ def chat():
             'error': '處理請求時發生錯誤'
         }), 500
 
-@ai_teacher_bp.route('/submit-quiz-results', methods=['POST'])
+@ai_teacher_bp.route('/submit-quiz-results', methods=['POST', 'OPTIONS'])
 def submit_quiz_results():
     """提交測驗結果"""
+    if request.method == 'OPTIONS':
+        return jsonify({'message': 'CORS preflight'}), 200
+    
     try:
         data = request.get_json()
         if not data:
@@ -385,10 +375,66 @@ def submit_quiz_results():
             'error': '提交測驗結果時發生錯誤'
         }), 500
 
-@ai_teacher_bp.route('/get-quiz-result/<result_id>', methods=['GET'])
+@ai_teacher_bp.route('/get-quiz-result/<result_id>', methods=['GET', 'OPTIONS'])
 def get_quiz_result(result_id):
     """獲取測驗結果"""
+    if request.method == 'OPTIONS':
+        return jsonify({'message': 'CORS preflight'}), 200
+    
     try:
+        # 首先從 MongoDB submissions 集合中查找真實的測驗數據
+        from accessories import mongo
+        submission = mongo.db.submissions.find_one({'submission_id': result_id})
+        
+        if submission:
+            # 轉換為前端期望的格式
+            result = {
+                'user_id': submission.get('user_email', ''),
+                'quiz_id': submission.get('quiz_id', ''),
+                'answers': [],
+                'submit_time': submission.get('submit_time', ''),
+                'total_time': submission.get('time_taken', 0),
+                'score': submission.get('score', 0),
+                'total_questions': submission.get('total_questions', 0),
+                'correct_count': submission.get('correct_count', 0),
+                'wrong_count': submission.get('wrong_count', 0),
+                'marked_count': 0,  # 暫時設為 0
+                'unanswered_count': submission.get('unanswered_count', 0)
+            }
+            
+            # 轉換 answers 格式並確保統計數據正確
+            scored_answers = submission.get('answers', {})
+            answers_list = []
+            
+            for question_index, answer_data in scored_answers.items():
+                user_answer = answer_data.get('user_answer', '')
+                is_correct = answer_data.get('is_correct', False)
+                has_answer = user_answer and str(user_answer).strip() != ''
+                
+                answers_list.append({
+                    'question_id': str(answer_data.get('question_id', question_index)),
+                    'question_text': answer_data.get('question_text', ''),
+                    'user_answer': str(user_answer),
+                    'correct_answer': str(answer_data.get('correct_answer', '')),
+                    'is_correct': is_correct,
+                    'is_marked': False,  # 暫時設為 False
+                    'topic': '計算機概論',
+                    'difficulty': 2,
+                    'answer_time': 0
+                })
+            
+            # 更新結果數據，確保與MongoDB中的統計一致
+            result['answers'] = answers_list
+            result['correct_count'] = submission.get('correct_count', 0)
+            result['wrong_count'] = submission.get('wrong_count', 0)
+            result['unanswered_count'] = submission.get('unanswered_count', 0)
+            
+            return jsonify({
+                'success': True,
+                'result': result
+            })
+        
+        # 如果 MongoDB 中找不到，再從 session_data 中查找
         user_id = ai_teacher_service.get_user_id()
         session_data = ai_teacher_service.get_user_session_data(user_id)
 
@@ -400,15 +446,12 @@ def get_quiz_result(result_id):
                     'result': result
                 })
 
-        # 如果找不到結果，返回 demo 數據用於測試
-        logger.info(f"未找到測驗結果 {result_id}，返回 demo 數據")
-        demo_result = ai_teacher_service._generate_demo_quiz_result(result_id)
-
+        # 如果都找不到結果，返回錯誤
+        logger.warning(f"未找到測驗結果 {result_id}")
         return jsonify({
-            'success': True,
-            'result': demo_result,
-            'is_demo': True
-        })
+            'success': False,
+            'error': f'未找到測驗結果 {result_id}'
+        }), 404
         
     except Exception as e:
         logger.error(f"❌ 獲取測驗結果錯誤: {e}")
@@ -417,9 +460,12 @@ def get_quiz_result(result_id):
             'error': '獲取測驗結果時發生錯誤'
         }), 500
 
-@ai_teacher_bp.route('/start-error-learning', methods=['POST'])
+@ai_teacher_bp.route('/start-error-learning', methods=['POST', 'OPTIONS'])
 def start_error_learning():
     """開始錯題學習"""
+    if request.method == 'OPTIONS':
+        return jsonify({'message': 'CORS preflight'}), 200
+    
     try:
         data = request.get_json()
         if not data:
@@ -439,9 +485,12 @@ def start_error_learning():
             'error': '開始錯題學習時發生錯誤'
         }), 500
 
-@ai_teacher_bp.route('/system-guide', methods=['POST'])
+@ai_teacher_bp.route('/system-guide', methods=['POST', 'OPTIONS'])
 def system_guide():
     """系統使用指南"""
+    if request.method == 'OPTIONS':
+        return jsonify({'message': 'CORS preflight'}), 200
+    
     try:
         data = request.get_json() or {}
         user_type = data.get('user_type', 'new')
@@ -496,9 +545,12 @@ def system_guide():
             'error': '獲取系統指南時發生錯誤'
         }), 500
 
-@ai_teacher_bp.route('/learning-analysis', methods=['GET'])
+@ai_teacher_bp.route('/learning-analysis', methods=['GET', 'OPTIONS'])
 def get_learning_analysis():
     """獲取學習分析報告"""
+    if request.method == 'OPTIONS':
+        return jsonify({'message': 'CORS preflight'}), 200
+    
     try:
         user_id = ai_teacher_service.get_user_id()
         session_data = ai_teacher_service.get_user_session_data(user_id)
@@ -528,9 +580,12 @@ def get_learning_analysis():
             'error': '獲取學習分析時發生錯誤'
         }), 500
 
-@ai_teacher_bp.route('/exam-guidance', methods=['POST'])
+@ai_teacher_bp.route('/exam-guidance', methods=['POST', 'OPTIONS'])
 def get_exam_guidance():
     """獲取考試指導"""
+    if request.method == 'OPTIONS':
+        return jsonify({'message': 'CORS preflight'}), 200
+    
     try:
         data = request.get_json()
         if not data:
@@ -643,4 +698,311 @@ def get_user_answer_object():
         return jsonify({
             'success': False,
             'error': '獲取學生作答資料時發生錯誤'
+        }), 500
+
+@ai_teacher_bp.route('/learning-progress/<session_id>', methods=['GET', 'OPTIONS'])
+def get_learning_progress(session_id):
+    """獲取學習進度"""
+    try:
+        # 處理 CORS 預檢請求
+        if request.method == 'OPTIONS':
+            return jsonify({'message': 'CORS preflight'}), 200
+        
+        # 驗證 token
+        try:
+            auth_header = request.headers.get('Authorization')
+            if not auth_header:
+                return jsonify({
+                    'success': False,
+                    'error': '未提供授權標頭'
+                }), 401
+            
+            token = auth_header.split(" ")[1]
+            user_email = get_user_info(token, 'email')
+            if not user_email:
+                return jsonify({
+                    'success': False,
+                    'error': '無法獲取用戶資訊'
+                }), 401
+        except Exception as e:
+            logger.error(f"❌ 驗證用戶錯誤: {e}")
+            return jsonify({
+                'success': False,
+                'error': '驗證用戶時發生錯誤'
+            }), 500
+
+        # 獲取學習進度數據
+        try:
+            user_id = ai_teacher_service.get_user_id()
+            session_data = ai_teacher_service.get_user_session_data(user_id)
+            
+            # 查找對應的學習會話
+            learning_session = None
+            for session in session_data.get('learning_sessions', []):
+                if session.get('session_id') == session_id:
+                    learning_session = session
+                    break
+            
+            if not learning_session:
+                return jsonify({
+                    'success': False,
+                    'error': f'未找到學習會話 {session_id}'
+                }), 404
+            
+            # 構建學習進度數據
+            progress_data = {
+                'session_id': session_id,
+                'user_id': user_id,
+                'start_time': learning_session.get('start_time'),
+                'current_status': 'active',
+                'total_questions': 0,  # 將從實際數據中獲取
+                'completed_questions': 0,
+                'understanding_level': 'medium',
+                'learning_time': 0,
+                'last_activity': session_data.get('last_activity'),
+                'conversation_count': session_data.get('conversation_count', 0)
+            }
+            
+            return jsonify({
+                'success': True,
+                'progress': progress_data
+            })
+            
+        except Exception as e:
+            logger.error(f"❌ 獲取學習進度錯誤: {e}")
+            return jsonify({
+                'success': False,
+                'error': '獲取學習進度時發生錯誤'
+            }), 500
+            
+    except Exception as e:
+        logger.error(f"❌ 學習進度端點錯誤: {e}")
+        return jsonify({
+            'success': False,
+            'error': '處理學習進度請求時發生錯誤'
+        }), 500
+
+@ai_teacher_bp.route('/ai-tutoring', methods=['POST', 'OPTIONS'])
+def ai_tutoring():
+    """AI 智能教學"""
+    try:
+        # 處理 CORS 預檢請求
+        if request.method == 'OPTIONS':
+            return jsonify({'message': 'CORS preflight'}), 200
+        
+        data = request.get_json()
+        if not data:
+            return jsonify({'success': False, 'error': '無效的請求數據'}), 400
+
+        session_id = data.get('session_id')
+        question_data = data.get('question_data')
+        user_input = data.get('user_input')
+        action = data.get('action')
+
+        if not session_id or not user_input:
+            return jsonify({'success': False, 'error': '缺少必要參數'}), 400
+
+        # 調用 AI 教學服務
+        result = ai_teacher_service.chat_with_ai(
+            question=user_input,
+            conversation_type='tutoring',
+            session_id=session_id
+        )
+        
+        return jsonify(result)
+        
+    except Exception as e:
+        logger.error(f"❌ AI 教學錯誤: {e}")
+        return jsonify({
+            'success': False,
+            'error': 'AI 教學處理時發生錯誤'
+        }), 500
+
+@ai_teacher_bp.route('/complete-question-learning', methods=['POST', 'OPTIONS'])
+def complete_question_learning():
+    """完成題目學習"""
+    try:
+        # 處理 CORS 預檢請求
+        if request.method == 'OPTIONS':
+            return jsonify({'message': 'CORS preflight'}), 200
+        
+        data = request.get_json()
+        if not data:
+            return jsonify({'success': False, 'error': '無效的請求數據'}), 400
+
+        session_id = data.get('session_id')
+        question_id = data.get('question_id')
+        understanding_level = data.get('understanding_level')
+
+        if not session_id or not question_id:
+            return jsonify({'success': False, 'error': '缺少必要參數'}), 400
+
+        # 這裡可以添加完成學習的邏輯
+        # 目前返回成功響應
+        return jsonify({
+            'success': True,
+            'message': '題目學習完成',
+            'session_id': session_id,
+            'question_id': question_id,
+            'understanding_level': understanding_level
+        })
+        
+    except Exception as e:
+        logger.error(f"❌ 完成題目學習錯誤: {e}")
+        return jsonify({
+            'success': False,
+            'error': '完成題目學習時發生錯誤'
+        }), 500
+
+@ai_teacher_bp.route('/conversation-history', methods=['GET', 'OPTIONS'])
+def get_conversation_history():
+    """獲取對話歷史"""
+    try:
+        # 處理 CORS 預檢請求
+        if request.method == 'OPTIONS':
+            return jsonify({'message': 'CORS preflight'}), 200
+        
+        limit = request.args.get('limit', 20, type=int)
+        
+        # 獲取用戶對話歷史
+        user_id = ai_teacher_service.get_user_id()
+        session_data = ai_teacher_service.get_user_session_data(user_id)
+        
+        # 構建對話歷史數據
+        conversation_history = {
+            'total_conversations': session_data.get('conversation_count', 0),
+            'recent_conversations': [],
+            'last_activity': session_data.get('last_activity')
+        }
+        
+        return jsonify({
+            'success': True,
+            'history': conversation_history
+        })
+        
+    except Exception as e:
+        logger.error(f"❌ 獲取對話歷史錯誤: {e}")
+        return jsonify({
+            'success': False,
+            'error': '獲取對話歷史時發生錯誤'
+        }), 500
+
+@ai_teacher_bp.route('/knowledge-questions', methods=['GET', 'OPTIONS'])
+def get_knowledge_questions():
+    """獲取知識點測驗題目"""
+    try:
+        # 處理 CORS 預檢請求
+        if request.method == 'OPTIONS':
+            return jsonify({'message': 'CORS preflight'}), 200
+        
+        topic = request.args.get('topic', '')
+        difficulty = request.args.get('difficulty', 'medium')
+        count = request.args.get('count', 5, type=int)
+        
+        # 這裡可以從資料庫獲取對應的題目
+        # 目前返回模擬數據
+        questions = []
+        for i in range(min(count, 5)):
+            questions.append({
+                'id': f'knowledge_{i+1}',
+                'question_text': f'{topic} 相關題目 {i+1}',
+                'options': ['選項A', '選項B', '選項C', '選項D'],
+                'correct_answer': '選項A',
+                'difficulty': difficulty,
+                'topic': topic
+            })
+        
+        return jsonify({
+            'success': True,
+            'questions': questions,
+            'total': len(questions)
+        })
+        
+    except Exception as e:
+        logger.error(f"❌ 獲取知識點題目錯誤: {e}")
+        return jsonify({
+            'success': False,
+            'error': '獲取知識點題目時發生錯誤'
+        }), 500
+
+@ai_teacher_bp.route('/past-exam-questions', methods=['GET', 'OPTIONS'])
+def get_past_exam_questions():
+    """獲取考古題測驗題目"""
+    try:
+        # 處理 CORS 預檢請求
+        if request.method == 'OPTIONS':
+            return jsonify({'message': 'CORS preflight'}), 200
+        
+        school = request.args.get('school', '')
+        year = request.args.get('year', '')
+        department = request.args.get('department', '')
+        
+        # 這裡可以從資料庫獲取對應的考古題
+        # 目前返回模擬數據
+        questions = []
+        for i in range(5):
+            questions.append({
+                'id': f'past_exam_{i+1}',
+                'question_text': f'{school} {year}年 {department} 考古題 {i+1}',
+                'options': ['選項A', '選項B', '選項C', '選項D'],
+                'correct_answer': '選項A',
+                'school': school,
+                'year': year,
+                'department': department
+            })
+        
+        return jsonify({
+            'success': True,
+            'questions': questions,
+            'total': len(questions)
+        })
+        
+    except Exception as e:
+        logger.error(f"❌ 獲取考古題錯誤: {e}")
+        return jsonify({
+            'success': False,
+            'error': '獲取考古題時發生錯誤'
+        }), 500
+
+@ai_teacher_bp.route('/submit-quiz-answers', methods=['POST', 'OPTIONS'])
+def submit_quiz_answers():
+    """提交測驗答案"""
+    try:
+        # 處理 CORS 預檢請求
+        if request.method == 'OPTIONS':
+            return jsonify({'message': 'CORS preflight'}), 200
+        
+        data = request.get_json()
+        if not data:
+            return jsonify({'success': False, 'error': '無效的請求數據'}), 400
+
+        # 處理測驗答案提交
+        quiz_id = data.get('quiz_id')
+        answers = data.get('answers', {})
+        
+        # 計算分數
+        total_questions = len(answers)
+        correct_count = 0
+        
+        for question_id, answer in answers.items():
+            # 這裡可以添加答案驗證邏輯
+            if answer.get('is_correct', False):
+                correct_count += 1
+        
+        score = (correct_count / total_questions * 100) if total_questions > 0 else 0
+        
+        return jsonify({
+            'success': True,
+            'quiz_id': quiz_id,
+            'score': score,
+            'total_questions': total_questions,
+            'correct_count': correct_count,
+            'wrong_count': total_questions - correct_count
+        })
+        
+    except Exception as e:
+        logger.error(f"❌ 提交測驗答案錯誤: {e}")
+        return jsonify({
+            'success': False,
+            'error': '提交測驗答案時發生錯誤'
         }), 500

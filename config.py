@@ -25,25 +25,24 @@ class Config:
     REDIS_URL = 'redis://localhost:6379/0'
     MAIL_DEFAULT_SENDER = 'misteacher011@gmail.com'
     SECURITY_PASSWORD_SALT = open('./security_key','r').read()
-    
+    CRAWLER_REDIS_URL = 'redis://localhost:6379/0'
     
     ROUTE_ROLE_MAPPING = {
        
     }
 
-  
- 
 class DevelopmentConfig(Config):
-    #SQLALCHEMY_DATABASE_URI = 'mysql+pymysql://root:123456@localhost:3306/MIS_Teach'
-    #SQLALCHEMY_BINDS = {}
-    
+    SQLALCHEMY_DATABASE_URI = 'mysql+pymysql://root:123456@localhost:3306/mis_teach'
+    SQLALCHEMY_BINDS = {}
     
     API_BASE_URL = 'http://localhost:5000'
     DOMAIN_NAME = 'http://localhost:4200'
     DEBUG = True
-    
 
 class ProductionConfig(Config):
+    SQLALCHEMY_DATABASE_URI = 'mysql+pymysql://root:123456@localhost:3306/mis_teach'
+    SQLALCHEMY_BINDS = {}
+    
     API_BASE_URL = 'http://localhost:5000'
     DOMAIN_NAME = 'http://localhost:4200'
     DEBUG = True

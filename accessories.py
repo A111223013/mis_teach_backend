@@ -17,13 +17,13 @@ import time
 import json
 import os
 
-login_manager = LoginManager()
-login_manager.login_view = "login"
 sqldb = SQLAlchemy()
 mail = Mail()
 redis_client = FlaskRedis()
 token_store = FlaskRedis()
 mongo = PyMongo()
+login_manager = LoginManager()
+login_manager.login_view = "login"
 
 @login_manager.user_loader
 def load_user(user_id):

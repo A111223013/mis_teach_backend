@@ -28,8 +28,6 @@ def login():
         new_user = user_data.get('new_user', True)
         guide_completed = user_data.get('guide_completed', False)
 
-        print(f"✅ 用戶 {email} 登錄成功，token已生成")
-
         # 返回 token 和導覽狀態
         return jsonify({
             'token': token,
@@ -41,7 +39,6 @@ def login():
             }
         }), 200
     else:
-        print(f"❌ 用戶 {email} 登錄失敗：用戶名或密碼不正確")
         return jsonify({'message': '用戶名或密碼不正確'}), 401
 
 
