@@ -1,6 +1,6 @@
 from flask import jsonify, request, Blueprint, current_app
 import uuid
-from accessories import mongo, sqldb, redis_client
+from accessories import mongo, sqldb
 from src.api import get_user_info, verify_token
 import jwt
 from datetime import datetime
@@ -843,8 +843,7 @@ def create_quiz():
             if image_file and image_file not in ['沒有圖片', '不需要圖片', '不須圖片', '不須照片', '沒有考卷', '']:
                 # 處理圖片文件列表
                 if isinstance(image_file, list) and len(image_file) > 0:
-                    # 如果是列表，取第一個檔案名
-                    image_filename = image_file[0]
+                    question['image_file'] = image_file[0]  # 取第一張圖片
                 elif isinstance(image_file, str):
                     # 如果是字符串，直接使用
                     image_filename = image_file
