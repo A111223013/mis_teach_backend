@@ -88,8 +88,8 @@ def serve_static_image(filename):
 # 初始化數據庫表格
 with app.app_context():
     sqldb.create_all()
-    init_quiz_tables()  # 初始化測驗相關表格
+    # 移除自動初始化，改為按需初始化
+    # init_quiz_tables()  # 初始化測驗相關表格
 
 if __name__ == '__main__':
-
     app.run(debug=True)

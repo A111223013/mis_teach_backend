@@ -382,83 +382,251 @@ def get_quiz_result(result_id):
         return jsonify({'message': 'CORS preflight'}), 200
     
     try:
-        # 首先從 MongoDB submissions 集合中查找真實的測驗數據
-        from accessories import mongo
-        submission = mongo.db.submissions.find_one({'submission_id': result_id})
+        # 驗證 token 並獲取用戶 email
+        auth_header = request.headers.get('Authorization')
+        if not auth_header:
+            return jsonify({'success': False, 'error': '未提供授權標頭'}), 401
         
-        if submission:
-            # 轉換為前端期望的格式
-            result = {
-                'user_id': submission.get('user_email', ''),
-                'quiz_id': submission.get('quiz_id', ''),
-                'answers': [],
-                'submit_time': submission.get('submit_time', ''),
-                'total_time': submission.get('time_taken', 0),
-                'score': submission.get('score', 0),
-                'total_questions': submission.get('total_questions', 0),
-                'correct_count': submission.get('correct_count', 0),
-                'wrong_count': submission.get('wrong_count', 0),
-                'marked_count': 0,  # 暫時設為 0
-                'unanswered_count': submission.get('unanswered_count', 0)
-            }
+        token = auth_header.split(" ")[1]
+        user_email = get_user_info(token, 'email')
+        if not user_email:
+            return jsonify({'success': False, 'error': '無法獲取用戶資訊'}), 401
+        
+        # 解析 result_id 格式：result_<quiz_history_id>
+        if not result_id.startswith('result_'):
+            return jsonify({'success': False, 'error': '無效的結果ID格式'}), 400
+        
+        try:
+            quiz_history_id = int(result_id.split('_')[1])
+        except (ValueError, IndexError):
+            return jsonify({'success': False, 'error': '無效的結果ID格式'}), 400
+        
+        print(f"📝 正在查詢測驗結果，quiz_history_id: {quiz_history_id}")
+        
+        # 從 SQL 數據庫查詢測驗結果
+        from accessories import sqldb
+        from sqlalchemy import text
+        import json
+        
+        with sqldb.engine.connect() as conn:
+            # 查詢 quiz_history 和 quiz_templates
+            history_result = conn.execute(text("""
+                SELECT qh.id, qh.quiz_template_id, qh.user_email, qh.quiz_type, 
+                       qh.total_questions, qh.answered_questions, qh.correct_count, qh.wrong_count,
+                       qh.accuracy_rate, qh.average_score, qh.total_time_taken, 
+                       qh.submit_time, qh.status, qh.created_at,
+                       qt.question_ids
+                FROM quiz_history qh
+                LEFT JOIN quiz_templates qt ON qh.quiz_template_id = qt.id
+                WHERE qh.id = :quiz_history_id
+            """), {
+                'quiz_history_id': quiz_history_id
+            }).fetchone()
             
-            # 轉換 answers 格式並確保統計數據正確
-            scored_answers = submission.get('answers', {})
-            answers_list = []
+            if not history_result:
+                print(f"⚠️ 未找到測驗歷史記錄，quiz_history_id: {quiz_history_id}")
+                return jsonify({'success': False, 'error': '測驗結果不存在'}), 404
             
-            for question_index, answer_data in scored_answers.items():
-                user_answer = answer_data.get('user_answer', '')
-                is_correct = answer_data.get('is_correct', False)
-                has_answer = user_answer and str(user_answer).strip() != ''
+            # 查詢錯題詳情
+            error_result = conn.execute(text("""
+                SELECT mongodb_question_id, user_answer, score, time_taken, created_at
+                FROM quiz_errors 
+                WHERE quiz_history_id = :quiz_history_id
+                ORDER BY created_at
+            """), {
+                'quiz_history_id': quiz_history_id
+            }).fetchall()
+            
+            # 從MongoDB獲取題目詳情
+            from accessories import mongo
+            exam_collection = mongo.db.exam
+            
+            errors = []
+            for i, error in enumerate(error_result):
+                # 從MongoDB獲取題目詳情
+                question_detail = None
+                if error[0]:  # mongodb_question_id
+                    try:
+                        question_detail = exam_collection.find_one({'_id': ObjectId(error[0])})
+                    except Exception as e:
+                        print(f"⚠️ 無法從MongoDB獲取題目 {error[0]}: {e}")
                 
-                answers_list.append({
-                    'question_id': str(answer_data.get('question_id', question_index)),
-                    'question_text': answer_data.get('question_text', ''),
-                    'user_answer': str(user_answer),
-                    'correct_answer': str(answer_data.get('correct_answer', '')),
-                    'is_correct': is_correct,
-                    'is_marked': False,  # 暫時設為 False
-                    'topic': '計算機概論',
-                    'difficulty': 2,
-                    'answer_time': 0
+                errors.append({
+                    'question_id': error[0],
+                    'question_index': i,  # 使用循環索引
+                    'user_answer': json.loads(error[1]) if error[1] else '',
+                    'is_correct': False,  # 在 quiz_errors 表中的都是錯題
+                    'score': float(error[2]) if error[2] else 0,
+                    'time_taken': error[3],
+                    'created_at': error[4].isoformat() if error[4] else None,
+                    'question_detail': question_detail  # 添加題目詳情
                 })
             
-            # 更新結果數據，確保與MongoDB中的統計一致
-            result['answers'] = answers_list
-            result['correct_count'] = submission.get('correct_count', 0)
-            result['wrong_count'] = submission.get('wrong_count', 0)
-            result['unanswered_count'] = submission.get('unanswered_count', 0)
+            total_questions = history_result[4]
+            answered_questions = history_result[5]
+            correct_count = history_result[6]
+            wrong_count = history_result[7]
+            unanswered_count = total_questions - answered_questions
+            
+            # 構建前端期望的數據結構
+            result_data = {
+                'quiz_history_id': history_result[0],
+                'quiz_template_id': history_result[1],
+                'user_email': history_result[2],
+                'quiz_type': history_result[3],
+                'total_questions': total_questions,
+                'answered_questions': answered_questions,
+                'unanswered_questions': unanswered_count,
+                'correct_count': correct_count,
+                'wrong_count': wrong_count,
+                'marked_count': 0,  # 添加前端期望的字段
+                'accuracy_rate': float(history_result[8]) if history_result[8] else 0,
+                'average_score': float(history_result[9]) if history_result[9] else 0,
+                'total_time_taken': history_result[10],
+                'total_time': history_result[10],  # 添加前端期望的字段
+                'submit_time': history_result[11].isoformat() if history_result[11] else None,
+                'status': history_result[12],
+                'created_at': history_result[13].isoformat() if history_result[13] else None,
+                'errors': errors,
+                'answers': []  # 初始化為空數組
+            }
+            
+            # 如果有錯誤，從 errors 轉換
+            if errors:
+                print(f"🔍 處理 {len(errors)} 道錯題")
+                result_data['answers'] = []
+                for error in errors:
+                    print(f"🔍 處理錯題 {error['question_id']}: question_detail = {error['question_detail']}")
+                    if error['question_detail']:
+                        print(f"🔍 MongoDB 題目詳情: question = {error['question_detail'].get('question', 'None')}")
+                        print(f"🔍 MongoDB 題目詳情: answer = {error['question_detail'].get('answer', 'None')}")
+                    
+                    answer_obj = {
+                        'question_id': error['question_id'],
+                        'question_text': (
+                            error['question_detail'].get('question_text', f'題目 {error["question_index"] + 1}') 
+                            if error['question_detail'] else f'題目 {error["question_index"] + 1}'
+                        ),
+                        'user_answer': error['user_answer'],
+                        'correct_answer': (
+                            error['question_detail'].get('answer', '無參考答案') 
+                            if error['question_detail'] else '無參考答案'
+                        ),
+                        'is_correct': error['is_correct'],
+                        'is_marked': False,  # 默認未標記
+                        'score': error['score'],
+                        'time_taken': error['time_taken'],
+                        'feedback': error['user_answer'].get('feedback', {}).get('explanation', 'AI 評分結果') if isinstance(error['user_answer'], dict) else 'AI 評分結果'
+                    }
+                    print(f"🔍 構建的答案對象: question_text = {answer_obj['question_text']}")
+                    result_data['answers'].append(answer_obj)
+            # 如果沒有錯誤記錄，需要從MongoDB獲取所有題目詳情
+            elif total_questions > 0:
+                print(f"📝 沒有錯誤記錄，從MongoDB獲取 {total_questions} 道題目詳情")
+                try:
+                    # 從 quiz_templates 獲取題目ID列表
+                    question_ids = history_result[14]  # qt.question_ids
+                    if question_ids:
+                        question_ids_list = json.loads(question_ids) if isinstance(question_ids, str) else question_ids
+                        
+                        # 從MongoDB獲取所有題目詳情
+                        all_questions = []
+                        print(f"🔍 開始從MongoDB獲取 {len(question_ids_list)} 道題目詳情")
+                        for i, q_id in enumerate(question_ids_list):
+                            print(f"🔍 處理題目 {i+1}: q_id = {q_id}")
+                            try:
+                                question_detail = exam_collection.find_one({'_id': ObjectId(q_id)})
+                                print(f"🔍 MongoDB 查詢結果: question_detail = {question_detail}")
+                                
+                                if question_detail:
+                                    print(f"🔍 題目內容: {question_detail.get('question_text', 'None')}")
+                                    print(f"🔍 正確答案: {question_detail.get('answer', 'None')}")
+                                
+                                question_obj = {
+                                    'question_id': q_id,
+                                    'question_text': (
+                                        question_detail.get('question_text', f'題目 {i+1}') 
+                                        if question_detail else f'題目 {i+1}'
+                                    ),
+                                    'user_answer': '未作答',
+                                    'correct_answer': (
+                                        question_detail.get('answer', '無參考答案') 
+                                        if question_detail else '無參考答案'
+                                    ),
+                                    'is_correct': False,
+                                    'is_marked': False,
+                                    'score': 0,
+                                    'time_taken': 0,
+                                    'feedback': {'explanation': '此題未作答'}
+                                }
+                                print(f"🔍 構建的題目對象: question_text = {question_obj['question_text']}")
+                                all_questions.append(question_obj)
+                            except Exception as e:
+                                print(f"⚠️ 無法獲取題目 {q_id}: {e}")
+                                # 如果無法獲取，使用默認值
+                                fallback_obj = {
+                                    'question_id': q_id,
+                                    'question_text': f'題目 {i+1}',
+                                    'user_answer': '未作答',
+                                    'correct_answer': '無參考答案',
+                                    'is_correct': False,
+                                    'is_marked': False,
+                                    'score': 0,
+                                    'time_taken': 0,
+                                    'feedback': {'explanation': '此題未作答'}
+                                }
+                                print(f"🔍 使用默認題目對象: question_text = {fallback_obj['question_text']}")
+                                all_questions.append(fallback_obj)
+                        
+                        result_data['answers'] = all_questions
+                        print(f"✅ 成功獲取 {len(all_questions)} 道題目詳情")
+                    else:
+                        print("⚠️ 題目模板中沒有題目ID列表")
+                        # 生成默認題目數據
+                        result_data['answers'] = [
+                            {
+                                'question_id': f'q{i+1}',
+                                'question_text': f'題目 {i+1}',
+                                'user_answer': '未作答',
+                                'correct_answer': '無參考答案',
+                                'is_correct': False,
+                                'is_marked': False,
+                                'score': 0,
+                                'time_taken': 0,
+                                'feedback': {'explanation': '此題未作答'}
+                            }
+                            for i in range(total_questions)
+                        ]
+                except Exception as e:
+                    print(f"❌ 獲取所有題目詳情失敗: {e}")
+                    # 如果失敗，生成默認題目數據
+                    result_data['answers'] = [
+                        {
+                            'question_id': f'q{i+1}',
+                            'question_text': f'題目 {i+1}',
+                            'user_answer': '未作答',
+                            'correct_answer': '無參考答案',
+                            'is_correct': False,
+                            'is_marked': False,
+                            'score': 0,
+                            'time_taken': 0,
+                            'feedback': {'explanation': '此題未作答'}
+                        }
+                        for i in range(total_questions)
+                    ]
+            
+            print(f"✅ 成功獲取測驗結果")
+            print(f"📊 返回數據結構: {result_data}")
             
             return jsonify({
                 'success': True,
-                'result': result
-            })
-        
-        # 如果 MongoDB 中找不到，再從 session_data 中查找
-        user_id = ai_teacher_service.get_user_id()
-        session_data = ai_teacher_service.get_user_session_data(user_id)
-
-        # 查找測驗結果
-        for result in session_data.get('quiz_results', []):
-            if f"result_{result['user_id']}_{result['quiz_id']}_{result['submit_time']}" == result_id:
-                return jsonify({
-                    'success': True,
-                    'result': result
-                })
-
-        # 如果都找不到結果，返回錯誤
-        logger.warning(f"未找到測驗結果 {result_id}")
-        return jsonify({
-            'success': False,
-            'error': f'未找到測驗結果 {result_id}'
-        }), 404
-        
+                'message': '獲取測驗結果成功',
+                'data': result_data
+            }), 200
+            
     except Exception as e:
-        logger.error(f"❌ 獲取測驗結果錯誤: {e}")
-        return jsonify({
-            'success': False,
-            'error': '獲取測驗結果時發生錯誤'
-        }), 500
+        print(f"❌ 獲取測驗結果時發生錯誤: {str(e)}")
+        return jsonify({'success': False, 'error': f'獲取測驗結果失敗: {str(e)}'}), 500
 
 @ai_teacher_bp.route('/start-error-learning', methods=['POST', 'OPTIONS'])
 def start_error_learning():
@@ -475,11 +643,27 @@ def start_error_learning():
         if not result_id:
             return jsonify({'success': False, 'error': '缺少測驗結果ID'}), 400
         
-        result = ai_teacher_service.start_error_learning(result_id)
-        return jsonify(result)
+        # 驗證 token 並獲取用戶 email
+        auth_header = request.headers.get('Authorization')
+        if not auth_header:
+            return jsonify({'success': False, 'error': '未提供授權標頭'}), 401
+        
+        token = auth_header.split(" ")[1]
+        user_email = verify_token(token)
+        if not user_email:
+            return jsonify({'success': False, 'error': '無法獲取用戶資訊'}), 401
+        
+        # 創建學習會話ID
+        session_id = f"learning_{user_email}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        
+        return jsonify({
+            'success': True,
+            'session_id': session_id,
+            'message': f'開始錯題學習，會話ID: {session_id}'
+        })
         
     except Exception as e:
-        logger.error(f"❌ 開始錯題學習錯誤: {e}")
+        print(f"❌ 開始錯題學習錯誤: {e}")
         return jsonify({
             'success': False,
             'error': '開始錯題學習時發生錯誤'
@@ -1005,4 +1189,25 @@ def submit_quiz_answers():
         return jsonify({
             'success': False,
             'error': '提交測驗答案時發生錯誤'
+        }), 500
+
+@ai_teacher_bp.route('/get-quiz-result/<result_id>', methods=['GET', 'OPTIONS'])
+def get_quiz_result_proxy(result_id):
+    """測驗結果代理路由 - 轉發到 quiz.py 的 get_quiz_result 函數"""
+    try:
+        # 處理 CORS 預檢請求
+        if request.method == 'OPTIONS':
+            return jsonify({'message': 'CORS preflight'}), 200
+        
+        # 導入 quiz 模組中的 get_quiz_result 函數
+        from .quiz import get_quiz_result
+        
+        # 調用 quiz.py 中的 get_quiz_result 函數
+        return get_quiz_result(result_id)
+        
+    except Exception as e:
+        logger.error(f"❌ 測驗結果代理路由錯誤: {e}")
+        return jsonify({
+            'success': False,
+            'message': f'獲取測驗結果失敗: {str(e)}'
         }), 500
