@@ -8,10 +8,7 @@ import os
 import random
 from typing import List
 
-# 默認API密鑰（如果環境變數沒有設置）
-DEFAULT_API_KEYS = [
-    "AIzaSyBad7mpaX-fPPtpjbcgZ1JpKOBPJZJkmf4",
-]
+
 
 def load_env_file(file_path: str) -> dict:
     """載入.env文件"""

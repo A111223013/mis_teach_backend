@@ -637,48 +637,57 @@ def get_quiz_result(result_id):
                 for i, error in enumerate(error_result):
                     print(f"🔍 處理錯題 {i + 1}: {error}")
                     
-                    # 從MongoDB獲取題目詳情
+                                         # 從MongoDB獲取題目詳情
                     question_detail = {}
                     try:
                         question_id = error[0]
-                        exam_question = mongo.db.exam.find_one({"_id": ObjectId(question_id)})
-                        if not exam_question:
+                         # 安全地處理 ObjectId 查詢
+                        try:
+                            if isinstance(question_id, str) and len(question_id) == 24:
+                                 # 嘗試使用 ObjectId 查詢
+                                exam_question = mongo.db.exam.find_one({"_id": ObjectId(question_id)})
+                            else:
+                                 # 直接使用字符串查詢
+                                exam_question = mongo.db.exam.find_one({"_id": question_id})
+                        except Exception as oid_error:
+                            print(f"⚠️ ObjectId 轉換失敗: {oid_error}")
+                             # 回退到直接查詢
                             exam_question = mongo.db.exam.find_one({"_id": question_id})
-                        
+                         
                         if exam_question:
                             question_detail = {
-                                'question_text': exam_question.get('question_text', ''),
-                                'options': exam_question.get('options', []),
-                                'correct_answer': exam_question.get('answer', ''),
-                                'image_file': exam_question.get('image_file', ''),
-                                'key_points': exam_question.get('key-points', '')
-                            }
+                                 'question_text': exam_question.get('question_text', ''),
+                                 'options': exam_question.get('options', []),
+                                 'correct_answer': exam_question.get('answer', ''),
+                                 'image_file': exam_question.get('image_file', ''),
+                                 'key_points': exam_question.get('key-points', '')
+                             }
                             print(f"✅ 題目詳情獲取成功: {question_detail.get('question_text', '')[:50]}...")
                         else:
                             print(f"⚠️ 找不到題目: {question_id}")
                     except Exception as e:
                         print(f"⚠️ 獲取題目詳情失敗: {e}")
                         question_detail = {
-                            'question_text': f'題目 {i + 1}',
-                            'options': [],
-                            'correct_answer': '',
-                            'image_file': '',
-                            'key_points': ''
+                             'question_text': f'題目 {i + 1}',
+                             'options': [],
+                             'correct_answer': '',
+                             'image_file': '',
+                             'key_points': ''
                         }
                     
                     errors.append({
-                        'question_id': error[0],
-                        'question_index': i,
-                        'question_text': question_detail.get('question_text', ''),
-                        'options': question_detail.get('options', []),
-                        'correct_answer': question_detail.get('correct_answer', ''),
-                        'image_file': question_detail.get('image_file', ''),
-                        'key_points': question_detail.get('key_points', ''),
-                        'user_answer': json.loads(error[1]) if error[1] else '',
-                        'score': float(error[2]) if error[2] else 0,
-                        'time_taken': error[3] if error[3] else 0,
-                        'answer_time': error[4].isoformat() if error[4] else None
-                    })
+                         'question_id': str(error[0]),  # 轉換 ObjectId 為字符串
+                         'question_index': i,
+                         'question_text': question_detail.get('question_text', ''),
+                         'options': question_detail.get('options', []),
+                         'correct_answer': question_detail.get('correct_answer', ''),
+                         'image_file': question_detail.get('image_file', ''),
+                         'key_points': question_detail.get('key_points', ''),
+                         'user_answer': json.loads(error[1]) if error[1] else '',
+                         'score': float(error[2]) if error[2] else 0,
+                         'time_taken': error[3] if error[3] else 0,
+                         'answer_time': error[4].isoformat() if error[4] else None
+                     })
                 
                 # 計算統計數據
                 total_questions = history_result[4]
@@ -840,6 +849,8 @@ def create_quiz():
             
             # 處理圖片檔案
             image_file = exam.get('image_file', '')
+            image_filename = ''  # 初始化變數
+            
             if image_file and image_file not in ['沒有圖片', '不需要圖片', '不須圖片', '不須照片', '沒有考卷', '']:
                 # 處理圖片文件列表
                 if isinstance(image_file, list) and len(image_file) > 0:

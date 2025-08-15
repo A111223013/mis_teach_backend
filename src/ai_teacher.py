@@ -451,15 +451,34 @@ def get_quiz_result(result_id):
                     except Exception as e:
                         print(f"⚠️ 無法從MongoDB獲取題目 {error[0]}: {e}")
                 
+                # 處理 question_detail，確保沒有 ObjectId
+                processed_question_detail = None
+                if question_detail:
+                    processed_question_detail = {
+                        'question_text': question_detail.get('question_text', ''),
+                        'options': question_detail.get('options', []),
+                        'answer': question_detail.get('answer', ''),
+                        'image_file': question_detail.get('image_file', ''),
+                        'key_points': question_detail.get('key-points', ''),
+                        'type': question_detail.get('type', ''),
+                        'school': question_detail.get('school', ''),
+                        'department': question_detail.get('department', ''),
+                        'year': question_detail.get('year', ''),
+                        'question_number': question_detail.get('question_number', ''),
+                        'answer_type': question_detail.get('answer_type', ''),
+                        'detail_answer': question_detail.get('detail-answer', ''),
+                        'difficulty_level': question_detail.get('difficulty level', '')
+                    }
+                
                 errors.append({
-                    'question_id': error[0],
+                    'question_id': str(error[0]),  # 轉換 ObjectId 為字符串
                     'question_index': i,  # 使用循環索引
                     'user_answer': json.loads(error[1]) if error[1] else '',
                     'is_correct': False,  # 在 quiz_errors 表中的都是錯題
                     'score': float(error[2]) if error[2] else 0,
                     'time_taken': error[3],
                     'created_at': error[4].isoformat() if error[4] else None,
-                    'question_detail': question_detail  # 添加題目詳情
+                    'question_detail': processed_question_detail  # 使用處理後的題目詳情
                 })
             
             total_questions = history_result[4]
@@ -491,38 +510,9 @@ def get_quiz_result(result_id):
                 'answers': []  # 初始化為空數組
             }
             
-            # 如果有錯誤，從 errors 轉換
-            if errors:
-                print(f"🔍 處理 {len(errors)} 道錯題")
-                result_data['answers'] = []
-                for error in errors:
-                    print(f"🔍 處理錯題 {error['question_id']}: question_detail = {error['question_detail']}")
-                    if error['question_detail']:
-                        print(f"🔍 MongoDB 題目詳情: question = {error['question_detail'].get('question', 'None')}")
-                        print(f"🔍 MongoDB 題目詳情: answer = {error['question_detail'].get('answer', 'None')}")
-                    
-                    answer_obj = {
-                        'question_id': error['question_id'],
-                        'question_text': (
-                            error['question_detail'].get('question_text', f'題目 {error["question_index"] + 1}') 
-                            if error['question_detail'] else f'題目 {error["question_index"] + 1}'
-                        ),
-                        'user_answer': error['user_answer'],
-                        'correct_answer': (
-                            error['question_detail'].get('answer', '無參考答案') 
-                            if error['question_detail'] else '無參考答案'
-                        ),
-                        'is_correct': error['is_correct'],
-                        'is_marked': False,  # 默認未標記
-                        'score': error['score'],
-                        'time_taken': error['time_taken'],
-                        'feedback': error['user_answer'].get('feedback', {}).get('explanation', 'AI 評分結果') if isinstance(error['user_answer'], dict) else 'AI 評分結果'
-                    }
-                    print(f"🔍 構建的答案對象: question_text = {answer_obj['question_text']}")
-                    result_data['answers'].append(answer_obj)
-            # 如果沒有錯誤記錄，需要從MongoDB獲取所有題目詳情
-            elif total_questions > 0:
-                print(f"📝 沒有錯誤記錄，從MongoDB獲取 {total_questions} 道題目詳情")
+            # 無論是否有錯誤記錄，都需要從MongoDB獲取所有題目詳情
+            if total_questions > 0:
+                print(f"📝 從MongoDB獲取 {total_questions} 道題目詳情")
                 try:
                     # 從 quiz_templates 獲取題目ID列表
                     question_ids = history_result[14]  # qt.question_ids
@@ -532,6 +522,13 @@ def get_quiz_result(result_id):
                         # 從MongoDB獲取所有題目詳情
                         all_questions = []
                         print(f"🔍 開始從MongoDB獲取 {len(question_ids_list)} 道題目詳情")
+                        
+                        # 創建一個字典來存儲錯題信息，用於後續處理
+                        error_info = {}
+                        if errors:
+                            for error in errors:
+                                error_info[error['question_id']] = error
+                        
                         for i, q_id in enumerate(question_ids_list):
                             print(f"🔍 處理題目 {i+1}: q_id = {q_id}")
                             try:
@@ -542,30 +539,73 @@ def get_quiz_result(result_id):
                                     print(f"🔍 題目內容: {question_detail.get('question_text', 'None')}")
                                     print(f"🔍 正確答案: {question_detail.get('answer', 'None')}")
                                 
-                                question_obj = {
-                                    'question_id': q_id,
-                                    'question_text': (
-                                        question_detail.get('question_text', f'題目 {i+1}') 
-                                        if question_detail else f'題目 {i+1}'
-                                    ),
-                                    'user_answer': '未作答',
-                                    'correct_answer': (
-                                        question_detail.get('answer', '無參考答案') 
-                                        if question_detail else '無參考答案'
-                                    ),
-                                    'is_correct': False,
-                                    'is_marked': False,
-                                    'score': 0,
-                                    'time_taken': 0,
-                                    'feedback': {'explanation': '此題未作答'}
-                                }
+                                # 檢查這道題是否是錯題
+                                if str(q_id) in error_info:
+                                    # 這是錯題，使用錯題信息
+                                    error = error_info[str(q_id)]
+                                    print(f"🔍 題目 {q_id} 是錯題，使用錯題信息")
+                                    
+                                    # 處理用戶答案，確保正確顯示
+                                    user_answer_text = '無答案'
+                                    if isinstance(error['user_answer'], dict):
+                                        user_answer_text = error['user_answer'].get('answer', '無答案')
+                                    elif isinstance(error['user_answer'], str):
+                                        user_answer_text = error['user_answer']
+                                    else:
+                                        user_answer_text = str(error['user_answer'])
+                                    
+                                    # 處理反饋信息
+                                    feedback_text = 'AI 評分結果'
+                                    if isinstance(error['user_answer'], dict):
+                                        feedback_text = error['user_answer'].get('feedback', {}).get('explanation', 'AI 評分結果')
+                                    
+                                    question_obj = {
+                                        'question_id': str(q_id),
+                                        'question_text': (
+                                            question_detail.get('question_text', f'題目 {i+1}') 
+                                            if question_detail else f'題目 {i+1}'
+                                        ),
+                                        'user_answer': user_answer_text,
+                                        'correct_answer': (
+                                            question_detail.get('answer', '無參考答案') 
+                                            if question_detail else '無參考答案'
+                                        ),
+                                        'is_correct': False,  # 錯題
+                                        'is_marked': False,
+                                        'score': error['score'],
+                                        'time_taken': error['time_taken'],
+                                        'feedback': feedback_text,
+                                        'status': 'incorrect'
+                                    }
+                                else:
+                                    # 這不是錯題，可能是正確題目或未答題目
+                                    print(f"🔍 題目 {q_id} 不是錯題，標記為未答題目")
+                                    question_obj = {
+                                        'question_id': str(q_id),
+                                        'question_text': (
+                                            question_detail.get('question_text', f'題目 {i+1}') 
+                                            if question_detail else f'題目 {i+1}'
+                                        ),
+                                        'user_answer': '未作答',
+                                        'correct_answer': (
+                                            question_detail.get('answer', '無參考答案') 
+                                            if question_detail else '無參考答案'
+                                        ),
+                                        'is_correct': False,
+                                        'is_marked': False,
+                                        'score': 0,
+                                        'time_taken': 0,
+                                        'feedback': {'explanation': '此題未作答'},
+                                        'status': 'unanswered'
+                                    }
+                                
                                 print(f"🔍 構建的題目對象: question_text = {question_obj['question_text']}")
                                 all_questions.append(question_obj)
                             except Exception as e:
                                 print(f"⚠️ 無法獲取題目 {q_id}: {e}")
                                 # 如果無法獲取，使用默認值
                                 fallback_obj = {
-                                    'question_id': q_id,
+                                    'question_id': str(q_id),
                                     'question_text': f'題目 {i+1}',
                                     'user_answer': '未作答',
                                     'correct_answer': '無參考答案',
@@ -573,7 +613,8 @@ def get_quiz_result(result_id):
                                     'is_marked': False,
                                     'score': 0,
                                     'time_taken': 0,
-                                    'feedback': {'explanation': '此題未作答'}
+                                    'feedback': {'explanation': '此題未作答'},
+                                    'status': 'unanswered'
                                 }
                                 print(f"🔍 使用默認題目對象: question_text = {fallback_obj['question_text']}")
                                 all_questions.append(fallback_obj)
@@ -593,7 +634,8 @@ def get_quiz_result(result_id):
                                 'is_marked': False,
                                 'score': 0,
                                 'time_taken': 0,
-                                'feedback': {'explanation': '此題未作答'}
+                                'feedback': {'explanation': '此題未作答'},
+                                'status': 'unanswered'
                             }
                             for i in range(total_questions)
                         ]
@@ -610,7 +652,27 @@ def get_quiz_result(result_id):
                             'is_marked': False,
                             'score': 0,
                             'time_taken': 0,
-                            'feedback': {'explanation': '此題未作答'}
+                            'feedback': {'explanation': '此題未作答'},
+                            'status': 'unanswered'
+                        }
+                        for i in range(total_questions)
+                    ]
+                
+                # 確保 answers 數組不為空
+                if not result_data.get('answers') or len(result_data['answers']) == 0:
+                    print("⚠️ answers 數組為空，生成默認題目數據")
+                    result_data['answers'] = [
+                        {
+                            'question_id': f'q{i+1}',
+                            'question_text': f'題目 {i+1}',
+                            'user_answer': '未作答',
+                            'correct_answer': '無參考答案',
+                            'is_correct': False,
+                            'is_marked': False,
+                            'score': 0,
+                            'time_taken': 0,
+                            'feedback': {'explanation': '此題未作答'},
+                            'status': 'unanswered'
                         }
                         for i in range(total_questions)
                     ]
