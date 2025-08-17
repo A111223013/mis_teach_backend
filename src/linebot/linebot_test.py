@@ -81,14 +81,26 @@ def handle_message(event):
             reply_text(event.reply_token, f"【詳解】\n{detail_answer}\n\n輸入『題目』可以開始下一題。")
             del user_state[user_id] # 顯示詳解後清除狀態
             return
+        is_correct = False
+        question_type = current_question.get("type")
+        correct_answer = str(current_question.get("answer", "")).strip().lower()
+        
+        if question_type == "single-choice":
+            if user_message == correct_answer:
+                is_correct = True
+        elif question_type == "short-answer":
+            # 簡答題比對邏輯: 答案包含在正確答案中，或是正確答案包含在使用者答案中
+            # 也可以只比對部分關鍵字
+            if user_message in correct_answer or correct_answer in user_message:
+                 is_correct = True
         
         # 檢查答案是否正確
         correct_answer = str(current_question.get("answer")).strip().lower()
         if user_message == correct_answer:
-            reply_text(event.reply_token, "恭喜你，答對了！\n輸入『題目』可以開始下一題。")
+            reply_text(event.reply_token, "恭喜你，答對了！\n輸入『題目』可以開始下一題。\n如果想看詳解，請輸入『詳解』。")
             del user_state[user_id] # 答對後清除狀態
         else:
-            reply_text(event.reply_token, "答案不對喔，再試試看！\n如果想看詳解，請輸入『詳解』。")
+            reply_text(event.reply_token, "答案不對喔，再試試看！\n輸入『題目』可以開始下一題。\n如果想看詳解，請輸入『詳解』。")
     
     # 使用者輸入『題目』或『開始』時，出題
     elif user_message in ['題目', '開始']:
@@ -96,7 +108,7 @@ def handle_message(event):
         
         # 建立題目顯示格式
         question_text = (
-            f"【{random_question.get('school', '')}】"
+            f"【{random_question.get('school', '')}】\n"
             f"【{random_question.get('department', '')}】\n"
             f"【{random_question.get('year', '')}年 第{random_question.get('question_number', '')}題】\n\n"
             f"{random_question.get('question_text', '')}\n\n"
