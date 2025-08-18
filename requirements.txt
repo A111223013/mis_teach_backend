@@ -178,3 +178,8 @@ websockets==15.0.1
 Werkzeug==3.0.6
 wrapt==1.17.3
 zipp==3.23.0
+
+# LangChain 相關依賴
+langchain==0.3.0
+langchain-core==0.3.0
+langchain-google-genai==0.2.0
