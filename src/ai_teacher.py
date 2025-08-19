@@ -8,26 +8,14 @@ from datetime import datetime
 from flask import Blueprint, request, jsonify, session
 from typing import Dict, Any, List, Optional
 import uuid
-from src.api import get_user_info, verify_token
-from werkzeug.security import generate_password_hash
-from flask_mail import Message
-from flask import jsonify, request, redirect, url_for, Blueprint, current_app
-import uuid
-from accessories import mail, redis_client, mongo, save_json_to_mongo
-from src.api import get_user_info, verify_token
+from accessories import mongo
 from bson.objectid import ObjectId
-import jwt
-from datetime import datetime
 
 # 導入 RAG 系統模組
 RAG_AVAILABLE = False
-Config = None
-MultiAITutor = None
-AIResponder = None
 
 try:
-    from .rag_sys.config import Config
-    from .rag_sys.rag_ai_role import MultiAITutor, AIResponder
+    from .rag_sys.rag_ai_role import handle_tutoring_conversation
     RAG_AVAILABLE = True
     logger = logging.getLogger(__name__)
 except ImportError as e:
@@ -37,36 +25,22 @@ except ImportError as e:
 # 創建 Blueprint
 ai_teacher_bp = Blueprint('ai_teacher', __name__)
 
-class AITeacherService:
-    """AI 教學服務"""
-    
-    def __init__(self):
-        """初始化服務"""
-        self.config = None
-        self.tutor = None
-        self.responder = None
-        self.user_sessions = {}  # 用戶會話數據
+# ==================== 全局變數 ====================
 
-        if RAG_AVAILABLE:
-            try:
-                self.config = Config()
-                # 使用整合後的 MultiAITutor 和 AIResponder
-                self.tutor = MultiAITutor()
-                self.responder = AIResponder()
-            except Exception as e:
-                logger.error(f"❌ AI 教學服務初始化失敗: {e}")
-                # 不修改全局變數，只記錄錯誤
-    
-    def get_user_id(self) -> str:
+# 用戶會話數據
+user_sessions = {}
+
+# ==================== 工具函數 ====================
+
+def get_user_id() -> str:
         """獲取用戶 ID"""
         if 'user_id' not in session:
             session['user_id'] = f"user_{uuid.uuid4().hex[:8]}"
         return session['user_id']
     
-    def get_user_session_data(self, user_id: str) -> Dict[str, Any]:
-        """獲取用戶會話數據"""
-        if user_id not in self.user_sessions:
-            self.user_sessions[user_id] = {
+def get_user_session_data(user_id: str) -> Dict[str, Any]:
+    if user_id not in user_sessions:
+        user_sessions[user_id] = {
                 'current_ai_model': 'gemini',
                 'in_conversation': False,
                 'conversation_count': 0,
@@ -81,234 +55,390 @@ class AITeacherService:
                 'quiz_results': [],
                 'learning_sessions': []
             }
-        return self.user_sessions[user_id]
+    return user_sessions[user_id]
     
-    def chat_with_ai(
-        self,
-        question: str,
-        conversation_type: str = "general",
-        user_id: Optional[str] = None,
-        session_id: Optional[str] = None
-    ) -> Dict[str, Any]:
-        """與 AI 進行對話 - 純 API 串接"""
-        try:
-            if not RAG_AVAILABLE or not self.tutor:
-                return {
-                    'success': False,
-                    'error': 'AI 服務不可用',
-                    'response': '抱歉，AI 教學服務暫時不可用。'
-                }
-
-            if not user_id:
-                user_id = self.get_user_id()
-
-            # 根據對話類型調用不同的 AI 處理器
-            if conversation_type == "tutoring" and session_id:
-                # 教學對話：調用 MultiAITutor 的教學會話處理
-                response = self.tutor.handle_tutoring_conversation(session_id, question, user_id)
-            elif conversation_type == "tutoring":
-                # 新的教學會話：調用 MultiAITutor 的新問題處理
-                response = self.tutor.start_new_question(question)
-            else:
-                # 一般問題：調用 AIResponder
-                if self.responder:
-                    result = self.responder.answer_question(question)
-                    response = result.get('詳細回答', '抱歉，無法回答您的問題。')
-                else:
-                    response = "AI 回應器不可用。"
-
-            # 更新用戶會話數據
-            session_data = self.get_user_session_data(user_id)
-            session_data['conversation_count'] += 1
-            session_data['last_activity'] = datetime.now().isoformat()
-            session_data['in_conversation'] = True
-
-            return {
-                'success': True,
-                'response': response,
-                'conversation_type': conversation_type,
-                'ai_model': 'gemini',
-                'conversation_count': session_data['conversation_count'],
-                'knowledge_used': True
-            }
-
-        except Exception as e:
-            logger.error(f"❌ AI 對話失敗: {e}")
+def chat_with_ai(question: str, conversation_type: str = "general", session_id: str = None) -> dict:
+    """AI 對話處理"""
+    try:
+        # 檢查 AI 服務是否可用
+        if not RAG_AVAILABLE:
             return {
                 'success': False,
-                'error': str(e),
-                'response': '抱歉，處理您的問題時發生錯誤。'
+                'error': 'AI 服務不可用',
+                'response': '抱歉，AI 教學服務暫時不可用。'
             }
-    
-    def submit_quiz_results(self, quiz_data: Dict[str, Any]) -> Dict[str, Any]:
-        """提交測驗結果"""
-        try:
-            user_id = self.get_user_id()
-            session_data = self.get_user_session_data(user_id)
-            
-            # 處理測驗數據
-            processed_result = self._process_quiz_data(quiz_data, user_id)
-            
-            # 保存到用戶會話
-            session_data['quiz_results'].append(processed_result)
-            
-            # 生成結果 ID
-            result_id = f"result_{processed_result['user_id']}_{processed_result['quiz_id']}_{processed_result['submit_time']}"
-            
-            return {
-                'success': True,
-                'result_id': result_id,
-                'message': '測驗結果提交成功'
-            }
-            
-        except Exception as e:
-            logger.error(f"❌ 提交測驗結果失敗: {e}")
-            return {
-                'success': False,
-                'error': str(e)
-            }
-    
-    def _process_quiz_data(self, quiz_data: Dict[str, Any], user_id: str) -> Dict[str, Any]:
-        """處理測驗數據"""
-        answers = quiz_data.get('answers', [])
-        
-        # 計算統計數據
-        total_questions = len(answers)
-        correct_count = sum(1 for answer in answers if answer.get('is_correct', False))
-        wrong_count = total_questions - correct_count
-        marked_count = sum(1 for answer in answers if answer.get('is_marked', False))
-        unanswered_count = 0  # 假設所有題目都已回答
-        
-        return {
-            'user_id': user_id,
-            'quiz_id': quiz_data.get('quiz_id', ''),
-            'answers': answers,
-            'submit_time': quiz_data.get('submit_time', datetime.now().isoformat()),
-            'total_time': quiz_data.get('total_time', 0),
-            'score': quiz_data.get('score', correct_count),
-            'total_questions': total_questions,
-            'correct_count': correct_count,
-            'wrong_count': wrong_count,
-            'marked_count': marked_count,
-            'unanswered_count': unanswered_count
-        }
-    
-    def start_error_learning(self, result_id: str) -> Dict[str, Any]:
-        """開始錯題學習"""
-        try:
-            user_id = self.get_user_id()
-            session_data = self.get_user_session_data(user_id)
 
-            # 首先嘗試從 Redis 獲取用戶的所有錯題數據
-            import json
-            
-            # 從 session 或 token 獲取用戶 email
-            user_email = None
+        # 根據對話類型處理
+        if conversation_type == "tutoring" and session_id:
+            # 使用 RAG 系統的教學對話
             try:
-                auth_header = request.headers.get('Authorization')
-                if auth_header and auth_header.startswith('Bearer '):
-                    token = auth_header.split(" ")[1]
-                    user_email = get_user_info(token, 'email')
-            except:
-                pass
-            
-            if user_email:
-                # 創建 Redis 連接
-                r = redis_client
-                user_error_key = f"user_errors:{user_email}"
-                error_data = r.get(user_error_key)
-                
-                if error_data:
-                    logger.info(f"從 Redis 獲取用戶 {user_email} 的錯題數據")
-                    # 處理bytes到string的轉換
-                    if isinstance(error_data, bytes):
-                        error_data = error_data.decode('utf-8')
-                    error_list = json.loads(error_data)
-                    
-                    if error_list:
-                        logger.info(f"成功從 Redis 獲取 {len(error_list)} 道錯題")
-                        
-                        # 創建學習會話ID
-                        session_id = f"learning_{user_id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-                        
-                        # 保存會話 ID 到用戶數據（用於追蹤）
-                        if 'learning_sessions' not in session_data:
-                            session_data['learning_sessions'] = []
-                        session_data['learning_sessions'].append({
-                            'session_id': session_id,
-                            'result_id': result_id,
-                            'start_time': datetime.now().isoformat(),
-                            'source': 'redis',
-                            'error_count': len(error_list)
-                        })
-
-                        return {
-                            'success': True,
-                            'session_id': session_id,
-                            'total_wrong_questions': len(error_list),
-                            'message': f'開始學習 {len(error_list)} 道錯題',
-                            'source': 'redis'
-                        }
-
-            # 如果 Redis 中沒有數據，再從 MongoDB 獲取
-            from accessories import mongo
-            submission = mongo.db.submissions.find_one({'submission_id': result_id})
-            
-            if submission:
-                logger.info(f"從 MongoDB 獲取測驗結果 {result_id} 的錯題數據")
-                
-                # 提取錯題數據
-                wrong_questions = submission.get('wrong_questions', [])
-                
-                if not wrong_questions:
-                    return {
-                        'success': True,
-                        'message': '恭喜！您沒有錯題需要學習',
-                        'wrong_questions': []
-                    }
-                
-                logger.info(f"成功從 MongoDB 獲取 {len(wrong_questions)} 道錯題")
-                
-                # 創建學習會話ID
-                session_id = f"learning_{user_id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-                
-                # 保存會話 ID 到用戶數據（用於追蹤）
-                if 'learning_sessions' not in session_data:
-                    session_data['learning_sessions'] = []
-                session_data['learning_sessions'].append({
-                    'session_id': session_id,
-                    'result_id': result_id,
-                    'start_time': datetime.now().isoformat(),
-                    'source': 'mongodb',
-                    'error_count': len(wrong_questions)
-                })
-
+                response = handle_tutoring_conversation(session_id, question, user_id or "default")
                 return {
                     'success': True,
-                    'session_id': session_id,
-                    'total_wrong_questions': len(wrong_questions),
-                    'message': f'開始學習 {len(wrong_questions)} 道錯題',
-                    'source': 'mongodb'
+                    'response': response,
+                    'conversation_type': 'tutoring',
+                    'session_id': session_id
                 }
-            
-            # 如果都找不到數據，返回錯誤
-            logger.warning(f"未找到用戶錯題數據")
+            except Exception as e:
+                logger.error(f"❌ 教學對話失敗: {e}")
+                return {
+                    'success': False,
+                    'error': f'教學對話失敗：{str(e)}',
+                    'response': '抱歉，教學對話處理失敗，請重試。'
+                }
+        else:
+            # 一般對話
             return {
-                'success': False,
-                'error': '未找到錯題數據，請先完成測驗'
+                'success': True,
+                'response': f'您好！我是AI教學助手。關於「{question}」，我很樂意為您解答。請使用AI導師功能獲得更專業的指導。',
+                'conversation_type': 'general'
             }
             
-        except Exception as e:
-            logger.error(f"❌ 開始錯題學習失敗: {e}")
-            return {
-                'success': False,
-                'error': str(e)
+    except Exception as e:
+        logger.error(f"❌ AI對話失敗: {e}")
+        return {
+            'success': False,
+            'error': f'AI對話失敗：{str(e)}',
+            'response': '抱歉，AI對話處理失敗，請重試。'
+        }
+
+def get_quiz_result_data(result_id: str) -> dict:
+    """獲取測驗結果數據 - 供內部調用"""
+    try:
+        # 解析 result_id 格式：result_<quiz_history_id>
+        if not result_id.startswith('result_'):
+            return None
+        
+        try:
+            quiz_history_id = int(result_id.split('_')[1])
+        except (ValueError, IndexError):
+            return None
+        
+        print(f"📝 正在查詢測驗結果，quiz_history_id: {quiz_history_id}")
+        
+        # 從 SQL 數據庫查詢測驗結果
+        from accessories import sqldb
+        from sqlalchemy import text
+        import json
+        
+        with sqldb.engine.connect() as conn:
+            # 查詢 quiz_history 和 quiz_templates
+            history_result = conn.execute(text("""
+                SELECT qh.id, qh.quiz_template_id, qh.user_email, qh.quiz_type, 
+                       qh.total_questions, qh.answered_questions, qh.correct_count, qh.wrong_count,
+                       qh.accuracy_rate, qh.average_score, qh.total_time_taken, 
+                       qh.submit_time, qh.status, qh.created_at,
+                       qt.question_ids
+                FROM quiz_history qh
+                LEFT JOIN quiz_templates qt ON qh.quiz_template_id = qt.id
+                WHERE qh.id = :quiz_history_id
+            """), {
+                'quiz_history_id': quiz_history_id
+            }).fetchone()
+            
+            if not history_result:
+                print(f"⚠️ 未找到測驗歷史記錄，quiz_history_id: {quiz_history_id}")
+                return None
+            
+            print(f"📊 測驗記錄: {history_result}")
+            print(f"📊 測驗記錄詳細:")
+            print(f"  - ID: {history_result[0]}")
+            print(f"  - 模板ID: {history_result[1]}")
+            print(f"  - 用戶: {history_result[2]}")
+            print(f"  - 類型: {history_result[3]}")
+            print(f"  - 總題數: {history_result[4]}")
+            print(f"  - 已答題數: {history_result[5]}")
+            print(f"  - 正確數: {history_result[6]}")
+            print(f"  - 錯誤數: {history_result[7]}")
+            print(f"  - 題目ID列表欄位: {history_result[14]}")
+            print(f"  - 題目ID列表類型: {type(history_result[14])}")
+            
+            # 獲取錯題詳情
+            error_result = conn.execute(text("""
+                SELECT mongodb_question_id, user_answer, score, time_taken, created_at
+                FROM quiz_errors 
+                WHERE quiz_history_id = :quiz_history_id
+                ORDER BY created_at
+            """), {
+                'quiz_history_id': quiz_history_id
+            }).fetchall()
+            
+            print(f"❌ 錯題記錄數量: {len(error_result)}")
+            if error_result:
+                print(f"❌ 錯題記錄詳情: {error_result}")
+            
+            # 獲取完整題目列表和用戶答案
+            question_ids_raw = history_result[14]
+            print(f"📋 原始題目ID欄位: {question_ids_raw}")
+            print(f"📋 原始題目ID欄位類型: {type(question_ids_raw)}")
+            print(f"📋 原始題目ID欄位是否為None: {question_ids_raw is None}")
+            print(f"📋 原始題目ID欄位是否為空字串: {question_ids_raw == ''}")
+            
+            question_ids = []
+            if question_ids_raw:
+                try:
+                    question_ids = json.loads(question_ids_raw)
+                    print(f"📋 解析後題目ID列表: {question_ids}")
+                    print(f"📋 題目ID列表類型: {type(question_ids)}")
+                    print(f"📋 題目ID列表長度: {len(question_ids) if isinstance(question_ids, list) else 'N/A'}")
+                except json.JSONDecodeError as e:
+                    print(f"❌ JSON解析失敗: {e}")
+                    print(f"❌ 原始內容: {question_ids_raw}")
+            else:
+                print(f"⚠️ 題目ID欄位為空或None")
+            
+            # 直接檢查資料庫中的原始值
+            print(f"\n🔍 直接檢查資料庫原始值:")
+            template_check = conn.execute(text("""
+                SELECT question_ids FROM quiz_templates WHERE id = :template_id
+            """), {
+                'template_id': history_result[1]
+            }).fetchone()
+            
+            if template_check:
+                print(f"  - 模板 {history_result[1]} 的 question_ids: {template_check[0]}")
+                print(f"  - 類型: {type(template_check[0])}")
+                if template_check[0]:
+                    try:
+                        parsed_check = json.loads(template_check[0])
+                        print(f"  - 解析後: {parsed_check}")
+                        print(f"  - 長度: {len(parsed_check) if isinstance(parsed_check, list) else 'N/A'}")
+                    except:
+                        print(f"  - JSON 解析失敗")
+            else:
+                print(f"  - 找不到模板 {history_result[1]}")
+            
+            # 從MongoDB獲取題目詳情
+            from accessories import mongo
+            exam_collection = mongo.db.exam
+            
+            errors = []
+            questions = []  # 新增 questions 陣列
+            
+            # 處理錯題
+            for i, error in enumerate(error_result):
+                try:
+                    mongodb_question_id = error[0]
+                    user_answer = error[1]
+                    score = error[2]
+                    time_taken = error[3]
+                    
+                    # 從MongoDB獲取題目詳情
+                    question_detail = exam_collection.find_one({"_id": mongodb_question_id})
+                    
+                    if question_detail:
+                        error_data = {
+                            'question_id': f'q{i+1}',
+                            'question_text': question_detail.get('question_text', f'題目 {i+1}'),
+                            'user_answer': user_answer or '未作答',
+                            'correct_answer': question_detail.get('answer', '無參考答案'),
+                            'is_correct': False,
+                            'is_marked': False,
+                            'score': score,
+                            'time_taken': time_taken,
+                            'topic': question_detail.get('topic', '計算機概論'),
+                            'difficulty': question_detail.get('difficulty', 2),
+                            'options': question_detail.get('options', []),
+                            'image_file': question_detail.get('image_file', ''),
+                            'question_type': question_detail.get('question_type', 'short-answer'),
+                            'feedback': {'explanation': '此題答錯'}
+                        }
+                        errors.append(error_data)
+                        questions.append(error_data)  # 同時加入 questions
+                except Exception as e:
+                    print(f"❌ 處理錯題 {i+1} 時發生錯誤: {e}")
+                    continue
+            
+            # 如果有題目ID列表，構建完整的題目陣列
+            if question_ids:
+                print(f"🔍 開始構建完整題目陣列，共 {len(question_ids)} 道題目")
+                
+                # 創建錯題字典，方便查詢用戶答案
+                error_dict = {}
+                for error in error_result:
+                    mongodb_question_id = error[0]
+                    user_answer = error[1]
+                    error_dict[mongodb_question_id] = {
+                        'user_answer': user_answer,
+                        'score': error[2],
+                        'time_taken': error[3]
+                    }
+                
+                print(f"📊 錯題字典: {list(error_dict.keys())}")
+                
+                # 計算統計數據
+                total_questions = len(question_ids)
+                error_count = len(error_dict)
+                correct_count = history_result[6]  # 從資料庫獲取正確數
+                answered_count = history_result[5]  # 從資料庫獲取已答題數
+                unanswered_count = total_questions - answered_count
+                
+                print(f"📊 統計數據:")
+                print(f"  - 總題數: {total_questions}")
+                print(f"  - 已答題數: {answered_count}")
+                print(f"  - 正確數: {correct_count}")
+                print(f"  - 錯誤數: {error_count}")
+                print(f"  - 未答題數: {unanswered_count}")
+                
+                # 根據已答題數，判斷前N題為已作答，後面的為未作答
+                # 這是基於題目順序的假設，可能需要根據實際資料庫結構調整
+                answered_question_ids = set(question_ids[:answered_count])
+                unanswered_question_ids = set(question_ids[answered_count:])
+                
+                print(f"📊 題目分類:")
+                print(f"  - 已作答題目數量: {len(answered_question_ids)}")
+                print(f"  - 未作答題目數量: {len(unanswered_question_ids)}")
+                print(f"  - 已作答題目ID範例: {list(answered_question_ids)[:3] if answered_question_ids else '無'}")
+                print(f"  - 未作答題目ID範例: {list(unanswered_question_ids)[:3] if unanswered_question_ids else '無'}")
+                
+                for i, question_id in enumerate(question_ids):
+                    try:
+                        print(f"🔍 處理題目 {i+1}: {question_id}")
+                        
+                        # 檢查題目狀態
+                        is_error = question_id in error_dict
+                        is_answered = question_id in answered_question_ids
+                        
+                        print(f"  - 是否為錯題: {is_error}")
+                        print(f"  - 是否為已作答: {is_answered}")
+                        
+                        # 從MongoDB獲取題目詳情
+                        from bson import ObjectId
+                        
+                        try:
+                            # 嘗試轉換為 ObjectId
+                            if isinstance(question_id, str) and len(question_id) == 24:
+                                object_id = ObjectId(question_id)
+                                print(f"  - 轉換為 ObjectId: {object_id}")
+                            else:
+                                print(f"  - 題目ID格式不正確: {question_id}")
+                                continue
+                        except Exception as oid_error:
+                            print(f"  - ObjectId 轉換失敗: {oid_error}")
+                            continue
+                        
+                        question_detail = exam_collection.find_one({"_id": object_id})
+                        
+                        if question_detail:
+                            # 構建題目資料
+                            if is_error:
+                                # 錯題：使用錯誤記錄中的用戶答案
+                                error_info = error_dict[question_id]
+                                user_answer = error_info['user_answer']
+                                
+                                # 解析用戶答案 JSON
+                                try:
+                                    answer_data = json.loads(user_answer)
+                                    actual_user_answer = answer_data.get('answer', '')
+                                    print(f"  - 用戶答案: {actual_user_answer}")
+                                except:
+                                    actual_user_answer = user_answer
+                                    print(f"  - 用戶答案解析失敗: {user_answer}")
+                                
+                                question_data = {
+                                    'question_id': f'q{i+1}',
+                                    'question_text': question_detail.get('question_text', f'題目 {i+1}'),
+                                    'user_answer': actual_user_answer,
+                                    'correct_answer': question_detail.get('answer', '無參考答案'),
+                                    'is_correct': False,  # 錯題
+                                    'is_marked': False,
+                                    'score': float(error_info['score']) if error_info['score'] else 0,
+                                    'time_taken': error_info['time_taken'] if error_info['time_taken'] else 0,
+                                    'topic': question_detail.get('topic', '計算機概論'),
+                                    'difficulty': question_detail.get('difficulty', 2),
+                                    'options': question_detail.get('options', []),
+                                    'image_file': question_detail.get('image_file', ''),
+                                    'question_type': question_detail.get('question_type', 'short-answer')
+                                }
+                                print(f"  - 題目狀態: 錯題")
+                            elif is_answered and not is_error:
+                                # 已作答且正確的題目
+                                question_data = {
+                                    'question_id': f'q{i+1}',
+                                    'question_text': question_detail.get('question_text', f'題目 {i+1}'),
+                                    'user_answer': '正確作答',  # 標記為正確作答
+                                    'correct_answer': question_detail.get('answer', '無參考答案'),
+                                    'is_correct': True,  # 正確作答
+                                    'is_marked': False,
+                                    'score': 1.0,
+                                    'time_taken': 0,
+                                    'topic': question_detail.get('topic', '計算機概論'),
+                                    'difficulty': question_detail.get('difficulty', 2),
+                                    'options': question_detail.get('options', []),
+                                    'image_file': question_detail.get('image_file', ''),
+                                    'question_type': question_detail.get('question_type', 'short-answer')
+                                }
+                                print(f"  - 題目狀態: 正確作答")
+                            else:
+                                # 未作答的題目
+                                question_data = {
+                                    'question_id': f'q{i+1}',
+                                    'question_text': question_detail.get('question_text', f'題目 {i+1}'),
+                                    'user_answer': '',  # 未作答
+                                    'correct_answer': question_detail.get('answer', '無參考答案'),
+                                    'is_correct': False,  # 未作答不算正確
+                                    'is_marked': False,
+                                    'score': 0.0,
+                                    'time_taken': 0,
+                                    'topic': question_detail.get('topic', '計算機概論'),
+                                    'difficulty': question_detail.get('difficulty', 2),
+                                    'options': question_detail.get('options', []),
+                                    'image_file': question_detail.get('image_file', ''),
+                                    'question_type': question_detail.get('question_type', 'short-answer')
+                                }
+                                print(f"  - 題目狀態: 未作答")
+                            
+                            questions.append(question_data)
+                            print(f"✅ 新增題目 {i+1}: {question_data['question_text'][:50]}...")
+                        else:
+                            print(f"⚠️ 找不到題目 {i+1}: {question_id}")
+                    except Exception as e:
+                        print(f"❌ 處理題目 {i+1} 時發生錯誤: {e}")
+                        continue
+            else:
+                print(f"⚠️ 沒有題目ID列表，無法構建完整題目陣列")
+            
+            print(f"📊 最終統計:")
+            print(f"  - 總題數: {history_result[4]}")
+            print(f"  - 錯題數: {len(errors)}")
+            print(f"  - 題目陣列長度: {len(questions)}")
+            print(f"  - 資料庫統計: 正確 {history_result[6]}，錯誤 {history_result[7]}，已答 {history_result[5]}")
+            
+            # 驗證統計數據
+            actual_error_count = len([q for q in questions if not q['is_correct'] and q['user_answer'] and q['user_answer'] != '正確作答'])
+            actual_correct_count = len([q for q in questions if q['is_correct'] and q['user_answer'] == '正確作答'])
+            actual_unanswered_count = len([q for q in questions if not q['user_answer']])
+            
+            print(f"📊 驗證統計:")
+            print(f"  - 實際錯題數: {actual_error_count}")
+            print(f"  - 實際正確數: {actual_correct_count}")
+            print(f"  - 實際未答數: {actual_unanswered_count}")
+            
+            # 構建結果數據
+            result_data = {
+                'total_questions': history_result[4],
+                'answered_questions': history_result[5],
+                'correct_count': history_result[6],
+                'wrong_count': history_result[7],
+                'accuracy_rate': history_result[8],
+                'average_score': history_result[9],
+                'total_time_taken': history_result[10],
+                'submit_time': history_result[11].isoformat() if history_result[11] else None,
+                'status': history_result[12],
+                'created_at': history_result[13].isoformat() if history_result[13] else None,
+                'questions': questions,  # 新增 questions 陣列
+                'errors': errors
             }
+            
+            print(f"✅ 成功獲取測驗結果")
+            return result_data
+            
+    except Exception as e:
+        print(f"❌ 獲取測驗結果時發生錯誤: {str(e)}")
+        return None
 
-# 創建服務實例
-ai_teacher_service = AITeacherService()
+# ==================== API路由 ====================
 
-# API 端點定義
 @ai_teacher_bp.route('/health', methods=['GET', 'OPTIONS'])
 def health_check():
     """健康檢查"""
@@ -340,7 +470,7 @@ def chat():
         if not question:
             return jsonify({'success': False, 'error': '問題不能為空'}), 400
 
-        result = ai_teacher_service.chat_with_ai(
+        result = chat_with_ai(
             question=question,
             conversation_type=conversation_type,
             session_id=session_id
@@ -354,6 +484,62 @@ def chat():
             'error': '處理請求時發生錯誤'
         }), 500
 
+@ai_teacher_bp.route('/ai-tutoring', methods=['POST', 'OPTIONS'])
+def ai_tutoring():
+    """AI 教學對話端點 - 使用 RAG 系統"""
+    if request.method == 'OPTIONS':
+        return jsonify({'message': 'CORS preflight'}), 200
+    
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({'success': False, 'error': '無效的請求數據'}), 400
+        
+        user_input = data.get('user_input', '').strip()
+        session_id = data.get('session_id')
+        conversation_type = data.get('conversation_type', 'tutoring')
+
+        if not session_id:
+            return jsonify({'success': False, 'error': '會話ID不能為空'}), 400
+
+        # 獲取用戶ID（從token或session）
+        user_id = get_user_id() or "default"
+        
+        print(f"🎓 AI教學對話請求:")
+        print(f"  - 用戶輸入: {user_input}")
+        print(f"  - 會話ID: {session_id}")
+        print(f"  - 對話類型: {conversation_type}")
+        print(f"  - 用戶ID: {user_id}")
+
+        # 使用 RAG 系統的教學對話
+        try:
+            response = handle_tutoring_conversation(session_id, user_input, user_id)
+            print(f"✅ RAG教學回應: {response[:100]}...")
+            
+            return jsonify({
+                'success': True,
+                'response': response,
+                'conversation_type': 'tutoring',
+                'session_id': session_id
+            })
+            
+        except Exception as rag_error:
+            print(f"❌ RAG教學對話失敗: {rag_error}")
+            # 如果RAG失敗，回退到一般AI對話
+            fallback_result = chat_with_ai(
+                question=user_input or "初始化會話",
+                conversation_type=conversation_type,
+                session_id=session_id
+            )
+            return jsonify(fallback_result)
+        
+    except Exception as e:
+        logger.error(f"❌ AI教學對話端點錯誤: {e}")
+        return jsonify({
+            'success': False,
+            'error': '處理教學對話時發生錯誤'
+        }), 500
+
 @ai_teacher_bp.route('/submit-quiz-results', methods=['POST', 'OPTIONS'])
 def submit_quiz_results():
     """提交測驗結果"""
@@ -365,330 +551,41 @@ def submit_quiz_results():
         if not data:
             return jsonify({'success': False, 'error': '無效的請求數據'}), 400
         
-        result = ai_teacher_service.submit_quiz_results(data)
-        return jsonify(result)
+        # 處理測驗數據
+        processed_result = {
+            'user_id': get_user_id(),
+            'quiz_id': data.get('quiz_id', ''),
+            'answers': data.get('answers', []),
+            'submit_time': data.get('submit_time', datetime.now().isoformat()),
+            'total_time': data.get('total_time', 0),
+            'score': data.get('score', 0),
+            'total_questions': len(data.get('answers', [])),
+            'correct_count': sum(1 for answer in data.get('answers', []) if answer.get('is_correct', False)),
+            'wrong_count': sum(1 for answer in data.get('answers', []) if not answer.get('is_correct', False)),
+            'marked_count': sum(1 for answer in data.get('answers', []) if answer.get('is_marked', False)),
+            'unanswered_count': 0 # 假設所有題目都已回答
+        }
         
+        # 保存到用戶會話
+        user_id = get_user_id()
+        session_data = get_user_session_data(user_id)
+        session_data['quiz_results'].append(processed_result)
+        
+        # 生成結果 ID
+        result_id = f"result_{processed_result['user_id']}_{processed_result['quiz_id']}_{processed_result['submit_time']}"
+            
+        return jsonify({
+            'success': True,
+            'result_id': result_id,
+            'message': '測驗結果提交成功'
+        })
+            
     except Exception as e:
-        logger.error(f"❌ 提交測驗結果錯誤: {e}")
+        logger.error(f"❌ 提交測驗結果失敗: {e}")
         return jsonify({
             'success': False,
-            'error': '提交測驗結果時發生錯誤'
-        }), 500
-
-@ai_teacher_bp.route('/get-quiz-result/<result_id>', methods=['GET', 'OPTIONS'])
-def get_quiz_result(result_id):
-    """獲取測驗結果"""
-    if request.method == 'OPTIONS':
-        return jsonify({'message': 'CORS preflight'}), 200
-    
-    try:
-        # 驗證 token 並獲取用戶 email
-        auth_header = request.headers.get('Authorization')
-        if not auth_header:
-            return jsonify({'success': False, 'error': '未提供授權標頭'}), 401
-        
-        token = auth_header.split(" ")[1]
-        user_email = get_user_info(token, 'email')
-        if not user_email:
-            return jsonify({'success': False, 'error': '無法獲取用戶資訊'}), 401
-        
-        # 解析 result_id 格式：result_<quiz_history_id>
-        if not result_id.startswith('result_'):
-            return jsonify({'success': False, 'error': '無效的結果ID格式'}), 400
-        
-        try:
-            quiz_history_id = int(result_id.split('_')[1])
-        except (ValueError, IndexError):
-            return jsonify({'success': False, 'error': '無效的結果ID格式'}), 400
-        
-        print(f"📝 正在查詢測驗結果，quiz_history_id: {quiz_history_id}")
-        
-        # 從 SQL 數據庫查詢測驗結果
-        from accessories import sqldb
-        from sqlalchemy import text
-        import json
-        
-        with sqldb.engine.connect() as conn:
-            # 查詢 quiz_history 和 quiz_templates
-            history_result = conn.execute(text("""
-                SELECT qh.id, qh.quiz_template_id, qh.user_email, qh.quiz_type, 
-                       qh.total_questions, qh.answered_questions, qh.correct_count, qh.wrong_count,
-                       qh.accuracy_rate, qh.average_score, qh.total_time_taken, 
-                       qh.submit_time, qh.status, qh.created_at,
-                       qt.question_ids
-                FROM quiz_history qh
-                LEFT JOIN quiz_templates qt ON qh.quiz_template_id = qt.id
-                WHERE qh.id = :quiz_history_id
-            """), {
-                'quiz_history_id': quiz_history_id
-            }).fetchone()
-            
-            if not history_result:
-                print(f"⚠️ 未找到測驗歷史記錄，quiz_history_id: {quiz_history_id}")
-                return jsonify({'success': False, 'error': '測驗結果不存在'}), 404
-            
-            # 查詢錯題詳情
-            error_result = conn.execute(text("""
-                SELECT mongodb_question_id, user_answer, score, time_taken, created_at
-                FROM quiz_errors 
-                WHERE quiz_history_id = :quiz_history_id
-                ORDER BY created_at
-            """), {
-                'quiz_history_id': quiz_history_id
-            }).fetchall()
-            
-            # 從MongoDB獲取題目詳情
-            from accessories import mongo
-            exam_collection = mongo.db.exam
-            
-            errors = []
-            for i, error in enumerate(error_result):
-                # 從MongoDB獲取題目詳情
-                question_detail = None
-                if error[0]:  # mongodb_question_id
-                    try:
-                        question_detail = exam_collection.find_one({'_id': ObjectId(error[0])})
-                    except Exception as e:
-                        print(f"⚠️ 無法從MongoDB獲取題目 {error[0]}: {e}")
-                
-                # 處理 question_detail，確保沒有 ObjectId
-                processed_question_detail = None
-                if question_detail:
-                    processed_question_detail = {
-                        'question_text': question_detail.get('question_text', ''),
-                        'options': question_detail.get('options', []),
-                        'answer': question_detail.get('answer', ''),
-                        'image_file': question_detail.get('image_file', ''),
-                        'key_points': question_detail.get('key-points', ''),
-                        'type': question_detail.get('type', ''),
-                        'school': question_detail.get('school', ''),
-                        'department': question_detail.get('department', ''),
-                        'year': question_detail.get('year', ''),
-                        'question_number': question_detail.get('question_number', ''),
-                        'answer_type': question_detail.get('answer_type', ''),
-                        'detail_answer': question_detail.get('detail-answer', ''),
-                        'difficulty_level': question_detail.get('difficulty level', '')
-                    }
-                
-                errors.append({
-                    'question_id': str(error[0]),  # 轉換 ObjectId 為字符串
-                    'question_index': i,  # 使用循環索引
-                    'user_answer': json.loads(error[1]) if error[1] else '',
-                    'is_correct': False,  # 在 quiz_errors 表中的都是錯題
-                    'score': float(error[2]) if error[2] else 0,
-                    'time_taken': error[3],
-                    'created_at': error[4].isoformat() if error[4] else None,
-                    'question_detail': processed_question_detail  # 使用處理後的題目詳情
-                })
-            
-            total_questions = history_result[4]
-            answered_questions = history_result[5]
-            correct_count = history_result[6]
-            wrong_count = history_result[7]
-            unanswered_count = total_questions - answered_questions
-            
-            # 構建前端期望的數據結構
-            result_data = {
-                'quiz_history_id': history_result[0],
-                'quiz_template_id': history_result[1],
-                'user_email': history_result[2],
-                'quiz_type': history_result[3],
-                'total_questions': total_questions,
-                'answered_questions': answered_questions,
-                'unanswered_questions': unanswered_count,
-                'correct_count': correct_count,
-                'wrong_count': wrong_count,
-                'marked_count': 0,  # 添加前端期望的字段
-                'accuracy_rate': float(history_result[8]) if history_result[8] else 0,
-                'average_score': float(history_result[9]) if history_result[9] else 0,
-                'total_time_taken': history_result[10],
-                'total_time': history_result[10],  # 添加前端期望的字段
-                'submit_time': history_result[11].isoformat() if history_result[11] else None,
-                'status': history_result[12],
-                'created_at': history_result[13].isoformat() if history_result[13] else None,
-                'errors': errors,
-                'answers': []  # 初始化為空數組
-            }
-            
-            # 無論是否有錯誤記錄，都需要從MongoDB獲取所有題目詳情
-            if total_questions > 0:
-                print(f"📝 從MongoDB獲取 {total_questions} 道題目詳情")
-                try:
-                    # 從 quiz_templates 獲取題目ID列表
-                    question_ids = history_result[14]  # qt.question_ids
-                    if question_ids:
-                        question_ids_list = json.loads(question_ids) if isinstance(question_ids, str) else question_ids
-                        
-                        # 從MongoDB獲取所有題目詳情
-                        all_questions = []
-                        print(f"🔍 開始從MongoDB獲取 {len(question_ids_list)} 道題目詳情")
-                        
-                        # 創建一個字典來存儲錯題信息，用於後續處理
-                        error_info = {}
-                        if errors:
-                            for error in errors:
-                                error_info[error['question_id']] = error
-                        
-                        for i, q_id in enumerate(question_ids_list):
-                            print(f"🔍 處理題目 {i+1}: q_id = {q_id}")
-                            try:
-                                question_detail = exam_collection.find_one({'_id': ObjectId(q_id)})
-                                print(f"🔍 MongoDB 查詢結果: question_detail = {question_detail}")
-                                
-                                if question_detail:
-                                    print(f"🔍 題目內容: {question_detail.get('question_text', 'None')}")
-                                    print(f"🔍 正確答案: {question_detail.get('answer', 'None')}")
-                                
-                                # 檢查這道題是否是錯題
-                                if str(q_id) in error_info:
-                                    # 這是錯題，使用錯題信息
-                                    error = error_info[str(q_id)]
-                                    print(f"🔍 題目 {q_id} 是錯題，使用錯題信息")
-                                    
-                                    # 處理用戶答案，確保正確顯示
-                                    user_answer_text = '無答案'
-                                    if isinstance(error['user_answer'], dict):
-                                        user_answer_text = error['user_answer'].get('answer', '無答案')
-                                    elif isinstance(error['user_answer'], str):
-                                        user_answer_text = error['user_answer']
-                                    else:
-                                        user_answer_text = str(error['user_answer'])
-                                    
-                                    # 處理反饋信息
-                                    feedback_text = 'AI 評分結果'
-                                    if isinstance(error['user_answer'], dict):
-                                        feedback_text = error['user_answer'].get('feedback', {}).get('explanation', 'AI 評分結果')
-                                    
-                                    question_obj = {
-                                        'question_id': str(q_id),
-                                        'question_text': (
-                                            question_detail.get('question_text', f'題目 {i+1}') 
-                                            if question_detail else f'題目 {i+1}'
-                                        ),
-                                        'user_answer': user_answer_text,
-                                        'correct_answer': (
-                                            question_detail.get('answer', '無參考答案') 
-                                            if question_detail else '無參考答案'
-                                        ),
-                                        'is_correct': False,  # 錯題
-                                        'is_marked': False,
-                                        'score': error['score'],
-                                        'time_taken': error['time_taken'],
-                                        'feedback': feedback_text,
-                                        'status': 'incorrect'
-                                    }
-                                else:
-                                    # 這不是錯題，可能是正確題目或未答題目
-                                    print(f"🔍 題目 {q_id} 不是錯題，標記為未答題目")
-                                    question_obj = {
-                                        'question_id': str(q_id),
-                                        'question_text': (
-                                            question_detail.get('question_text', f'題目 {i+1}') 
-                                            if question_detail else f'題目 {i+1}'
-                                        ),
-                                        'user_answer': '未作答',
-                                        'correct_answer': (
-                                            question_detail.get('answer', '無參考答案') 
-                                            if question_detail else '無參考答案'
-                                        ),
-                                        'is_correct': False,
-                                        'is_marked': False,
-                                        'score': 0,
-                                        'time_taken': 0,
-                                        'feedback': {'explanation': '此題未作答'},
-                                        'status': 'unanswered'
-                                    }
-                                
-                                print(f"🔍 構建的題目對象: question_text = {question_obj['question_text']}")
-                                all_questions.append(question_obj)
-                            except Exception as e:
-                                print(f"⚠️ 無法獲取題目 {q_id}: {e}")
-                                # 如果無法獲取，使用默認值
-                                fallback_obj = {
-                                    'question_id': str(q_id),
-                                    'question_text': f'題目 {i+1}',
-                                    'user_answer': '未作答',
-                                    'correct_answer': '無參考答案',
-                                    'is_correct': False,
-                                    'is_marked': False,
-                                    'score': 0,
-                                    'time_taken': 0,
-                                    'feedback': {'explanation': '此題未作答'},
-                                    'status': 'unanswered'
-                                }
-                                print(f"🔍 使用默認題目對象: question_text = {fallback_obj['question_text']}")
-                                all_questions.append(fallback_obj)
-                        
-                        result_data['answers'] = all_questions
-                        print(f"✅ 成功獲取 {len(all_questions)} 道題目詳情")
-                    else:
-                        print("⚠️ 題目模板中沒有題目ID列表")
-                        # 生成默認題目數據
-                        result_data['answers'] = [
-                            {
-                                'question_id': f'q{i+1}',
-                                'question_text': f'題目 {i+1}',
-                                'user_answer': '未作答',
-                                'correct_answer': '無參考答案',
-                                'is_correct': False,
-                                'is_marked': False,
-                                'score': 0,
-                                'time_taken': 0,
-                                'feedback': {'explanation': '此題未作答'},
-                                'status': 'unanswered'
-                            }
-                            for i in range(total_questions)
-                        ]
-                except Exception as e:
-                    print(f"❌ 獲取所有題目詳情失敗: {e}")
-                    # 如果失敗，生成默認題目數據
-                    result_data['answers'] = [
-                        {
-                            'question_id': f'q{i+1}',
-                            'question_text': f'題目 {i+1}',
-                            'user_answer': '未作答',
-                            'correct_answer': '無參考答案',
-                            'is_correct': False,
-                            'is_marked': False,
-                            'score': 0,
-                            'time_taken': 0,
-                            'feedback': {'explanation': '此題未作答'},
-                            'status': 'unanswered'
-                        }
-                        for i in range(total_questions)
-                    ]
-                
-                # 確保 answers 數組不為空
-                if not result_data.get('answers') or len(result_data['answers']) == 0:
-                    print("⚠️ answers 數組為空，生成默認題目數據")
-                    result_data['answers'] = [
-                        {
-                            'question_id': f'q{i+1}',
-                            'question_text': f'題目 {i+1}',
-                            'user_answer': '未作答',
-                            'correct_answer': '無參考答案',
-                            'is_correct': False,
-                            'is_marked': False,
-                            'score': 0,
-                            'time_taken': 0,
-                            'feedback': {'explanation': '此題未作答'},
-                            'status': 'unanswered'
-                        }
-                        for i in range(total_questions)
-                    ]
-            
-            print(f"✅ 成功獲取測驗結果")
-            print(f"📊 返回數據結構: {result_data}")
-            
-            return jsonify({
-                'success': True,
-                'message': '獲取測驗結果成功',
-                'data': result_data
-            }), 200
-            
-    except Exception as e:
-        print(f"❌ 獲取測驗結果時發生錯誤: {str(e)}")
-        return jsonify({'success': False, 'error': f'獲取測驗結果失敗: {str(e)}'}), 500
+            'error': str(e)
+        })
 
 @ai_teacher_bp.route('/start-error-learning', methods=['POST', 'OPTIONS'])
 def start_error_learning():
@@ -711,12 +608,23 @@ def start_error_learning():
             return jsonify({'success': False, 'error': '未提供授權標頭'}), 401
         
         token = auth_header.split(" ")[1]
-        user_email = verify_token(token)
+        user_email = get_user_info(token, 'email')
         if not user_email:
             return jsonify({'success': False, 'error': '無法獲取用戶資訊'}), 401
         
         # 創建學習會話ID
         session_id = f"learning_{user_email}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        
+        # 保存會話 ID 到用戶數據（用於追蹤）
+        user_id = get_user_id()
+        session_data = get_user_session_data(user_id)
+        session_data['learning_sessions'].append({
+            'session_id': session_id,
+            'result_id': result_id,
+            'start_time': datetime.now().isoformat(),
+            'source': 'mongodb', # 暫時固定為 mongodb，後續可改為 redis 或直接從 quiz_errors 讀取
+            'error_count': 0 # 後續從 quiz_errors 讀取
+        })
         
         return jsonify({
             'success': True,
@@ -725,10 +633,35 @@ def start_error_learning():
         })
         
     except Exception as e:
-        print(f"❌ 開始錯題學習錯誤: {e}")
+        logger.error(f"❌ 開始錯題學習失敗: {e}")
         return jsonify({
             'success': False,
-            'error': '開始錯題學習時發生錯誤'
+            'error': str(e)
+        })
+
+@ai_teacher_bp.route('/get-quiz-result/<result_id>', methods=['GET', 'OPTIONS'])
+def get_quiz_result(result_id):
+    """獲取測驗結果"""
+    if request.method == 'OPTIONS':
+        return jsonify({'message': 'CORS preflight'}), 200
+    
+    try:
+        # 獲取測驗結果數據
+        result_data = get_quiz_result_data(result_id)
+        
+        if not result_data:
+            return jsonify({'success': False, 'error': '測驗結果不存在'}), 404
+        
+        return jsonify({
+            'success': True,
+            'data': result_data
+        })
+        
+    except Exception as e:
+        logger.error(f"❌ 獲取測驗結果失敗: {e}")
+        return jsonify({
+            'success': False,
+            'error': f'獲取測驗結果失敗：{str(e)}'
         }), 500
 
 @ai_teacher_bp.route('/system-guide', methods=['POST', 'OPTIONS'])
@@ -798,8 +731,8 @@ def get_learning_analysis():
         return jsonify({'message': 'CORS preflight'}), 200
     
     try:
-        user_id = ai_teacher_service.get_user_id()
-        session_data = ai_teacher_service.get_user_session_data(user_id)
+        user_id = get_user_id()
+        session_data = get_user_session_data(user_id)
 
         # 生成簡單的學習分析
         analysis = {
@@ -979,8 +912,8 @@ def get_learning_progress(session_id):
 
         # 獲取學習進度數據
         try:
-            user_id = ai_teacher_service.get_user_id()
-            session_data = ai_teacher_service.get_user_session_data(user_id)
+            user_id = get_user_id()
+            session_data = get_user_session_data(user_id)
             
             # 查找對應的學習會話
             learning_session = None
@@ -1026,42 +959,6 @@ def get_learning_progress(session_id):
         return jsonify({
             'success': False,
             'error': '處理學習進度請求時發生錯誤'
-        }), 500
-
-@ai_teacher_bp.route('/ai-tutoring', methods=['POST', 'OPTIONS'])
-def ai_tutoring():
-    """AI 智能教學"""
-    try:
-        # 處理 CORS 預檢請求
-        if request.method == 'OPTIONS':
-            return jsonify({'message': 'CORS preflight'}), 200
-        
-        data = request.get_json()
-        if not data:
-            return jsonify({'success': False, 'error': '無效的請求數據'}), 400
-
-        session_id = data.get('session_id')
-        question_data = data.get('question_data')
-        user_input = data.get('user_input')
-        action = data.get('action')
-
-        if not session_id or not user_input:
-            return jsonify({'success': False, 'error': '缺少必要參數'}), 400
-
-        # 調用 AI 教學服務
-        result = ai_teacher_service.chat_with_ai(
-            question=user_input,
-            conversation_type='tutoring',
-            session_id=session_id
-        )
-        
-        return jsonify(result)
-        
-    except Exception as e:
-        logger.error(f"❌ AI 教學錯誤: {e}")
-        return jsonify({
-            'success': False,
-            'error': 'AI 教學處理時發生錯誤'
         }), 500
 
 @ai_teacher_bp.route('/complete-question-learning', methods=['POST', 'OPTIONS'])
@@ -1111,8 +1008,8 @@ def get_conversation_history():
         limit = request.args.get('limit', 20, type=int)
         
         # 獲取用戶對話歷史
-        user_id = ai_teacher_service.get_user_id()
-        session_data = ai_teacher_service.get_user_session_data(user_id)
+        user_id = get_user_id()
+        session_data = get_user_session_data(user_id)
         
         # 構建對話歷史數據
         conversation_history = {
@@ -1253,23 +1150,20 @@ def submit_quiz_answers():
             'error': '提交測驗答案時發生錯誤'
         }), 500
 
-@ai_teacher_bp.route('/get-quiz-result/<result_id>', methods=['GET', 'OPTIONS'])
-def get_quiz_result_proxy(result_id):
-    """測驗結果代理路由 - 轉發到 quiz.py 的 get_quiz_result 函數"""
+# ==================== 初始化檢查 ====================
+
+def check_system_ready():
+    """檢查系統是否準備就緒"""
     try:
-        # 處理 CORS 預檢請求
-        if request.method == 'OPTIONS':
-            return jsonify({'message': 'CORS preflight'}), 200
-        
-        # 導入 quiz 模組中的 get_quiz_result 函數
-        from .quiz import get_quiz_result
-        
-        # 調用 quiz.py 中的 get_quiz_result 函數
-        return get_quiz_result(result_id)
-        
+        if RAG_AVAILABLE:
+            logger.info("✅ AI教學系統初始化完成")
+        else:
+            logger.warning("⚠️ AI教學系統部分功能不可用")
+        return True
     except Exception as e:
-        logger.error(f"❌ 測驗結果代理路由錯誤: {e}")
-        return jsonify({
-            'success': False,
-            'message': f'獲取測驗結果失敗: {str(e)}'
-        }), 500
+        logger.error(f"❌ AI教學系統初始化失敗: {e}")
+        return False
+
+# 系統啟動時檢查
+if __name__ == "__main__":
+    check_system_ready()

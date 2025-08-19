@@ -8,38 +8,36 @@ RAG系統包初始化文件 (Backend整合版本)
 __version__ = "1.0.0"
 __author__ = "RAG Team"
 
-# 導出主要類和函數
+# 導出主要函數與配置
 __all__ = []
 
+# 匯出 config
 try:
-    from .config import *
+    from .config import *  # noqa: F401,F403
     __all__.extend(['config'])
 except ImportError as e:
     print(f"⚠️ config導入失敗: {e}")
 
-# 從整合的 rag_ai_role 模組導入
+# 從 rag_ai_role 匯出函數式 API
 try:
-    from .rag_ai_role import MultiAITutor
-    __all__.append('MultiAITutor')
+    from .rag_ai_role import (
+        handle_tutoring_conversation,
+        create_session_from_quiz_result,
+        should_search_database,
+        get_topic_knowledge,
+        translate_to_english,
+        search_knowledge,
+        update_learning_progress,
+    )
+    __all__.extend([
+        'handle_tutoring_conversation',
+        'create_session_from_quiz_result',
+        'should_search_database',
+        'get_topic_knowledge',
+        'translate_to_english',
+        'search_knowledge',
+        'update_learning_progress',
+    ])
 except ImportError as e:
-    print(f"⚠️ MultiAITutor導入失敗: {e}")
-
-try:
-    from .rag_ai_role import AIResponder
-    __all__.append('AIResponder')
-except ImportError as e:
-    print(f"⚠️ AIResponder導入失敗: {e}")
-
-try:
-    from .rag_ai_role import RAGAssistantService
-    __all__.append('RAGAssistantService')
-except ImportError as e:
-    print(f"⚠️ RAGAssistantService導入失敗: {e}")
-
-# 從 rag_build 模組導入
-try:
-    from .rag_build import RAGBuilder
-    __all__.append('RAGBuilder')
-except ImportError as e:
-    print(f"⚠️ RAGBuilder導入失敗: {e}")
+    print(f"⚠️ rag_ai_role 函數導入失敗: {e}")
 

@@ -35,7 +35,7 @@ def create_gemini_model(api_key):
     try:    
         genai.configure(api_key=api_key)
         # 使用正確的模型名稱
-        model = genai.GenerativeModel('gemini-1.5-flash')
+        model = genai.GenerativeModel('gemini-2.5-flash')
         
         # 測試API是否工作
         try:
@@ -67,7 +67,7 @@ def init_gemini():
         api_key = API_KEYS[0]  # 使用第一個API key
         genai.configure(api_key=api_key)
         # 使用正確的模型名稱
-        model = genai.GenerativeModel('gemini-1.5-flash')
+        model = genai.GenerativeModel('gemini-2.5-flash')
         print("✅ Gemini API 初始化成功")
         return model
     except Exception as e:

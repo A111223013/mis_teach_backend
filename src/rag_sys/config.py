@@ -31,13 +31,14 @@ for directory in [DATA_DIR, PDF_DIR, KNOWLEDGE_DB_DIR, OUTPUT_DIR]:
 # =============================================================================
 
 
-# Gemini API配置
+# Gemini API 配置
 GEMINI_CONFIG = {
-    "api_key": "AIzaSyCwwVlv5VeCkyI1RL9mKvWSZHUKn6WlpIU",
-    "model": "gemini-1.5-flash",
-    "timeout": 30,
-    "temperature": 0.3,
-    "max_tokens": 500
+    "api_key": os.getenv("GEMINI_API_KEY") or os.getenv("AI_API_KEYS", "AIzaSyBad7mpaX-fPPtpjbcgZ1JpKOBPJZJkmf4"),
+    "model": "gemini-2.5-flash",
+    "temperature": 0.7,
+    "top_p": 0.8,
+    "top_k": 40,
+    "max_output_tokens": 2048,
 }
 
 # 可用的AI模型選項

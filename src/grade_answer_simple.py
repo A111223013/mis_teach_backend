@@ -282,7 +282,7 @@ class AnswerGrader:
             try:
                 import google.generativeai as genai
                 genai.configure(api_key=api_key)
-                model = genai.GenerativeModel('gemini-pro')
+                model = genai.GenerativeModel('gemini-2.5-flash')
                 
                 response = model.generate_content(prompt)
                 result = self._parse_ai_response(response.text)

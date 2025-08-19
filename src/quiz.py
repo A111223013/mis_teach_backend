@@ -617,6 +617,17 @@ def get_quiz_result(result_id):
                     return jsonify({'message': '測驗結果不存在'}), 404
                 
                 print(f"📊 測驗記錄: {history_result}")
+                print(f"📊 測驗記錄詳細:")
+                print(f"  - ID: {history_result[0]}")
+                print(f"  - 模板ID: {history_result[1]}")
+                print(f"  - 用戶: {history_result[2]}")
+                print(f"  - 類型: {history_result[3]}")
+                print(f"  - 總題數: {history_result[4]}")
+                print(f"  - 已答題數: {history_result[5]}")
+                print(f"  - 正確數: {history_result[6]}")
+                print(f"  - 錯誤數: {history_result[7]}")
+                print(f"  - 題目ID列表欄位: {history_result[14]}")
+                print(f"  - 題目ID列表類型: {type(history_result[14])}")
                 
                 # 獲取錯題詳情
                 error_result = conn.execute(text("""
@@ -629,65 +640,172 @@ def get_quiz_result(result_id):
                 }).fetchall()
                 
                 print(f"❌ 錯題記錄數量: {len(error_result)}")
+                if error_result:
+                    print(f"❌ 錯題記錄詳情: {error_result}")
                 
-                # 構建錯題列表，包含題目詳情
-                errors = []
-                question_ids = json.loads(history_result[14]) if history_result[14] else []
+                # 獲取完整題目列表和用戶答案
+                question_ids_raw = history_result[14]
+                print(f"📋 原始題目ID欄位: {question_ids_raw}")
+                print(f"📋 原始題目ID欄位類型: {type(question_ids_raw)}")
+                print(f"📋 原始題目ID欄位是否為None: {question_ids_raw is None}")
+                print(f"📋 原始題目ID欄位是否為空字串: {question_ids_raw == ''}")
                 
-                for i, error in enumerate(error_result):
-                    print(f"🔍 處理錯題 {i + 1}: {error}")
+                question_ids = []
+                if question_ids_raw:
+                    try:
+                        question_ids = json.loads(question_ids_raw)
+                        print(f"📋 解析後題目ID列表: {question_ids}")
+                        print(f"📋 題目ID列表類型: {type(question_ids)}")
+                        print(f"📋 題目ID列表長度: {len(question_ids) if isinstance(question_ids, list) else 'N/A'}")
+                    except json.JSONDecodeError as e:
+                        print(f"❌ JSON解析失敗: {e}")
+                        print(f"❌ 原始內容: {question_ids_raw}")
+                else:
+                    print(f"⚠️ 題目ID欄位為空或None")
+                
+                # 直接檢查資料庫中的原始值
+                print(f"\n🔍 直接檢查資料庫原始值:")
+                template_check = conn.execute(text("""
+                    SELECT question_ids FROM quiz_templates WHERE id = :template_id
+                """), {
+                    'template_id': history_result[1]
+                }).fetchone()
+                
+                if template_check:
+                    print(f"  - 模板 {history_result[1]} 的 question_ids: {template_check[0]}")
+                    print(f"  - 類型: {type(template_check[0])}")
+                    if template_check[0]:
+                        try:
+                            parsed_check = json.loads(template_check[0])
+                            print(f"  - 解析後: {parsed_check}")
+                            print(f"  - 長度: {len(parsed_check) if isinstance(parsed_check, list) else 'N/A'}")
+                        except:
+                            print(f"  - JSON 解析失敗")
+                else:
+                    print(f"  - 找不到模板 {history_result[1]}")
+                
+                if not question_ids:
+                    print(f"⚠️ 沒有題目ID，直接返回基本統計")
+                    result_data = {
+                        'quiz_history_id': history_result[0],
+                        'quiz_template_id': history_result[1],
+                        'user_email': history_result[2],
+                        'quiz_type': history_result[3],
+                        'total_questions': history_result[4],
+                        'answered_questions': history_result[5],
+                        'unanswered_questions': history_result[4] - history_result[5],
+                        'correct_count': history_result[6],
+                        'wrong_count': history_result[7],
+                        'accuracy_rate': float(history_result[8]) if history_result[8] else 0,
+                        'average_score': float(history_result[9]) if history_result[9] else 0,
+                        'total_time_taken': history_result[10] if history_result[10] else 0,
+                        'submit_time': history_result[11].isoformat() if history_result[11] else None,
+                        'status': history_result[12],
+                        'created_at': history_result[13].isoformat() if history_result[13] else None,
+                        'school': history_result[15] if history_result[15] else '',
+                        'department': history_result[16] if history_result[16] else '',
+                        'year': history_result[17] if history_result[17] else '',
+                        'questions': [],  # 空陣列
+                        'errors': []      # 空陣列
+                    }
                     
-                                         # 從MongoDB獲取題目詳情
+                    print(f"✅ 返回基本統計資料，沒有題目詳情")
+                    return jsonify({
+                        'success': True,
+                        'message': '獲取測驗結果成功（僅基本統計）',
+                        'data': result_data
+                    }), 200
+                
+                # 創建錯題字典，方便查詢
+                error_dict = {}
+                for error in error_result:
+                    error_dict[str(error[0])] = {
+                        'user_answer': json.loads(error[1]) if error[1] else '',
+                        'score': float(error[2]) if error[2] else 0,
+                        'time_taken': error[3] if error[3] else 0,
+                        'answer_time': error[4].isoformat() if error[4] else None
+                    }
+                
+                # 獲取所有題目的詳細資訊
+                all_questions = []
+                for i, question_id in enumerate(question_ids):
+                    print(f"🔍 處理題目 {i + 1}: {question_id}")
+                    
+                    # 從MongoDB獲取題目詳情
                     question_detail = {}
                     try:
-                        question_id = error[0]
-                         # 安全地處理 ObjectId 查詢
+                        # 安全地處理 ObjectId 查詢
                         try:
                             if isinstance(question_id, str) and len(question_id) == 24:
-                                 # 嘗試使用 ObjectId 查詢
                                 exam_question = mongo.db.exam.find_one({"_id": ObjectId(question_id)})
                             else:
-                                 # 直接使用字符串查詢
                                 exam_question = mongo.db.exam.find_one({"_id": question_id})
                         except Exception as oid_error:
                             print(f"⚠️ ObjectId 轉換失敗: {oid_error}")
-                             # 回退到直接查詢
                             exam_question = mongo.db.exam.find_one({"_id": question_id})
                          
                         if exam_question:
                             question_detail = {
-                                 'question_text': exam_question.get('question_text', ''),
-                                 'options': exam_question.get('options', []),
-                                 'correct_answer': exam_question.get('answer', ''),
-                                 'image_file': exam_question.get('image_file', ''),
-                                 'key_points': exam_question.get('key-points', '')
-                             }
+                                'question_text': exam_question.get('question_text', ''),
+                                'options': exam_question.get('options', []),
+                                'correct_answer': exam_question.get('answer', ''),
+                                'image_file': exam_question.get('image_file', ''),
+                                'key_points': exam_question.get('key-points', '')
+                            }
                             print(f"✅ 題目詳情獲取成功: {question_detail.get('question_text', '')[:50]}...")
                         else:
                             print(f"⚠️ 找不到題目: {question_id}")
+                            question_detail = {
+                                'question_text': f'題目 {i + 1}',
+                                'options': [],
+                                'correct_answer': '',
+                                'image_file': '',
+                                'key_points': ''
+                            }
                     except Exception as e:
                         print(f"⚠️ 獲取題目詳情失敗: {e}")
                         question_detail = {
-                             'question_text': f'題目 {i + 1}',
-                             'options': [],
-                             'correct_answer': '',
-                             'image_file': '',
-                             'key_points': ''
+                            'question_text': f'題目 {i + 1}',
+                            'options': [],
+                            'correct_answer': '',
+                            'image_file': '',
+                            'key_points': ''
                         }
                     
-                    errors.append({
-                         'question_id': str(error[0]),  # 轉換 ObjectId 為字符串
-                         'question_index': i,
-                         'question_text': question_detail.get('question_text', ''),
-                         'options': question_detail.get('options', []),
-                         'correct_answer': question_detail.get('correct_answer', ''),
-                         'image_file': question_detail.get('image_file', ''),
-                         'key_points': question_detail.get('key_points', ''),
-                         'user_answer': json.loads(error[1]) if error[1] else '',
-                         'score': float(error[2]) if error[2] else 0,
-                         'time_taken': error[3] if error[3] else 0,
-                         'answer_time': error[4].isoformat() if error[4] else None
-                     })
+                    # 檢查是否為錯題
+                    question_id_str = str(question_id)
+                    is_error = question_id_str in error_dict
+                    
+                    # 構建題目資訊
+                    question_info = {
+                        'question_id': question_id_str,
+                        'question_index': i,
+                        'question_text': question_detail.get('question_text', ''),
+                        'options': question_detail.get('options', []),
+                        'correct_answer': question_detail.get('correct_answer', ''),
+                        'image_file': question_detail.get('image_file', ''),
+                        'key_points': question_detail.get('key_points', ''),
+                        'is_correct': not is_error,
+                        'is_marked': False  # 目前沒有標記功能
+                    }
+                    
+                    if is_error:
+                        # 錯題：使用用戶的錯誤答案
+                        error_info = error_dict[question_id_str]
+                        question_info.update({
+                            'user_answer': error_info['user_answer'],
+                            'time_taken': error_info['time_taken'],
+                            'answer_time': error_info['answer_time']
+                        })
+                    else:
+                        # 非錯題：user_answer為空字串（表示未作答或正確作答）
+                        question_info.update({
+                            'user_answer': '',
+                            'time_taken': 0,
+                            'answer_time': None
+                        })
+                    
+                    all_questions.append(question_info)
                 
                 # 計算統計數據
                 total_questions = history_result[4]
@@ -715,10 +833,11 @@ def get_quiz_result(result_id):
                     'school': history_result[15] if history_result[15] else '',
                     'department': history_result[16] if history_result[16] else '',
                     'year': history_result[17] if history_result[17] else '',
-                    'errors': errors
+                    'questions': all_questions,  # 所有題目的詳細資訊
+                    'errors': [q for q in all_questions if not q['is_correct']]  # 錯題列表
                 }
                 
-                print(f"✅ 成功獲取測驗結果，包含 {len(errors)} 道錯題")
+                print(f"✅ 成功獲取測驗結果，包含 {len(all_questions)} 道題目，其中 {wrong_count} 道錯題")
                 
                 return jsonify({
                     'success': True,

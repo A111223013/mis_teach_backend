@@ -105,7 +105,7 @@ class RAGBuilder:
             請確保返回有效的 JSON 格式。
             """
             
-            model = genai.GenerativeModel('gemini-pro')
+            model = genai.GenerativeModel('gemini-2.5-flash')
             response = model.generate_content(prompt)
             
             # 解析 JSON 回應
