@@ -25,18 +25,12 @@ try:
         create_session_from_quiz_result,
         should_search_database,
         get_topic_knowledge,
-        translate_to_english,
-        search_knowledge,
-        update_learning_progress,
     )
     __all__.extend([
         'handle_tutoring_conversation',
         'create_session_from_quiz_result',
         'should_search_database',
         'get_topic_knowledge',
-        'translate_to_english',
-        'search_knowledge',
-        'update_learning_progress',
     ])
 except ImportError as e:
     print(f"⚠️ rag_ai_role 函數導入失敗: {e}")
