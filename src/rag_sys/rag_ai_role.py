@@ -45,7 +45,7 @@ def init_vector_database():
         
         
         chroma_client = chromadb.PersistentClient(
-            path="./chroma_db",
+            path="./src/rag_sys/data/knowledge_db/chroma_db",
             settings=Settings(anonymized_telemetry=False)
         )
 
