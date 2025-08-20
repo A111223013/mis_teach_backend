@@ -1,4 +1,4 @@
-from flask import Flask, jsonify, request
+from flask import Flask, jsonify, request, Blueprint, send_from_directory
 from flask_cors import CORS
 import sys
 from accessories import sqldb, mail, redis_client, token_store, mongo, login_manager, init_mongo_data
@@ -7,6 +7,7 @@ from src.login import login_bp
 from src.register import register_bp
 from src.dashboard import dashboard_bp
 from src.quiz import quiz_bp, init_quiz_tables
+from src.materials_api import materials_bp
 import os
 
 # Temporarily removed langchain imports until dependencies are installed
@@ -64,6 +65,7 @@ app.register_blueprint(quiz_bp, url_prefix='/quiz')
 app.register_blueprint(ai_teacher_bp, url_prefix='/ai_teacher')
 app.register_blueprint(user_guide_bp, url_prefix='/user-guide')
 app.register_blueprint(web_ai_bp, url_prefix='/web-ai')
+app.register_blueprint(materials_bp, url_prefix="/materials")
 
 # 創建靜態文件服務路由 (用於圖片)
 @app.route('/static/images/<path:filename>')
