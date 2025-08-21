@@ -9,6 +9,7 @@ from typing import Dict, Any, Tuple, List
 from accessories import mongo
 from bson import ObjectId
 from tool.api_keys import get_api_key, get_api_keys_count
+import google.generativeai as genai
 
 class AnswerGrader:
     """答案批改器"""
@@ -49,10 +50,6 @@ class AnswerGrader:
         """批量批改需要AI評分的題目（同步版本）"""
         if not questions_data:
             return []
-        
-        print(f"🔑 可用API密鑰數量: {get_api_keys_count()}")
-        print(f"🔑 隨機API密鑰: {get_api_key()[:20]}...")
-        
         results = []
         for question_data in questions_data:
             try:
@@ -165,9 +162,34 @@ class AnswerGrader:
         """批改是非題"""
         correct_answer = question.get('answer', '')
         
-        user_bool = str(user_answer).lower() in ['true', '是', '1', 'yes']
-        correct_bool = str(correct_answer).lower() in ['true', '是', '1', 'yes']
-        is_correct = user_bool == correct_bool
+        # 標準化用戶答案
+        user_answer_str = str(user_answer).strip().lower()
+        if user_answer_str in ['true', '是', '1', 'yes', 'o', '對', '正確']:
+            user_bool = True
+        elif user_answer_str in ['false', '否', '0', 'no', 'x', '錯', '錯誤']:
+            user_bool = False
+        else:
+            # 如果無法識別，嘗試直接匹配
+            user_bool = user_answer_str
+        
+        # 標準化正確答案
+        correct_answer_str = str(correct_answer).strip().lower()
+        if correct_answer_str in ['true', '是', '1', 'yes', 'o', '對', '正確']:
+            correct_bool = True
+        elif correct_answer_str in ['false', '否', '0', 'no', 'x', '錯', '錯誤']:
+            correct_bool = False
+        else:
+            # 如果無法識別，保持原值
+            correct_bool = correct_answer_str
+        
+        # 判斷是否正確
+        if isinstance(user_bool, bool) and isinstance(correct_bool, bool):
+            # 都是布林值，直接比較
+            is_correct = user_bool == correct_bool
+        else:
+            # 直接字符串匹配
+            is_correct = user_answer_str == correct_answer_str
+        
         score = 100 if is_correct else 0
         
         feedback = {
@@ -175,7 +197,7 @@ class AnswerGrader:
             'reference_answer': correct_answer,
             'is_correct': is_correct,
             'score': score,
-            'explanation': '是非題完全匹配評分'
+            'explanation': f'是非題評分：用戶答案「{user_answer}」vs 正確答案「{correct_answer}」'
         }
         
         return is_correct, score, feedback
@@ -271,91 +293,19 @@ class AnswerGrader:
         try:
             # 嘗試使用 Gemini API 進行評分
             api_key = get_api_key()
-            if not api_key:
-                print("⚠️ 沒有可用的 API Key，使用關鍵詞匹配評分")
-                return self._fallback_keyword_grading(user_answer, reference_answer, detail_answer, key_points, answer_type)
-            
-            # 構建評分提示
             prompt = self._build_grading_prompt(user_answer, reference_answer, detail_answer, key_points, answer_type)
-            
-            # 調用 Gemini API
-            try:
-                import google.generativeai as genai
-                genai.configure(api_key=api_key)
-                model = genai.GenerativeModel('gemini-2.5-flash')
-                
-                response = model.generate_content(prompt)
-                result = self._parse_ai_response(response.text)
-                
-                if result:
-                    return result['is_correct'], result['score'], result['feedback']
-                else:
-                    print("⚠️ AI 評分失敗，使用關鍵詞匹配評分")
-                    return self._fallback_keyword_grading(user_answer, reference_answer, detail_answer, key_points, answer_type)
-                    
-            except Exception as ai_error:
-                print(f"⚠️ Gemini API 調用失敗: {ai_error}")
-                return self._fallback_keyword_grading(user_answer, reference_answer, detail_answer, key_points, answer_type)
-                
+            genai.configure(api_key=api_key)
+            model = genai.GenerativeModel('gemini-2.5-flash')
+            response = model.generate_content(prompt)
+            result = self._parse_ai_response(response.text)
+            if result:
+                print(f"✅ AI 評分成功: is_correct={result['is_correct']}, score={result['score']}")
+                return result['is_correct'], result['score'], result['feedback']
         except Exception as e:
             print(f"❌ AI 評分錯誤: {e}")
             return False, 0, {'error': f'AI 評分失敗: {str(e)}'}
     
-    def _fallback_keyword_grading(self, user_answer: str, reference_answer: str, detail_answer: str, key_points: List[str], answer_type: str) -> Tuple[bool, float, Dict[str, Any]]:
-        """關鍵詞匹配評分（回退方案）"""
-        try:
-            # 計算關鍵詞匹配率
-            user_words = set(str(user_answer).lower().split())
-            reference_words = set(str(reference_answer).lower().split())
-            
-            if not reference_words:
-                return False, 0, {'error': '沒有參考答案'}
-            
-            # 計算匹配率
-            intersection = user_words.intersection(reference_words)
-            match_ratio = len(intersection) / len(reference_words)
-            
-            # 根據題型設置不同的閾值
-            if answer_type == 'short-answer':
-                threshold = 0.4  # 簡答題要求40%以上匹配
-            elif answer_type == 'long-answer':
-                threshold = 0.3  # 申論題要求30%以上匹配
-            else:
-                threshold = 0.5  # 其他題型要求50%以上匹配
-            
-            # 根據匹配率評分
-            if match_ratio >= 0.9:
-                score = 95  # 完全正確
-                is_correct = True
-            elif match_ratio >= 0.8:
-                score = 85  # 接近正確
-                is_correct = True
-            elif match_ratio >= 0.6:
-                score = 70  # 勉強及格
-                is_correct = True
-            elif match_ratio >= threshold:
-                score = 60  # 勉強及格
-                is_correct = True
-            else:
-                score = 0   # 完全錯誤
-                is_correct = False
-            
-            feedback = {
-                'user_answer': user_answer,
-                'reference_answer': reference_answer,
-                'detail_answer': detail_answer,
-                'key_points': key_points,
-                'match_ratio': round(match_ratio, 2),
-                'threshold': threshold,
-                'is_correct': is_correct,
-                'score': score,
-                'explanation': f'關鍵詞匹配率: {match_ratio:.1%}，閾值: {threshold:.1%}'
-            }
-            
-            return is_correct, score, feedback
-            
-        except Exception as e:
-            return False, 0, {'error': f'AI評分失敗: {str(e)}'}
+    
     
     def _build_grading_prompt(self, user_answer: str, reference_answer: str, detail_answer: str, key_points: List[str], answer_type: str) -> str:
         """構建 AI 評分提示"""
@@ -422,23 +372,3 @@ def grade_single_answer(question_id: str, user_answer: Any, question_type: str =
 def batch_grade_ai_questions(questions_data: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """批量批改AI題目的便捷函數（同步版本）"""
     return grader.batch_grade_ai_questions(questions_data)
-
-# 測試函數
-def test_grading():
-    """測試評分功能"""
-    print("🧪 測試評分功能...")
-    
-    # 測試單選題
-    result = grade_single_answer("test_id", "A", "single-choice")
-    print(f"單選題測試: {result}")
-    
-    # 測試API密鑰
-    try:
-        from tool.api_keys import get_api_key, get_api_keys_count
-        print(f"API密鑰數量: {get_api_keys_count()}")
-        print(f"隨機密鑰: {get_api_key()[:20]}...")
-    except Exception as e:
-        print(f"API密鑰測試失敗: {e}")
-
-if __name__ == "__main__":
-    test_grading()
