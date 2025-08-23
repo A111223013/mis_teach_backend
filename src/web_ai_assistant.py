@@ -191,10 +191,11 @@ def create_quiz_generator_tool():
                 questions = result['questions']
                 database_ids = result.get('database_ids', [])
                 
-                # 返回可跳轉的考卷數據
+                # 構建考卷數據
+                current_timestamp = int(time.time())
                 quiz_data = {
-                    'quiz_id': f"ai_generated_{int(time.time())}",
-                    'template_id': f"ai_template_{int(time.time())}",
+                    'quiz_id': f"ai_generated_{current_timestamp}",  # 添加quiz_id
+                    'template_id': current_timestamp,  # 使用整數timestamp作為template_id
                     'questions': questions,
                     'time_limit': quiz_info['time_limit'],
                     'quiz_info': quiz_info,
@@ -220,9 +221,65 @@ def create_quiz_generator_tool():
                     response += f"... 還有 {len(questions)-3} 題\n\n"
                 
                 response += "🚀 **點擊下方按鈕開始測驗！**\n\n"
-                response += "```json\n"
-                response += json.dumps(quiz_data, ensure_ascii=False, indent=2)
-                response += "\n```\n\n"
+                
+                # 清理和驗證JSON數據
+                try:
+                    # 生成JSON字符串
+                    json_str = json.dumps(quiz_data, ensure_ascii=False, indent=2)
+                    
+                    # 清理JSON字符串，移除控制字符和修復格式問題
+                    import re
+                    
+                    # 移除控制字符（除了換行符和製表符）
+                    cleaned_json = re.sub(r'[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]', '', json_str)
+                    
+                    # 修復可能的字符串終止問題
+                    # 檢查雙引號是否平衡
+                    quote_count = cleaned_json.count('"')
+                    if quote_count % 2 != 0:
+                        # 如果雙引號數量為奇數，在末尾添加一個雙引號
+                        cleaned_json += '"'
+                        logger.info("修復雙引號不平衡問題")
+                    
+                    # 檢查大括號是否平衡
+                    brace_count = cleaned_json.count('{') - cleaned_json.count('}')
+                    if brace_count > 0:
+                        # 如果大括號不平衡，在末尾添加缺少的大括號
+                        cleaned_json += '}' * brace_count
+                        logger.info(f"修復大括號不平衡問題，添加了 {brace_count} 個大括號")
+                    
+                    # 檢查中括號是否平衡
+                    bracket_count = cleaned_json.count('[') - cleaned_json.count(']')
+                    if bracket_count > 0:
+                        # 如果中括號不平衡，在末尾添加缺少的中括號
+                        cleaned_json += ']' * bracket_count
+                        logger.info(f"修復中括號不平衡問題，添加了 {bracket_count} 個中括號")
+                    
+                    # 驗證JSON是否有效
+                    json.loads(cleaned_json)
+                    
+                    # 使用清理後的JSON
+                    response += "```json\n"
+                    response += cleaned_json
+                    response += "\n```\n\n"
+                    
+                    logger.info("✅ JSON生成成功，格式正確")
+                    
+                except Exception as json_error:
+                    logger.error(f"JSON生成失敗: {json_error}")
+                    # 如果JSON生成失敗，使用簡化的格式
+                    response += "```json\n"
+                    response += json.dumps({
+                        'quiz_id': quiz_data['quiz_id'],
+                        'template_id': quiz_data['template_id'],  # 現在是整數
+                        'title': quiz_info['title'],
+                        'topic': quiz_info['topic'],
+                        'question_count': len(questions),
+                        'time_limit': quiz_info['time_limit'],
+                        'total_score': quiz_info['total_score']
+                    }, ensure_ascii=False, indent=2)
+                    response += "\n```\n\n"
+                    logger.warning("使用簡化JSON格式")
                 
                 response += "💡 提示：點擊「開始測驗」按鈕即可開始答題！"
                 
@@ -244,7 +301,7 @@ def _parse_quiz_requirements(text: str) -> dict:
         'topic': '計算機概論',
         'question_types': ['single-choice', 'multiple-choice'],
         'difficulty': 'medium',
-        'question_count': 20,
+        'question_count': 5,  # 改為5題默認，更合理
         'exam_type': 'knowledge'
     }
     
@@ -277,11 +334,53 @@ def _parse_quiz_requirements(text: str) -> dict:
     elif '困難' in text or 'hard' in text_lower:
         requirements['difficulty'] = 'hard'
     
-    # 檢測題目數量
+    # 檢測題目數量 - 改進數量檢測邏輯
     import re
+    
+    # 方法1: 檢測 "X題" 格式
     count_match = re.search(r'(\d+)題', text)
     if count_match:
-        requirements['question_count'] = int(count_match.group(1))
+        count = int(count_match.group(1))
+        requirements['question_count'] = count
+        logger.info(f"檢測到題目數量: {count}題")
+    
+    # 方法2: 檢測 "X道題" 格式
+    count_match = re.search(r'(\d+)道題', text)
+    if count_match:
+        count = int(count_match.group(1))
+        requirements['question_count'] = count
+        logger.info(f"檢測到題目數量: {count}道題")
+    
+    # 方法3: 檢測 "X個題目" 格式
+    count_match = re.search(r'(\d+)個題目', text)
+    if count_match:
+        count = int(count_match.group(1))
+        requirements['question_count'] = count
+        logger.info(f"檢測到題目數量: {count}個題目")
+    
+    # 方法4: 檢測 "X個問題" 格式
+    count_match = re.search(r'(\d+)個問題', text)
+    if count_match:
+        count = int(count_match.group(1))
+        requirements['question_count'] = count
+        logger.info(f"檢測到題目數量: {count}個問題")
+    
+    # 方法5: 檢測 "X個" 格式（如果前面有相關詞）
+    count_match = re.search(r'(\d+)個', text)
+    if count_match and any(word in text for word in ['題目', '問題', '測驗', '考試']):
+        count = int(count_match.group(1))
+        requirements['question_count'] = count
+        logger.info(f"檢測到題目數量: {count}個")
+    
+    # 確保題目數量在合理範圍內
+    if requirements['question_count'] > 50:
+        requirements['question_count'] = 50
+        logger.warning(f"題目數量過多，限制為50題")
+    elif requirements['question_count'] < 1:
+        requirements['question_count'] = 1
+        logger.warning(f"題目數量過少，設置為1題")
+    
+    logger.info(f"最終題目數量設置為: {requirements['question_count']}題")
     
     # 檢測考古題
     schools = ['台大', '清大', '交大', '成大', '政大', '中央', '中興', '中山', '中正', '台科大']
@@ -352,7 +451,7 @@ def init_agent_executor():
             verbose=True,
             handle_parsing_errors=True,
             return_intermediate_steps=False,  # 不返回中間步驟
-            max_iterations=1  # 限制迭代次數，避免AI重新處理
+            max_iterations=5  # 增加迭代次數，允許AI完成複雜任務
         )
         
         logger.info("✅ 主代理人執行器初始化成功")
@@ -417,8 +516,51 @@ def process_message(message: str, user_id: str = "default") -> Dict[str, Any]:
             "context": {"user_id": user_id}
         })
         
-        # 格式化回應
+        # 格式化回應 - 處理代理人的回應格式
         response = result.get("output", "抱歉，我無法理解您的請求。")
+        
+        # 如果回應包含工具調用結果，提取實際內容
+        if isinstance(response, str) and "quiz_generator_tool_response" in response:
+            try:
+                import json
+                import re
+                
+                # 使用更簡單的方法找到JSON部分
+                if "{" in response and "}" in response:
+                    brace_start = response.find("{")
+                    brace_end = response.rfind("}")
+                    if brace_end > brace_start:
+                        tool_response = response[brace_start:brace_end + 1]
+                        logger.info(f"找到JSON部分，長度: {len(tool_response)}")
+                        
+                        try:
+                            # 使用更強健的JSON清理方法
+                            cleaned_json = _clean_json_string(tool_response)
+                            parsed = json.loads(cleaned_json)
+                            
+                            if "quiz_generator_tool_response" in parsed:
+                                response = parsed["quiz_generator_tool_response"]["output"]
+                                logger.info("✅ 成功解析工具回應")
+                            else:
+                                logger.warning("JSON中不包含quiz_generator_tool_response")
+                                
+                        except json.JSONDecodeError as e:
+                            logger.warning(f"JSON解析失敗: {e}")
+                            # 嘗試修復JSON
+                            try:
+                                fixed_json = _fix_incomplete_json(tool_response)
+                                parsed = json.loads(fixed_json)
+                                if "quiz_generator_tool_response" in parsed:
+                                    response = parsed["quiz_generator_tool_response"]["output"]
+                                    logger.info("✅ 使用修復後的JSON成功解析工具回應")
+                                else:
+                                    logger.warning("修復後的JSON中仍不包含quiz_generator_tool_response")
+                            except Exception as fix_error:
+                                logger.warning(f"JSON修復失敗: {fix_error}")
+                                
+            except Exception as e:
+                logger.warning(f"解析工具回應失敗: {e}")
+                # 如果解析失敗，保持原始回應
         
         # 添加AI回應到記憶
         add_ai_message(user_id, response)
@@ -436,6 +578,75 @@ def process_message(message: str, user_id: str = "default") -> Dict[str, Any]:
             'error': f'處理訊息失敗：{str(e)}',
             'timestamp': datetime.now().isoformat()
         }
+
+def _clean_json_string(json_str: str) -> str:
+    """清理JSON字符串，處理轉義字符問題"""
+    try:
+        import re
+        # 基本清理
+        cleaned = json_str.replace('\\n', '\n').replace('\\"', '"')
+        
+        # 處理其他轉義字符 - 修復正則表達式
+        try:
+            cleaned = re.sub(r'\\([^"\\/bfnrt])', r'\1', cleaned)
+        except re.error:
+            # 如果正則表達式失敗，使用簡單替換
+            cleaned = cleaned.replace('\\\\', '\\')
+        
+        # 處理多餘的反斜線
+        try:
+            cleaned = re.sub(r'\\{2,}', '\\', cleaned)
+        except re.error:
+            # 如果正則表達式失敗，使用簡單替換
+            while '\\\\' in cleaned:
+                cleaned = cleaned.replace('\\\\', '\\')
+        
+        # 處理不完整的轉義序列
+        try:
+            cleaned = re.sub(r'\\$', '', cleaned)
+        except re.error:
+            # 如果正則表達式失敗，使用簡單替換
+            if cleaned.endswith('\\'):
+                cleaned = cleaned[:-1]
+        
+        return cleaned
+    except Exception as e:
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.warning(f"JSON清理失敗: {e}")
+        return json_str
+
+def _fix_incomplete_json(json_str: str) -> str:
+    """嘗試修復不完整的JSON字符串"""
+    try:
+        # 基本清理
+        cleaned = json_str.strip()
+        
+        # 嘗試找到最後一個完整的對象
+        brace_count = 0
+        end_pos = -1
+        
+        for i, char in enumerate(cleaned):
+            if char == '{':
+                brace_count += 1
+            elif char == '}':
+                brace_count -= 1
+                if brace_count == 0:
+                    end_pos = i + 1
+                    break
+        
+        if end_pos > 0:
+            # 提取完整的JSON部分
+            complete_json = cleaned[:end_pos]
+            logger.info(f"修復JSON，提取完整部分: {complete_json[:100]}...")
+            return complete_json
+        else:
+            # 如果無法修復，返回原始字符串
+            return json_str
+            
+    except Exception as e:
+        logger.warning(f"JSON修復失敗: {e}")
+        return json_str
 
 # ==================== API路由 ====================
 
