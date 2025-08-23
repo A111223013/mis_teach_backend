@@ -21,7 +21,6 @@ class AnswerGrader:
             genai.configure(api_key=api_key)
             # 使用正確的模型名稱
             self.model = genai.GenerativeModel('gemini-2.5-flash')
-            print("✅ Gemini API 初始化成功")
         except Exception as e:
             print(f"❌ Gemini API 初始化失敗: {e}")
             self.model = None
@@ -34,15 +33,11 @@ class AnswerGrader:
         # 獲取可用的API金鑰數量
         api_keys_count = get_api_keys_count()
         total_questions = len(questions_data)
-        
-        print(f"🚀 開始並行AI評分：{total_questions} 題，{api_keys_count} 個API金鑰")
-        
+
         # 計算每個API金鑰處理的題目數量
         questions_per_key = total_questions // api_keys_count
         remainder = total_questions % api_keys_count
-        
-        print(f"📊 並行處理配置：每個金鑰處理 {questions_per_key} 題，剩餘 {remainder} 題")
-        
+
         # 分配題目給不同的API金鑰
         all_results = [None] * total_questions  # 預分配結果陣列
         
@@ -58,8 +53,6 @@ class AnswerGrader:
                 # 提取這批題目
                 questions_batch = questions_data[start_index:end_index]
                 batch_indices = list(range(start_index, end_index))  # 記錄原始索引
-                
-                print(f"🔑 API金鑰 {i+1}: 處理題目 {start_index+1}-{end_index} (共 {batch_size} 題)")
                 
                 # 提交任務
                 future = executor.submit(
@@ -86,8 +79,7 @@ class AnswerGrader:
         
         # 過濾掉None值（如果有錯誤的話）
         final_results = [result for result in all_results if result is not None]
-        print(f"✅ 並行AI評分完成：成功處理 {len(final_results)}/{total_questions} 題")
-        
+
         return final_results
     
     def _process_questions_batch(self, questions_batch: List[Dict], batch_indices: List[int], api_key_index: int) -> List[Dict]:
@@ -97,7 +89,6 @@ class AnswerGrader:
         for i, question_data in enumerate(questions_batch):
             try:
                 original_index = batch_indices[i]
-                print(f"  🔍 API金鑰 {api_key_index+1} 評分題目 {original_index+1}")
                 
                 # 為這個批次創建專用的Gemini模型實例
                 batch_model = self._create_batch_model(api_key_index)
@@ -170,11 +161,6 @@ class AnswerGrader:
                                     options: List[str], question_type: str) -> Tuple[bool, float, Dict[str, Any]]:
         """使用指定的模型進行AI評分"""
         try:
-            print(f"🔍 AI評分 - 題目類型: {question_type}")
-            print(f"🔍 用戶答案: {user_answer}")
-            print(f"🔍 正確答案: {correct_answer}")
-            print(f"🔍 選項: {options}")
-            print(f"🔍 題目內容: {question_text[:100]}...")
             
             prompt = self._build_grading_prompt(user_answer, question_text, correct_answer, options, question_type)
             
@@ -195,11 +181,6 @@ class AnswerGrader:
                          options: List[str], question_type: str) -> Tuple[bool, float, Dict[str, Any]]:
         """AI統一評分 - 核心函數"""
         try:
-            print(f"🔍 AI評分 - 題目類型: {question_type}")
-            print(f"🔍 用戶答案: {user_answer}")
-            print(f"🔍 正確答案: {correct_answer}")
-            print(f"🔍 選項: {options}")
-            print(f"🔍 題目內容: {question_text[:100]}...")
             
             # 構建AI評分提示
             prompt = self._build_grading_prompt(user_answer, question_text, correct_answer, options, question_type)
@@ -215,7 +196,6 @@ class AnswerGrader:
                     
                     # 如果AI的判斷與我們的標準不一致，進行修正
                     if result.get('is_correct') != is_correct:
-                        print(f"🔧 修正評分邏輯：AI判斷 {result.get('is_correct')}，分數 {score}，修正為 {is_correct}")
                         result['is_correct'] = is_correct
                     
                     return result['is_correct'], result['score'], result['feedback']
@@ -245,6 +225,7 @@ class AnswerGrader:
 2. 判斷答案是否正確或部分正確
 3. 給出0-100的分數
 4. 提供具體的評分理由和改進建議
+5. 必須填寫優點、需要改進的地方和學習建議，不能留空
 
 評分標準：
 - 90-100分：完全正確，答案完整且準確
@@ -273,6 +254,8 @@ class AnswerGrader:
 1. 請根據答案的實際內容和質量進行評分，不要簡單地比較字符串
 2. 對於網路拓樸等概念性題目，如果學生能正確列出主要類型並說明特點，即使格式不完美，也應該給予較高分數
 3. 分數 ≥ 80分時，is_correct 必須設為 true
+4. 優點、需要改進的地方、學習建議這三個字段必須有具體內容，不能為空或寫"無"
+5. 如果學生答案完全錯誤，優點可以寫"勇於嘗試"或"認真作答"，需要改進的地方要具體指出錯誤，學習建議要給出具體的學習方向
 """
         return prompt
     
@@ -287,6 +270,16 @@ class AnswerGrader:
                 
                 # 驗證必要字段
                 if all(key in result for key in ['is_correct', 'score', 'feedback']):
+                    # 確保 feedback 字段完整
+                    feedback = result.get('feedback', {})
+                    if not feedback.get('strengths') or feedback.get('strengths') == '無':
+                        feedback['strengths'] = '勇於嘗試，認真作答'
+                    if not feedback.get('weaknesses') or feedback.get('weaknesses') == '無':
+                        feedback['weaknesses'] = '需要加強對相關概念的理解'
+                    if not feedback.get('suggestions') or feedback.get('suggestions') == '無':
+                        feedback['suggestions'] = '建議複習相關章節，多做練習題'
+                    
+                    result['feedback'] = feedback
                     return result
                 else:
                     print("⚠️ AI回應缺少必要字段")

@@ -95,7 +95,6 @@ def chat_with_ai(question: str, conversation_type: str = "general", session_id: 
                 if is_initialization:
                     actual_question = question.replace('開始學習會話：', '').strip()
                     user_input = None
-                    print(f"🔍 初始化請求：{actual_question[:50]}...")
                 else:
                     if '用戶問題：' in question:
                         parts = question.split('用戶問題：', 1)
@@ -104,14 +103,11 @@ def chat_with_ai(question: str, conversation_type: str = "general", session_id: 
                     else:
                         actual_question = data.get('question_text', '')
                         user_input = question
-                    print(f"🔍 正常對話：user_input = {user_input[:50] if user_input else 'None'}...")
-                
                 # 直接調用 verify_token 獲取用戶 email
                 from .api import verify_token
                 token = request.headers.get('Authorization', '').replace('Bearer ', '')
                 user_email = verify_token(token) if token else "anonymous_user"
-                print(f"🔍 用戶email：{user_email}")
-                
+
                 response = handle_tutoring_conversation(user_email, actual_question, user_answer, correct_answer, user_input)
                 
                 return {
@@ -193,9 +189,7 @@ def get_quiz_result_data(result_id: str) -> dict:
                 score = float(answer[3]) if answer[3] else 0
                 created_at = answer[4]
                 
-                # 調試：打印答案資訊
-                print(f"🔍 構建答案字典 {question_id}: is_correct={is_correct}, user_answer='{user_answer}'")
-                
+
                 answers_dict[question_id] = {
                     'user_answer': user_answer,
                     'is_correct': is_correct,
@@ -208,17 +202,10 @@ def get_quiz_result_data(result_id: str) -> dict:
             if question_ids_str:
                 try:
                     question_ids = json.loads(question_ids_str)
-                    print(f"🔍 解析題目ID列表成功: {len(question_ids)} 題")
                 except json.JSONDecodeError:
                     question_ids = []
-                    print(f"❌ 解析題目ID列表失敗")
             else:
                 question_ids = []
-                print(f"⚠️ 題目ID列表為空")
-            
-            # 調試：打印answers_dict的keys
-            print(f"🔍 answers_dict keys: {list(answers_dict.keys())}")
-            print(f"🔍 question_ids: {question_ids}")
             
             # 構建題目陣列
             questions = []
@@ -235,9 +222,6 @@ def get_quiz_result_data(result_id: str) -> dict:
                 
                 # 解析用戶答案
                 actual_user_answer = _extract_user_answer(user_answer_raw)
-                
-                # 調試：檢查題目狀態
-                print(f"🔍 題目 {question_id_str}: 在answers_dict中找到={question_id_str in answers_dict}, is_correct={is_correct}, user_answer_raw='{user_answer_raw}', actual_user_answer='{actual_user_answer}'")
                 
                 question_data = {
                     'question_id': str(question_obj['_id']),

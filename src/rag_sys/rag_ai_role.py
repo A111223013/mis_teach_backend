@@ -29,7 +29,7 @@ import os
 SESSION_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "learning_sessions.json")
 
 def save_sessions_to_file():
-    """將會話保存到文件"""
+    """將會話保存到文件目前先註解掉之後我再看看是不是要用"""
     try:
         # 創建可序列化的會話副本
         serializable_sessions = {}
@@ -43,7 +43,6 @@ def save_sessions_to_file():
         
         with open(SESSION_FILE, 'w', encoding='utf-8') as f:
             json.dump(serializable_sessions, f, ensure_ascii=False, indent=2)
-        print(f"💾 會話已保存到文件：{SESSION_FILE}")
     except Exception as e:
         print(f"⚠️ 會話保存失敗：{e}")
 
@@ -63,9 +62,6 @@ def load_sessions_from_file():
                             # 如果解析失敗，使用當前時間
                             value['created_at'] = datetime.now()
                     learning_sessions[key] = value
-            print(f"📂 從文件載入 {len(learning_sessions)} 個會話")
-        else:
-            print(f"📂 會話文件不存在，創建新的會話字典")
     except Exception as e:
         print(f"⚠️ 會話載入失敗：{e}")
 
@@ -97,9 +93,8 @@ def cleanup_old_sessions(max_age_hours: int = 24):
         for session_key in expired_sessions:
             del learning_sessions[session_key]
         
-        if expired_sessions:
-            print(f"🧹 清理了 {len(expired_sessions)} 個過期會話")
-            save_sessions_to_file()
+        #if expired_sessions:
+        #    save_sessions_to_file()
         
         return len(expired_sessions)
         
@@ -181,17 +176,14 @@ def handle_tutoring_conversation(user_email: str, question: str, user_answer: st
         # 2. 判斷是否為初始化（基於更新前的對話歷史）
         original_history_length = len(conversation_history)
         is_initial = original_history_length == 0
-        print(f"🔍 初始化判斷：原始對話歷史長度={original_history_length}, is_initial={is_initial}")
         
         # 3. 構建AI提示詞
         if is_initial:
             # 初始化：分析學生答案，提出引導問題
             prompt = build_initial_prompt(question, user_answer, correct_answer)
-            print(f"🎯 初始化階段：構建引導問題提示詞")
         else:
             # 後續對話：基於學生回答進行教學
             prompt = build_followup_prompt(question, user_answer, correct_answer, user_input, conversation_history)
-            print(f"💬 後續對話：構建教學提示詞")
         
         # 4. 增強提示詞（RAG功能）
         enhanced_prompt = enhance_prompt_with_knowledge(prompt, question)
@@ -208,9 +200,6 @@ def handle_tutoring_conversation(user_email: str, question: str, user_answer: st
         conversation_history.append({"role": "assistant", "content": clean_response})
         session['conversation_history'] = conversation_history
         
-        print(f"🔍 對話歷史更新後長度：{len(conversation_history)}")
-        print(f"🔍 對話歷史角色：{[msg['role'] for msg in conversation_history]}")
-        
         # 8. 更新學習進度（只在非初始化階段）
         if not is_initial:
             update_learning_progress(session, question, ai_response, conversation_history)
@@ -226,11 +215,7 @@ def handle_tutoring_conversation(user_email: str, question: str, user_answer: st
         learning_sessions[session_key] = session
         
         # 保存到文件以確保持久化
-        save_sessions_to_file()
-        
-        print(f"💾 會話已保存：{session_key}")
-        print(f"🔍 當前會話狀態：理解程度={session.get('understanding_level', 0)}, 階段={session.get('learning_stage', 'core_concept_confirmation')}")
-        print(f"🔍 會話字典大小：{len(learning_sessions)}")
+        #save_sessions_to_file()
         
         # 9. 返回結果
         return {
@@ -265,16 +250,13 @@ def update_learning_progress(session: dict, question: str, ai_response: str, con
         # 對話歷史格式：user, assistant, user, assistant, ...
         # 所以對話次數 = (總長度 - 1) // 2（減1是因為最後一條是AI回應）
         conversation_count = (len(conversation_history) - 1) // 2
-        print(f"🔍 當前對話次數：{conversation_count}")
-        print(f"🔍 對話歷史：{[msg['role'] for msg in conversation_history]}")
-        print(f"🔍 對話歷史長度：{len(conversation_history)}")
+
         
         # 3. 智能評分計算
         old_level = session.get('understanding_level', 0)
         smart_score = calculate_smart_score(old_level, score, conversation_count)
         session['understanding_level'] = smart_score
-        
-        print(f"🎯 評分更新：{old_level} → {smart_score}")
+
         
         # 4. 更新學習階段
         old_stage = session.get('learning_stage', 'core_concept_confirmation')
@@ -288,8 +270,8 @@ def update_learning_progress(session: dict, question: str, ai_response: str, con
         record_progress(session, score, smart_score, new_stage)
         
         # 6. 保存更新後的會話
-        save_sessions_to_file()
-        print(f"💾 學習進度更新後會話已保存")
+        #save_sessions_to_file()
+
         
     except Exception as e:
         logger.error(f"❌ 學習進度更新失敗: {e}")
@@ -299,17 +281,14 @@ def calculate_smart_score(current_score: int, ai_score: int, conversation_count:
     智能評分計算 - 實現新的評分邏輯
     """
     try:
-        print(f"🔍 智能評分：當前={current_score}，AI評分={ai_score}，對話次數={conversation_count}")
-        
+
         # 初始化階段：不給分數
         if conversation_count == 0:
-            print(f"🎯 初始化階段，不給分數")
             return 0
         
         # 第一個問題：給予基礎評分 0-95
         elif conversation_count == 1:
             base_score = min(95, max(0, ai_score))
-            print(f"✅ 第一個問題，基礎評分：{base_score}")
             return base_score
         
         # 後續問題：基於當前分數給予加分
@@ -317,12 +296,10 @@ def calculate_smart_score(current_score: int, ai_score: int, conversation_count:
             if ai_score > current_score:
                 bonus = min(10, ai_score - current_score)
                 new_score = min(95, current_score + bonus)
-                print(f"✅ 後續問題，加分：{current_score} + {bonus} = {new_score}")
                 return new_score
             else:
                 penalty = min(2, current_score - ai_score)
                 new_score = max(0, current_score - penalty)
-                print(f"⚠️ 後續問題，扣分：{current_score} - {penalty} = {new_score}")
                 return new_score
             
     except Exception as e:
@@ -360,8 +337,6 @@ def should_search_database(question: str) -> bool:
         
         should_search = has_mis_content and not is_non_academic
         
-        print(f"🔍 RAG判斷：問題='{question[:50]}...'，包含MIS內容={has_mis_content}，非學術={is_non_academic}，需要檢索={should_search}")
-        
         return should_search
         
     except Exception as e:
@@ -375,7 +350,6 @@ def enhance_prompt_with_knowledge(prompt: str, question: str) -> str:
     try:
         # 1. 判斷是否需要檢索知識
         if not should_search_database(question):
-            print(f"ℹ️ 問題不需要RAG檢索，使用原始提示詞")
             return prompt
         
         # 2. 初始化向量資料庫
@@ -395,10 +369,8 @@ def enhance_prompt_with_knowledge(prompt: str, question: str) -> str:
             
             # 5. 增強提示詞
             enhanced_prompt = prompt + knowledge_context
-            print(f"🔍 RAG增強：添加了 {len(knowledge_results)} 條相關知識")
             return enhanced_prompt
         else:
-            print(f"ℹ️ 未找到相關知識，使用原始提示詞")
             return prompt
             
     except Exception as e:
@@ -417,7 +389,6 @@ def search_knowledge(query: str, top_k: int = 5) -> List[Dict[str, Any]]:
         
         # 1. 先將中文問題翻譯成英文（因為向量資料庫是英文教材）
         english_query = translate_to_english(query)
-        print(f"🔍 問題翻譯：'{query[:50]}...' → '{english_query[:50]}...'")
         
         # 2. 執行相似性搜索
         results = collection.query(
@@ -435,7 +406,6 @@ def search_knowledge(query: str, top_k: int = 5) -> List[Dict[str, Any]]:
                     'distance': results['distances'][0][i] if results['distances'] and results['distances'][0] else 0
                 })
         
-        print(f"🔍 知識檢索：找到 {len(knowledge_items)} 條相關內容")
         return knowledge_items
         
     except Exception as e:
@@ -466,13 +436,8 @@ def get_or_create_session(user_email: str, question: str) -> dict:
     # 組合用戶email和題目hash，確保唯一性
     session_key = f"{user_email}_question_{hash(clean_question)}"
     
-    print(f"🔍 會話查找：user_email={user_email}, question_hash={hash(clean_question)}, session_key={session_key}")
-    print(f"🔍 現有會話數量：{len(learning_sessions)}")
-    
     # 顯示當前用戶的所有會話
     user_sessions = [key for key in learning_sessions.keys() if key.startswith(f"{user_email}_")]
-    print(f"🔍 當前用戶會話數量：{len(user_sessions)}")
-    print(f"🔍 當前用戶會話鍵：{user_sessions}")
     
     # 顯示會話統計信息
     if learning_sessions:
@@ -483,20 +448,11 @@ def get_or_create_session(user_email: str, question: str) -> dict:
                 user_part = key.split('_question_')[0]
                 user_counts[user_part] = user_counts.get(user_part, 0) + 1
         
-        print(f"🔍 用戶會話統計：{user_counts}")
-    
-    # 顯示所有會話鍵（用於調試）
-    all_keys = list(learning_sessions.keys())
-    if all_keys:
-        print(f"🔍 所有會話鍵：{all_keys[:5]}...")  # 只顯示前5個
-    else:
-        print(f"🔍 所有會話鍵：[]")
+
     
     # 檢查是否已存在會話
     if session_key in learning_sessions:
         existing_session = learning_sessions[session_key]
-        print(f"🔄 使用現有會話：{session_key}")
-        print(f"🔍 現有會話狀態：理解程度={existing_session.get('understanding_level', 0)}, 階段={existing_session.get('learning_stage', 'core_concept_confirmation')}, 對話數={len(existing_session.get('conversation_history', []))}")
         return existing_session
     
     # 如果沒有找到會話，創建新會話
@@ -511,10 +467,8 @@ def get_or_create_session(user_email: str, question: str) -> dict:
     }
     
     # 立即保存到文件
-    save_sessions_to_file()
-    
-    print(f"🆕 創建新會話：{session_key}")
-    print(f"🔍 會話字典大小：{len(learning_sessions)}")
+    #save_sessions_to_file()
+
     
     return learning_sessions[session_key]
 
@@ -681,9 +635,6 @@ def record_progress(session: dict, score: int, smart_score: int, stage: str):
 def extract_score_from_response(ai_response: str) -> int:
     """從AI回應中提取評分"""
     try:
-        print(f"🔍 正在提取評分，AI回應長度: {len(ai_response)}")
-        print(f"🔍 AI回應內容: {ai_response}")
-        
         # 尋找評分格式：評分：[分數]分
         score_patterns = [
             r'評分[：:]\s*(\d+)分',
@@ -704,7 +655,6 @@ def extract_score_from_response(ai_response: str) -> int:
             match = re.search(pattern, ai_response)
             if match:
                 score = int(match.group(1))
-                print(f"✅ 找到評分：{score}分 (模式 {i+1})")
                 if 0 <= score <= 100:
                     return score
                 else:
@@ -712,22 +662,18 @@ def extract_score_from_response(ai_response: str) -> int:
         
         print(f"❌ 未找到任何評分格式")
         numbers = re.findall(r'\d+', ai_response)
-        print(f"🔍 嘗試搜索數字: {numbers}")
         
         # 如果沒有找到評分，嘗試從最後幾行中尋找
         lines = ai_response.strip().split('\n')
         last_lines = lines[-3:] if len(lines) >= 3 else lines
-        print(f"🔍 檢查最後幾行：{last_lines}")
         
         for line in reversed(last_lines):
             if '評分' in line or '分數' in line:
-                print(f"🔍 在最後幾行中找到評分相關內容：{line}")
                 # 嘗試提取數字
                 numbers_in_line = re.findall(r'\d+', line)
                 if numbers_in_line:
                     score = int(numbers_in_line[0])
                     if 0 <= score <= 100:
-                        print(f"✅ 從最後幾行提取到評分：{score}分")
                         return score
         
         return None
@@ -766,7 +712,6 @@ def init_vector_database():
         # 構建向量資料庫的絕對路徑
         db_path = os.path.join(current_dir, "data", "knowledge_db", "chroma_db")
         
-        print(f"🔍 向量資料庫路徑: {db_path}")
         
         chroma_client = chromadb.PersistentClient(
             path=db_path,
@@ -779,7 +724,6 @@ def init_vector_database():
             metadata={"hnsw:space": "cosine"}
         )
         
-        print(f"✅ 向量資料庫初始化成功")
         return chroma_client, collection
         
     except Exception as e:
@@ -794,7 +738,6 @@ def init_gemini():
         
         # 創建模型實例
         model = genai.GenerativeModel('gemini-1.5-flash')
-        print(f"✅ Gemini模型初始化成功")
         return model
         
     except Exception as e:
