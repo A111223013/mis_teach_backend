@@ -1,14 +1,20 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-網站AI助手 - 主代理人系統
-只負責：1.接收聊天訊息 2.主代理人判斷調用工具 3.回傳訊息
+Web AI 助理模組 - 整合多種AI工具
 """
 
 from flask import Blueprint, request, jsonify
 import logging
+import json
+from typing import Dict, Any, List, Optional
 from datetime import datetime
-from typing import Dict, Any
+import google.generativeai as genai
+from tool.api_keys import get_api_key
+from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.output_parsers import StrOutputParser
+from langchain_core.prompts import ChatPromptTemplate
 
 # LangChain 導入
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
@@ -49,7 +55,7 @@ def get_google_api_key():
 def init_llm():
     """初始化LLM模型"""
     try:
-        api_key = config.GEMINI_CONFIG.get('api_key')
+        api_key = get_api_key()  # 使用tool/api_keys.py
         if not api_key:
             raise ValueError("未設置Gemini API Key")
         

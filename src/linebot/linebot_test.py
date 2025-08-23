@@ -1,12 +1,19 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+Line Bot 測試模組
+"""
+
 from flask import Flask, request, abort
 import json
 import random
 import os
 
 import google.generativeai as genai
+from tool.api_keys import get_api_key
 
-# 設定 Gemini API
-genai.configure(api_key="AIzaSyDFUrwhpMzjOJ54acVG6V-oA3DNobTfgi4")
+# 使用統一的API金鑰管理
+genai.configure(api_key=get_api_key())
 model = genai.GenerativeModel("gemini-1.5-flash")  # 或 gemini-1.5-pro
 
 # ===== 主題清單 =====

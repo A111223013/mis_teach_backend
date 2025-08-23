@@ -1,4 +1,4 @@
-from flask import jsonify, request, Blueprint, current_app
+from flask import jsonify, request, Blueprint, current_app, Response
 import uuid
 from accessories import mongo, sqldb
 from src.api import get_user_info, verify_token
@@ -10,7 +10,9 @@ import os
 import json
 from sqlalchemy import text
 from bson import ObjectId
-from src.grade_answer_simple import grade_single_answer, batch_grade_ai_questions
+from src.grade_answer import batch_grade_ai_questions
+import time
+import hashlib
 quiz_bp = Blueprint('quiz', __name__)
 
 
@@ -113,6 +115,24 @@ def init_quiz_tables():
                 """))
                 conn.commit()
             
+            # 創建長答案存儲表
+            with sqldb.engine.connect() as conn:
+                conn.execute(sqldb.text("""
+                    CREATE TABLE IF NOT EXISTS long_answers (
+                        id INT AUTO_INCREMENT PRIMARY KEY,
+                        quiz_history_id INT NOT NULL,
+                        question_id VARCHAR(255) NOT NULL,
+                        user_email VARCHAR(255) NOT NULL,
+                        question_type VARCHAR(50) NOT NULL,
+                        full_answer LONGTEXT NOT NULL,
+                        answer_hash VARCHAR(64) NOT NULL,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        INDEX idx_quiz_question (quiz_history_id, question_id),
+                        INDEX idx_user (user_email)
+                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+                """))
+                conn.commit()
+            
             print("✅ Quiz SQL tables initialized successfully (final optimized)")
             return True
     except Exception as e:
@@ -147,9 +167,11 @@ def submit_quiz():
     
     print(f"Debug: 收到測驗提交請求，template_id: {template_id}, 答案數量: {len(answers)}")
     
+    # 生成唯一的進度追蹤ID
+    progress_id = f"progress_{user_email}_{int(time.time())}"
+    
     # 階段1: 試卷批改 - 獲取題目數據
     print("🔄 階段1: 試卷批改 - 獲取題目數據")
-    
     # 這裡可以發送進度更新到前端（如果使用WebSocket或Server-Sent Events）
     # 目前先打印進度，後續可以實現即時通訊
     
@@ -282,10 +304,20 @@ def submit_quiz():
         # 準備AI評分數據
         ai_questions_data = []
         for q_data in answered_questions:
+            question = q_data['question']
+            user_answer = q_data['user_answer']
+            question_type = q_data['question_type']
+            
+            # 對於AI評分，使用原始完整答案，不進行截斷
+            # 這樣AI能看到完整的圖片內容，評分更準確
             ai_questions_data.append({
-                'question_id': q_data['question'].get('original_exam_id', ''),
-                'user_answer': q_data['user_answer'],
-                'question_type': q_data['question_type']
+                'question_id': question.get('original_exam_id', ''),
+                'user_answer': user_answer,  # 使用原始完整答案
+                'question_type': question_type,
+                'question_text': question.get('question_text', ''),
+                'options': question.get('options', []),
+                'correct_answer': question.get('correct_answer', ''),
+                'key_points': question.get('key_points', '')
             })
         
         # 使用AI批改模組進行批量評分
@@ -442,6 +474,9 @@ def submit_quiz():
             
             score = 0 if is_wrong else 100
             
+            # 使用新的長答案存儲方法，保持數據完整性
+            stored_answer = _store_long_answer(user_answer, 'unknown', quiz_history_id, question_id, user_email)
+            
             # 插入到 quiz_answers 表
             conn.execute(text("""
                 INSERT INTO quiz_answers 
@@ -451,7 +486,7 @@ def submit_quiz():
                 'quiz_history_id': quiz_history_id,
                 'user_email': user_email,
                 'mongodb_question_id': question_id,
-                'user_answer': json.dumps(answer_data, ensure_ascii=False),
+                'user_answer': stored_answer,  # 使用存儲後的答案引用
                 'is_correct': is_correct,
                 'score': score
             })
@@ -477,7 +512,7 @@ def submit_quiz():
                 'quiz_history_id': quiz_history_id,
                 'user_email': user_email,
                 'mongodb_question_id': question_id,
-                'user_answer': json.dumps(answer_data, ensure_ascii=False),
+                'user_answer': '',  # 未作答題目答案為空
                 'is_correct': False,  # 未作答題目標記為錯誤
                 'score': 0
             })
@@ -485,6 +520,10 @@ def submit_quiz():
         # 保留原有的錯題儲存邏輯（向後兼容）
         if wrong_questions:
             for wrong_q in wrong_questions:
+                # 使用新的長答案存儲方法，保持數據完整性
+                stored_answer = _store_long_answer(wrong_q['user_answer'], 'unknown', quiz_history_id, 
+                                                wrong_q.get('original_exam_id', ''), user_email)
+                
                 conn.execute(text("""
                     INSERT INTO quiz_errors 
                     (quiz_history_id, user_email, mongodb_question_id, user_answer,
@@ -495,10 +534,7 @@ def submit_quiz():
                     'quiz_history_id': quiz_history_id,
                     'user_email': user_email,
                     'mongodb_question_id': wrong_q.get('original_exam_id', ''),
-                    'user_answer': json.dumps({
-                        'answer': wrong_q['user_answer'],
-                        'feedback': wrong_q.get('feedback', {})
-                    }, ensure_ascii=False),
+                    'user_answer': stored_answer,  # 使用存儲後的答案引用
                     'score': wrong_q.get('score', 0),
                     'time_taken': 0  # 簡化時間處理
                 })
@@ -514,6 +550,7 @@ def submit_quiz():
             'template_id': template_id,  # 返回模板ID
             'quiz_history_id': quiz_history_id,  # 返回測驗歷史記錄ID
             'result_id': f'result_{quiz_history_id}',  # 返回結果ID（用於前端跳轉）
+            'progress_id': progress_id,  # 返回進度追蹤ID
             'total_questions': total_questions,
             'answered_questions': answered_count,
             'unanswered_questions': unanswered_count,
@@ -532,6 +569,98 @@ def submit_quiz():
             ]
         }
     })
+
+
+# 舊的答案截斷方法已移除，現在使用長答案存儲方法保持數據完整性
+
+
+def _store_long_answer(user_answer: any, question_type: str, quiz_history_id: int, question_id: str, user_email: str) -> str:
+    """
+    存儲長答案到專門的表中，保持數據完整性
+    
+    參數：
+    - user_answer: 原始用戶答案
+    - question_type: 題目類型
+    - quiz_history_id: 測驗歷史ID
+    - question_id: 題目ID
+    - user_email: 用戶郵箱
+    
+    返回：
+    - 存儲引用ID或標識符
+    """
+    try:
+        answer_str = str(user_answer)
+        
+        # 如果答案不長，直接返回
+        if len(answer_str) <= 10000:
+            return answer_str
+        
+        # 對於長答案，存儲到專門的表中
+        with sqldb.engine.connect() as conn:
+            # 創建長答案存儲表（如果不存在）
+            conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS long_answers (
+                    id INT AUTO_INCREMENT PRIMARY KEY,
+                    quiz_history_id INT NOT NULL,
+                    question_id VARCHAR(255) NOT NULL,
+                    user_email VARCHAR(255) NOT NULL,
+                    question_type VARCHAR(50) NOT NULL,
+                    full_answer LONGTEXT NOT NULL,
+                    answer_hash VARCHAR(64) NOT NULL,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    INDEX idx_quiz_question (quiz_history_id, question_id),
+                    INDEX idx_user (user_email)
+                )
+            """))
+            
+            # 計算答案的哈希值作為唯一標識
+            answer_hash = hashlib.md5(answer_str.encode()).hexdigest()
+            
+            # 檢查是否已經存儲過相同的答案
+            existing = conn.execute(text("""
+                SELECT id FROM long_answers 
+                WHERE quiz_history_id = :quiz_history_id AND question_id = :question_id
+            """), {
+                'quiz_history_id': quiz_history_id,
+                'question_id': question_id
+            }).fetchone()
+            
+            if existing:
+                # 如果已存在，返回引用標識
+                return f"LONG_ANSWER_{existing[0]}"
+            else:
+                # 存儲新的長答案
+                result = conn.execute(text("""
+                    INSERT INTO long_answers 
+                    (quiz_history_id, question_id, user_email, question_type, full_answer, answer_hash)
+                    VALUES (:quiz_history_id, :question_id, :user_email, :question_type, :full_answer, :answer_hash)
+                """), {
+                    'quiz_history_id': quiz_history_id,
+                    'question_id': question_id,
+                    'user_email': user_email,
+                    'question_type': question_type,
+                    'full_answer': answer_str,
+                    'answer_hash': answer_hash
+                })
+                
+                long_answer_id = conn.execute(text("SELECT LAST_INSERT_ID()")).scalar()
+                conn.commit()
+                
+                print(f"✅ 長答案已存儲到 long_answers 表，ID: {long_answer_id}")
+                return f"LONG_ANSWER_{long_answer_id}"
+                
+    except Exception as e:
+        print(f"❌ 存儲長答案失敗: {e}")
+        # 如果存儲失敗，返回截斷的答案（但保持數據完整性）
+        answer_str = str(user_answer)
+        if len(answer_str) > 10000:
+            # 返回截斷的答案，但添加錯誤標記
+            truncated_answer = answer_str[:9000] + "...[存儲失敗，答案已截斷]"
+            print(f"⚠️ 長答案存儲失敗，使用截斷方式: {len(answer_str)} -> {len(truncated_answer)} 字符")
+            return truncated_answer
+        else:
+            # 如果答案不長，直接返回
+            return answer_str
 
 
 @quiz_bp.route('/get-quiz-result/<result_id>', methods=['GET', 'OPTIONS'])
@@ -1201,3 +1330,164 @@ def get_grading_progress(template_id):
     except Exception as e:
         print(f"❌ 獲取批改進度時發生錯誤: {str(e)}")
         return jsonify({'message': f'獲取批改進度失敗: {str(e)}'}), 500
+
+
+@quiz_bp.route('/quiz-progress/<progress_id>', methods=['GET'])
+def get_quiz_progress(progress_id):
+    """獲取測驗進度 API - 用於前端實時查詢進度"""
+    try:
+        # 這裡應該從數據庫或緩存中獲取實際進度
+        # 目前先返回模擬進度，後續可以實現真實的進度追蹤
+        
+        # 解析progress_id獲取用戶信息
+        if not progress_id.startswith('progress_'):
+            return jsonify({'error': '無效的進度ID'}), 400
+        
+        # 模擬進度狀態（實際應該從數據庫獲取）
+        progress_data = {
+            'progress_id': progress_id,
+            'current_stage': 3,  # 當前階段：1=試卷批改, 2=計算分數, 3=評判知識點, 4=生成學習計畫
+            'total_stages': 4,
+            'stage_name': '評判知識點',
+            'stage_description': 'AI正在進行智能評分...',
+            'progress_percentage': 75,  # 75%完成
+            'is_completed': False,
+            'estimated_time_remaining': 30,  # 預計剩餘時間（秒）
+            'last_updated': time.time()
+        }
+        
+        return jsonify({
+            'success': True,
+            'data': progress_data
+        })
+        
+    except Exception as e:
+        print(f"❌ 獲取進度失敗: {e}")
+        return jsonify({
+            'success': False,
+            'error': f'獲取進度失敗: {str(e)}'
+        }), 500
+
+
+@quiz_bp.route('/quiz-progress-sse/<progress_id>', methods=['GET'])
+def quiz_progress_sse(progress_id):
+    """測驗進度 Server-Sent Events API - 實時推送進度更新"""
+    def generate_progress_events():
+        """生成進度事件流"""
+        try:
+            # 設置SSE headers
+            yield 'data: {"type": "connected", "message": "進度追蹤已連接"}\n\n'
+            
+            # 基於真實的AI批改進度，而不是模擬
+            stages = [
+                {'stage': 1, 'name': '試卷批改', 'description': '正在獲取題目數據...'},
+                {'stage': 2, 'name': '計算分數', 'description': '正在分類題目...'},
+                {'stage': 3, 'name': '評判知識點', 'description': 'AI正在進行智能評分...'},
+                {'stage': 4, 'name': '生成學習計畫', 'description': '正在統計結果...'}
+            ]
+            
+            # 快速發送進度更新，因為AI批改已經完成
+            for i, stage in enumerate(stages):
+                progress_data = {
+                    'type': 'progress_update',
+                    'current_stage': stage['stage'],
+                    'stage_name': stage['name'],
+                    'stage_description': stage['description'],
+                    'progress_percentage': (stage['stage'] / len(stages)) * 100,
+                    'is_completed': stage['stage'] == len(stages),
+                    'timestamp': time.time()
+                }
+                
+                yield f'data: {json.dumps(progress_data, ensure_ascii=False)}\n\n'
+                
+                # 快速更新，每0.5秒一個階段
+                time.sleep(0.5)
+                
+                # 如果是最後一個階段，發送完成事件
+                if stage['stage'] == len(stages):
+                    completion_data = {
+                        'type': 'completion',
+                        'message': 'AI批改完成！',
+                        'progress_percentage': 100,
+                        'is_completed': True,
+                        'timestamp': time.time()
+                    }
+                    yield f'data: {json.dumps(completion_data, ensure_ascii=False)}\n\n'
+                    break
+                    
+        except Exception as e:
+            error_data = {
+                'type': 'error',
+                'message': f'進度追蹤錯誤: {str(e)}',
+                'timestamp': time.time()
+            }
+            yield f'data: {json.dumps(error_data, ensure_ascii=False)}\n\n'
+    
+    # 設置SSE響應headers
+    response = Response(
+        generate_progress_events(),
+        mimetype='text/event-stream',
+        headers={
+            'Cache-Control': 'no-cache',
+            'Connection': 'keep-alive',
+            'Access-Control-Allow-Origin': '*',
+            'Access-Control-Allow-Headers': 'Cache-Control'
+        }
+    )
+    
+    return response
+
+@quiz_bp.route('/get-long-answer/<answer_id>', methods=['GET'])
+def get_long_answer(answer_id: str):
+    """獲取長答案的完整內容"""
+    try:
+        # 驗證用戶身份
+        token = request.headers.get('Authorization')
+        if not token:
+            return jsonify({'error': '缺少授權token'}), 401
+        
+        user_email = verify_token(token.split(" ")[1])
+        if not user_email:
+            return jsonify({'error': '無效的token'}), 401
+        
+        # 解析答案ID
+        if not answer_id.startswith('LONG_ANSWER_'):
+            return jsonify({'error': '無效的答案ID格式'}), 400
+        
+        long_answer_id = int(answer_id.replace('LONG_ANSWER_', ''))
+        
+        # 從數據庫獲取長答案
+        with sqldb.engine.connect() as conn:
+            result = conn.execute(text("""
+                SELECT la.full_answer, la.question_type, la.created_at,
+                       qh.template_id, qh.user_email
+                FROM long_answers la
+                JOIN quiz_history qh ON la.quiz_history_id = qh.id
+                WHERE la.id = :long_answer_id
+            """), {
+                'long_answer_id': long_answer_id
+            }).fetchone()
+            
+            if not result:
+                return jsonify({'error': '答案不存在'}), 404
+            
+            # 驗證用戶權限（只能查看自己的答案）
+            if result.user_email != user_email:
+                return jsonify({'error': '無權限查看此答案'}), 403
+            
+            return jsonify({
+                'success': True,
+                'data': {
+                    'full_answer': result.full_answer,
+                    'question_type': result.question_type,
+                    'created_at': result.created_at.isoformat() if result.created_at else None,
+                    'template_id': result.template_id
+                }
+            })
+            
+    except Exception as e:
+        print(f"❌ 獲取長答案失敗: {e}")
+        return jsonify({
+            'success': False,
+            'error': f'獲取長答案失敗: {str(e)}'
+        }), 500

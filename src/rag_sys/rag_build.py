@@ -1,19 +1,20 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 """
-RAG 向量資料庫建置模組
-負責處理 PDF 文件、建立向量資料庫、知識點提取等功能
+RAG 系統建置模組
 """
 
 import os
 import json
 import logging
 from datetime import datetime
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any
+import fitz  # PyMuPDF
+import google.generativeai as genai
+from tool.api_keys import get_api_key
 import chromadb
 from chromadb.config import Settings
 from sentence_transformers import SentenceTransformer
-import fitz  # PyMuPDF
-import google.generativeai as genai
-from .config import Config
 
 # 設置日誌
 logging.basicConfig(level=logging.INFO)
@@ -57,8 +58,12 @@ class RAGBuilder:
                 )
             
             # 配置 Gemini API
-            if self.config.GEMINI_API_KEY:
-                genai.configure(api_key=self.config.GEMINI_API_KEY)
+            try:
+                api_key = get_api_key()
+                genai.configure(api_key=api_key)
+                print("✅ Gemini API 配置成功")
+            except Exception as e:
+                print(f"❌ Gemini API 配置失敗: {e}")
             
         except Exception as e:
             logger.error(f"❌ 初始化組件失敗: {e}")

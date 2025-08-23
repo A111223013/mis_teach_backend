@@ -1,8 +1,14 @@
-import os
-import base64
-import json
-import requests
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+多代理問題處理模組
+"""
+
 import google.generativeai as genai
+from tool.api_keys import get_api_key
+import json
+import re
+from typing import Dict, Any, List, Optional
 
 
 
@@ -113,7 +119,18 @@ arbiter_agent_prompt_template = """
 
 # ========== 模型初始化 ==========
 # 設定金鑰
-genai.configure(api_key=GEMINI_API_KEY)
+def init_gemini():
+    """初始化Gemini API"""
+    try:
+        api_key = get_api_key()
+        genai.configure(api_key=api_key)
+        print("✅ Gemini API 配置成功")
+    except Exception as e:
+        print(f"❌ Gemini API 配置失敗: {e}")
+        raise
+
+# 初始化API
+init_gemini()
 
 def read_image_base64(image_path):
     if not os.path.exists(image_path):

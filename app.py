@@ -37,8 +37,6 @@ if len(sys.argv) > 1:
 else:
     app.config.from_object(developmentCfg)
 
-# Set Google API key if needed
-os.environ["GOOGLE_API_KEY"] = "AIzaSyAIXgxvFlTQe3lq4tuLx2fUiF4oaigBBYE"
 
 domain_name_config = app.config.get('DOMAIN_NAME')
 

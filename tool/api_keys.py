@@ -8,7 +8,11 @@ import os
 import random
 from typing import List
 
-
+# 預設的API密鑰（用於開發和測試）
+DEFAULT_API_KEYS = [
+    "sk-proj-your-default-key-here-1",
+    "sk-proj-your-default-key-here-2"
+]
 
 def load_env_file(file_path: str) -> dict:
     """載入.env文件"""
@@ -44,19 +48,27 @@ class APIKeyManager:
         env_keys = env_vars.get('AI_API_KEYS')
         
         if env_keys:
-            # 處理可能的陣列格式 [key1,key2] 或字串格式 key1,key2
+            # 清理和解析API金鑰
             env_keys = env_keys.strip()
-            if env_keys.startswith('[') and env_keys.endswith(']'):
-                # 陣列格式: [key1,key2]
-                env_keys = env_keys[1:-1]  # 移除方括號
+            
+            # 移除可能的方括號和換行符
+            env_keys = env_keys.replace('[', '').replace(']', '').replace('\n', '').replace('\r', '')
             
             # 分割並清理密鑰
-            keys = [key.strip() for key in env_keys.split(',') if key.strip()]
-            print(f"✅ 從api.env載入 {len(keys)} 個API密鑰")
-            return keys
+            keys = []
+            for key in env_keys.split(','):
+                key = key.strip()
+                if key and len(key) > 10:  # 確保是有效的API金鑰
+                    keys.append(key)
+            
+            if keys:
+                print(f"✅ 從api.env載入 {len(keys)} 個API密鑰")
+                return keys
+            else:
+                print("⚠️ 從api.env解析的API密鑰無效")
         
-        # 如果環境變數沒有，使用默認密鑰
-        print("⚠️ api.env中 AI_API_KEYS 未設置，使用默認密鑰")
+        # 如果環境變數沒有或解析失敗，使用默認密鑰
+        print("⚠️ api.env中 AI_API_KEYS 未設置或解析失敗，使用默認密鑰")
         return DEFAULT_API_KEYS.copy()
     
     def get_random_key(self) -> str:
@@ -116,8 +128,49 @@ def test_api_keys():
     """測試API密鑰載入"""
     print("🧪 測試API密鑰載入...")
     print(f"📊 可用密鑰數量: {get_api_keys_count()}")
-    print(f"🔑 隨機密鑰: {get_api_key()[:20]}...")
-    print(f"🔑 下一個密鑰: {api_key_manager.get_next_key()[:20]}...")
+    
+    # 顯示所有密鑰（隱藏部分內容）
+    all_keys = api_key_manager.api_keys
+    for i, key in enumerate(all_keys):
+        masked_key = f"{key[:8]}...{key[-4:]}" if len(key) > 12 else key
+        print(f"🔑 密鑰 {i+1}: {masked_key}")
+    
+    # 測試隨機選擇
+    random_key = get_api_key()
+    masked_random = f"{random_key[:8]}...{random_key[-4:]}" if len(random_key) > 12 else random_key
+    print(f"🎲 隨機選擇密鑰: {masked_random}")
+    
+    # 測試輪詢
+    next_key = api_key_manager.get_next_key()
+    masked_next = f"{next_key[:8]}...{next_key[-4:]}" if len(next_key) > 12 else next_key
+    print(f"🔄 下一個密鑰: {masked_next}")
+
+def test_parallel_processing():
+    """測試並行處理功能"""
+    print("\n🚀 測試並行處理功能...")
+    
+    # 模擬題目數據
+    test_questions = [
+        {'question_id': f'q{i}', 'user_answer': f'answer_{i}', 'question_type': 'single-choice'}
+        for i in range(1, 11)  # 10個測試題目
+    ]
+    
+    print(f"📝 測試題目數量: {len(test_questions)}")
+    print(f"🔑 可用API金鑰: {get_api_keys_count()}")
+    
+    # 計算分配
+    api_keys_count = get_api_keys_count()
+    questions_per_key = len(test_questions) // api_keys_count
+    remainder = len(test_questions) % api_keys_count
+    
+    print(f"📊 分配結果:")
+    start_idx = 0
+    for i in range(api_keys_count):
+        batch_size = questions_per_key + (1 if i < remainder else 0)
+        end_idx = start_idx + batch_size
+        print(f"  API金鑰 {i+1}: 題目 {start_idx+1}-{end_idx} (共 {batch_size} 題)")
+        start_idx = end_idx
 
 if __name__ == "__main__":
     test_api_keys()
+    test_parallel_processing()

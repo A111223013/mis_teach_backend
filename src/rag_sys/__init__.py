@@ -22,15 +22,19 @@ except ImportError as e:
 try:
     from .rag_ai_role import (
         handle_tutoring_conversation,
-        create_session_from_quiz_result,
         should_search_database,
-        get_topic_knowledge,
+        enhance_prompt_with_knowledge,
+        search_knowledge,
+        get_stage_guidance,
+        get_stage_display_name,
     )
     __all__.extend([
         'handle_tutoring_conversation',
-        'create_session_from_quiz_result',
         'should_search_database',
-        'get_topic_knowledge',
+        'enhance_prompt_with_knowledge',
+        'search_knowledge',
+        'get_stage_guidance',
+        'get_stage_display_name',
     ])
 except ImportError as e:
     print(f"⚠️ rag_ai_role 函數導入失敗: {e}")

@@ -1,11 +1,19 @@
-import json
-import logging
-from typing import Dict, List, Any, Optional
-from datetime import datetime
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+RAG AI 教學系統 - 重構版本
+簡化函數結構，真正實現 RAG 功能
+"""
+
 import google.generativeai as genai
-import os
 from tool.api_keys import get_api_key
-GEMINI_AVAILABLE = True
+import json
+import re
+from typing import Dict, Any, List, Optional
+from datetime import datetime
+import logging
+import chromadb
+from chromadb.config import Settings
 
 # 設置日誌
 logging.basicConfig(level=logging.INFO)
@@ -16,46 +24,762 @@ logger = logging.getLogger(__name__)
 # 學習會話管理
 learning_sessions = {}
 
+# 會話持久化文件路徑
+import os
+SESSION_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "learning_sessions.json")
+
+def save_sessions_to_file():
+    """將會話保存到文件"""
+    try:
+        # 創建可序列化的會話副本
+        serializable_sessions = {}
+        for key, session in learning_sessions.items():
+            serializable_session = session.copy()
+            # 確保 datetime 對象被轉換為字符串
+            if 'created_at' in serializable_session:
+                if isinstance(serializable_session['created_at'], datetime):
+                    serializable_session['created_at'] = serializable_session['created_at'].isoformat()
+            serializable_sessions[key] = serializable_session
+        
+        with open(SESSION_FILE, 'w', encoding='utf-8') as f:
+            json.dump(serializable_sessions, f, ensure_ascii=False, indent=2)
+        print(f"💾 會話已保存到文件：{SESSION_FILE}")
+    except Exception as e:
+        print(f"⚠️ 會話保存失敗：{e}")
+
+def load_sessions_from_file():
+    """從文件載入會話"""
+    try:
+        if os.path.exists(SESSION_FILE):
+            with open(SESSION_FILE, 'r', encoding='utf-8') as f:
+                sessions = json.load(f)
+                # 轉換回字典
+                for key, value in sessions.items():
+                    # 確保 datetime 字符串被正確處理
+                    if 'created_at' in value and isinstance(value['created_at'], str):
+                        try:
+                            value['created_at'] = datetime.fromisoformat(value['created_at'])
+                        except ValueError:
+                            # 如果解析失敗，使用當前時間
+                            value['created_at'] = datetime.now()
+                    learning_sessions[key] = value
+            print(f"📂 從文件載入 {len(learning_sessions)} 個會話")
+        else:
+            print(f"📂 會話文件不存在，創建新的會話字典")
+    except Exception as e:
+        print(f"⚠️ 會話載入失敗：{e}")
+
+# 在模組載入時載入會話
+load_sessions_from_file()
+
+def cleanup_old_sessions(max_age_hours: int = 24):
+    """清理過期的會話，避免記憶體洩漏"""
+    try:
+        current_time = datetime.now()
+        expired_sessions = []
+        
+        for session_key, session_data in learning_sessions.items():
+            if 'created_at' in session_data:
+                try:
+                    if isinstance(session_data['created_at'], str):
+                        created_time = datetime.fromisoformat(session_data['created_at'])
+                    else:
+                        created_time = session_data['created_at']
+                    
+                    age_hours = (current_time - created_time).total_seconds() / 3600
+                    if age_hours > max_age_hours:
+                        expired_sessions.append(session_key)
+                except:
+                    # 如果時間解析失敗，保留會話
+                    pass
+        
+        # 刪除過期會話
+        for session_key in expired_sessions:
+            del learning_sessions[session_key]
+        
+        if expired_sessions:
+            print(f"🧹 清理了 {len(expired_sessions)} 個過期會話")
+            save_sessions_to_file()
+        
+        return len(expired_sessions)
+        
+    except Exception as e:
+        print(f"⚠️ 會話清理失敗：{e}")
+        return 0
+
+# 定期清理會話（每小時清理一次）
+import threading
+import time
+
+def auto_cleanup_sessions():
+    """自動清理會話的後台任務"""
+    while True:
+        try:
+            time.sleep(3600)  # 每小時執行一次
+            cleanup_old_sessions()
+        except Exception as e:
+            print(f"⚠️ 自動清理失敗：{e}")
+
+# 啟動自動清理（在後台執行）
+cleanup_thread = threading.Thread(target=auto_cleanup_sessions, daemon=True)
+cleanup_thread.start()
+
 # 教學風格提示詞
 TEACHER_STYLE = """你是一位經驗豐富的資管系教授，正在一對一輔導學生，幫助學生透過逐步引導方式理解考題與資管系相關知識，確保學生真正掌握概念，而不只是背誦答案。
 
 **你的教學原則**：
-- **引導式對話**：透過一步步提問，引導學生自行思考並得出答案，而非直接給予解答。
-- **針對性反饋**：精準評價學生回答，肯定其正確部分，並禮貌地指出需要補充或糾正之處。
-- **概念拆解與類比**：當學生不理解時，將複雜概念拆解為更小步驟，並使用生活化例子或類比幫助理解。
-- **動態調整難度**：根據學生回答判斷其掌握度，靈活調整問題難度，促進深度學習。
-- **避免重複**：回答中絕不重複學生已經說過或你之前說過的內容，力求簡潔有效。
+- **從核心開始**：從與這道題目最直接相關的核心概念開始，而不是從最基礎的概念開始
+- **概念連貫性**：確保每個問題都與題目核心概念相關，避免概念跳脫
+- **蘇格拉底式提問**：透過引導性問題，讓學生自己思考並得出答案
+- **精確評分**：每次學生回答後，給出0-100分的具體評分，評估學生對題目的理解程度
+- **理解驗證**：當學生理解程度達到95分時，要求學生用自己的話重新解釋題目和答案
+
+**評分標準**：
+- **0-30分**：完全不理解或回答錯誤，需要從基礎概念開始解釋
+- **31-60分**：有基本概念但理解不深，需要進一步引導和解釋
+- **61-80分**：理解較好，能回答相關問題，可以進入應用層面
+- **81-90分**：理解很好，接近完全掌握，可以深入探討細節
+- **90-99分**：進入反向教導階段，學生用自己的話向AI解釋題目和答案，AI不斷修正錯誤直到99分
+- **99分**：可以進入下一題
+
+**教學流程**：
+1. **核心概念確認階段**：評估學生對題目核心概念的掌握程度
+2. **相關概念引導階段**：圍繞核心概念，逐步引導學生理解相關知識點
+3. **應用理解階段**：讓學生將理解應用到題目情境中
+4. **反向教導階段**：當理解程度達到90分時，學生用自己的話向AI解釋題目和答案，AI不斷修正學生錯誤以及知識盲點
+5. **完成階段**：達到99分時，學生完全掌握，可以進入下一題
 
 **回應要求**：
-- 語氣親切自然，如同真正的老師。
-- 回答後，必須提出一個清晰的引導問題，推進學生對當前概念的理解。
-- 嚴禁使用任何格式化標題（如 "💡 詳細回答"），直接以自然段落呈現內容。
-- 禁止暴露你的思考過程。
+- 語氣親切自然，如同真正的老師
+- 每次回答後，必須給出0-100分的具體評分，格式為「評分：[分數]分」
+- 根據評分給出相應的引導問題或進入下一階段
+- 當評分達到90分時，進入反向教導階段，要求學生用自己的話向AI解釋題目和答案
+- 在反向教導階段，AI要不斷修正學生說錯或理解錯的地方，直到達到99分
+- 嚴禁使用任何格式化標題，直接以自然段落呈現內容
+
+**學習評估標準**：
+- 學生能用自己的話解釋題目核心概念
+- 學生能用自己的話解釋答案的邏輯
+- 學生能舉出相關的例子或應用
+- 學生表現出對題目和答案的深度理解
 
 現在，讓我們開始一場有深度的學習對話。
 """
+
+# ==================== 核心功能 ====================
+
+def handle_tutoring_conversation(user_email: str, question: str, user_answer: str, correct_answer: str, user_input: str = None) -> dict:
+    """
+    處理AI教學對話 - 重構版本
+    整合了會話管理、知識檢索、AI回應和學習進度更新
+    """
+    try:
+        # 1. 獲取或創建會話
+        session = get_or_create_session(user_email, question)
+        conversation_history = session.get('conversation_history', [])
+        
+        # 2. 判斷是否為初始化（基於更新前的對話歷史）
+        original_history_length = len(conversation_history)
+        is_initial = original_history_length == 0
+        print(f"🔍 初始化判斷：原始對話歷史長度={original_history_length}, is_initial={is_initial}")
+        
+        # 3. 構建AI提示詞
+        if is_initial:
+            # 初始化：分析學生答案，提出引導問題
+            prompt = build_initial_prompt(question, user_answer, correct_answer)
+            print(f"🎯 初始化階段：構建引導問題提示詞")
+        else:
+            # 後續對話：基於學生回答進行教學
+            prompt = build_followup_prompt(question, user_answer, correct_answer, user_input, conversation_history)
+            print(f"💬 後續對話：構建教學提示詞")
+        
+        # 4. 增強提示詞（RAG功能）
+        enhanced_prompt = enhance_prompt_with_knowledge(prompt, question)
+        
+        # 5. 調用AI獲取回應
+        ai_response = call_gemini_api(enhanced_prompt)
+        
+        # 6. 清理AI回應（移除評分等內部信息）
+        clean_response = clean_ai_response(ai_response)
+        
+        # 7. 記錄對話歷史（先記錄，再更新學習進度）
+        if user_input:
+            conversation_history.append({"role": "user", "content": user_input})
+        conversation_history.append({"role": "assistant", "content": clean_response})
+        session['conversation_history'] = conversation_history
+        
+        print(f"🔍 對話歷史更新後長度：{len(conversation_history)}")
+        print(f"🔍 對話歷史角色：{[msg['role'] for msg in conversation_history]}")
+        
+        # 8. 更新學習進度（只在非初始化階段）
+        if not is_initial:
+            update_learning_progress(session, question, ai_response, conversation_history)
+        else:
+            print(f"🎯 初始化階段，跳過評分更新")
+        
+        # 9. 保存會話到全局字典（使用與 get_or_create_session 相同的邏輯）
+        clean_question = question.strip().replace('\n', ' ').replace('\r', ' ')
+        # 組合用戶email和題目hash，確保唯一性
+        session_key = f"{user_email}_question_{hash(clean_question)}"
+        
+        # 確保會話被正確保存
+        learning_sessions[session_key] = session
+        
+        # 保存到文件以確保持久化
+        save_sessions_to_file()
+        
+        print(f"💾 會話已保存：{session_key}")
+        print(f"🔍 當前會話狀態：理解程度={session.get('understanding_level', 0)}, 階段={session.get('learning_stage', 'core_concept_confirmation')}")
+        print(f"🔍 會話字典大小：{len(learning_sessions)}")
+        
+        # 9. 返回結果
+        return {
+            'response': clean_response,
+            'learning_stage': session.get('learning_stage', 'core_concept_confirmation'),
+            'understanding_level': session.get('understanding_level', 0),
+            'concept_progress': session.get('concept_progress', [])
+        }
+        
+    except Exception as e:
+        logger.error(f"❌ 教學對話處理失敗: {e}")
+        return {
+            'response': '抱歉，系統出現問題，請稍後再試。',
+            'learning_stage': 'core_concept_confirmation',
+            'understanding_level': 0,
+            'concept_progress': []
+        }
+
+def update_learning_progress(session: dict, question: str, ai_response: str, conversation_history: list):
+    """
+    更新學習進度 - 整合版本
+    包含評分提取、智能評分計算和學習階段更新
+    """
+    try:
+        # 1. 提取AI評分
+        score = extract_score_from_response(ai_response)
+        if score is None:
+            print(f"⚠️ 未提取到評分，跳過學習進度更新")
+            return
+        
+        # 2. 計算對話次數
+        # 對話歷史格式：user, assistant, user, assistant, ...
+        # 所以對話次數 = (總長度 - 1) // 2（減1是因為最後一條是AI回應）
+        conversation_count = (len(conversation_history) - 1) // 2
+        print(f"🔍 當前對話次數：{conversation_count}")
+        print(f"🔍 對話歷史：{[msg['role'] for msg in conversation_history]}")
+        print(f"🔍 對話歷史長度：{len(conversation_history)}")
+        
+        # 3. 智能評分計算
+        old_level = session.get('understanding_level', 0)
+        smart_score = calculate_smart_score(old_level, score, conversation_count)
+        session['understanding_level'] = smart_score
+        
+        print(f"🎯 評分更新：{old_level} → {smart_score}")
+        
+        # 4. 更新學習階段
+        old_stage = session.get('learning_stage', 'core_concept_confirmation')
+        new_stage = determine_learning_stage(smart_score)
+        session['learning_stage'] = new_stage
+        
+        if old_stage != new_stage:
+            print(f"🔄 學習階段更新：{old_stage} → {new_stage}")
+        
+        # 5. 記錄進度
+        record_progress(session, score, smart_score, new_stage)
+        
+        # 6. 保存更新後的會話
+        save_sessions_to_file()
+        print(f"💾 學習進度更新後會話已保存")
+        
+    except Exception as e:
+        logger.error(f"❌ 學習進度更新失敗: {e}")
+
+def calculate_smart_score(current_score: int, ai_score: int, conversation_count: int = 0) -> int:
+    """
+    智能評分計算 - 實現新的評分邏輯
+    """
+    try:
+        print(f"🔍 智能評分：當前={current_score}，AI評分={ai_score}，對話次數={conversation_count}")
+        
+        # 初始化階段：不給分數
+        if conversation_count == 0:
+            print(f"🎯 初始化階段，不給分數")
+            return 0
+        
+        # 第一個問題：給予基礎評分 0-95
+        elif conversation_count == 1:
+            base_score = min(95, max(0, ai_score))
+            print(f"✅ 第一個問題，基礎評分：{base_score}")
+            return base_score
+        
+        # 後續問題：基於當前分數給予加分
+        else:
+            if ai_score > current_score:
+                bonus = min(10, ai_score - current_score)
+                new_score = min(95, current_score + bonus)
+                print(f"✅ 後續問題，加分：{current_score} + {bonus} = {new_score}")
+                return new_score
+            else:
+                penalty = min(2, current_score - ai_score)
+                new_score = max(0, current_score - penalty)
+                print(f"⚠️ 後續問題，扣分：{current_score} - {penalty} = {new_score}")
+                return new_score
+            
+    except Exception as e:
+        logger.error(f"❌ 智能評分計算失敗: {e}")
+        return current_score
+
+# ==================== RAG 功能 ====================
+
+def should_search_database(question: str) -> bool:
+    """
+    智能判斷是否需要查詢向量資料庫
+    過濾掉非學術問題，只對MIS相關的技術概念進行知識檢索
+    """
+    try:
+        # 使用簡單的關鍵字判斷，避免調用AI進行判斷
+        mis_keywords = [
+            '網路', '拓樸', '資料庫', '演算法', '程式設計', '作業系統',
+            '記憶體', 'CPU', '硬碟', '軟體', '硬體', '系統分析',
+            '資訊管理', '電腦科學', '資料結構', '網路安全', '雲端計算',
+            '大數據', '人工智慧', '機器學習', '資料庫管理', '網路管理',
+            '系統設計', '軟體工程', '專案管理', '企業資源規劃', '客戶關係管理'
+        ]
+        
+        # 檢查問題是否包含MIS相關關鍵字
+        question_lower = question.lower()
+        has_mis_content = any(keyword in question_lower for keyword in mis_keywords)
+        
+        # 過濾掉明顯的非學術問題
+        non_academic_patterns = [
+            '你好', '早安', '晚安', '謝謝', '不客氣', '你是誰', '自我介紹',
+            '天氣', '心情', '閒聊', '1+1', '簡單計算'
+        ]
+        
+        is_non_academic = any(pattern in question_lower for pattern in non_academic_patterns)
+        
+        should_search = has_mis_content and not is_non_academic
+        
+        print(f"🔍 RAG判斷：問題='{question[:50]}...'，包含MIS內容={has_mis_content}，非學術={is_non_academic}，需要檢索={should_search}")
+        
+        return should_search
+        
+    except Exception as e:
+        logger.error(f"❌ RAG判斷失敗: {e}")
+        return False  # 預設不檢索
+
+def enhance_prompt_with_knowledge(prompt: str, question: str) -> str:
+    """
+    使用RAG增強提示詞 - 真正的RAG功能
+    """
+    try:
+        # 1. 判斷是否需要檢索知識
+        if not should_search_database(question):
+            print(f"ℹ️ 問題不需要RAG檢索，使用原始提示詞")
+            return prompt
+        
+        # 2. 初始化向量資料庫
+        client, collection = init_vector_database()
+        if not collection:
+            print(f"⚠️ 向量資料庫不可用，使用原始提示詞")
+            return prompt
+        
+        # 3. 檢索相關知識
+        knowledge_results = search_knowledge(question, top_k=3)
+        
+        if knowledge_results:
+            # 4. 構建知識增強部分
+            knowledge_context = "\n\n**相關知識參考：**\n"
+            for i, result in enumerate(knowledge_results, 1):
+                knowledge_context += f"{i}. {result['content'][:200]}...\n"
+            
+            # 5. 增強提示詞
+            enhanced_prompt = prompt + knowledge_context
+            print(f"🔍 RAG增強：添加了 {len(knowledge_results)} 條相關知識")
+            return enhanced_prompt
+        else:
+            print(f"ℹ️ 未找到相關知識，使用原始提示詞")
+            return prompt
+            
+    except Exception as e:
+        logger.error(f"❌ RAG增強失敗: {e}")
+        return prompt
+
+def search_knowledge(query: str, top_k: int = 5) -> List[Dict[str, Any]]:
+    """
+    從向量資料庫檢索知識 - 真正的RAG檢索
+    自動將中文問題翻譯成英文進行檢索
+    """
+    try:
+        client, collection = init_vector_database()
+        if not collection:
+            return []
+        
+        # 1. 先將中文問題翻譯成英文（因為向量資料庫是英文教材）
+        english_query = translate_to_english(query)
+        print(f"🔍 問題翻譯：'{query[:50]}...' → '{english_query[:50]}...'")
+        
+        # 2. 執行相似性搜索
+        results = collection.query(
+            query_texts=[english_query],
+            n_results=top_k
+        )
+        
+        # 3. 格式化結果
+        knowledge_items = []
+        if results['documents'] and results['documents'][0]:
+            for i, doc in enumerate(results['documents'][0]):
+                knowledge_items.append({
+                    'content': doc,
+                    'metadata': results['metadatas'][0][i] if results['metadatas'] and results['metadatas'][0] else {},
+                    'distance': results['distances'][0][i] if results['distances'] and results['distances'][0] else 0
+                })
+        
+        print(f"🔍 知識檢索：找到 {len(knowledge_items)} 條相關內容")
+        return knowledge_items
+        
+    except Exception as e:
+        logger.error(f"❌ 知識檢索失敗: {e}")
+        return []
+
+def translate_to_english(text: str) -> str:
+    # 使用Gemini進行翻譯
+    model = init_gemini()
+    prompt = f"""請將以下中文問題翻譯成英文，保持專業術語的準確性：
+
+中文問題：{text}
+
+請只返回英文翻譯，不要添加任何解釋或額外文字。"""
+    
+    response = model.generate_content(prompt)
+    if response and hasattr(response, 'text') and response.text:
+        english_text = response.text.strip()
+        return english_text
+
+
+# ==================== 輔助功能 ====================
+
+def get_or_create_session(user_email: str, question: str) -> dict:
+    """獲取或創建學習會話"""
+    # 使用用戶email + 題目內容的組合，確保每個用戶的每道題目都有獨立會話
+    clean_question = question.strip().replace('\n', ' ').replace('\r', ' ')
+    # 組合用戶email和題目hash，確保唯一性
+    session_key = f"{user_email}_question_{hash(clean_question)}"
+    
+    print(f"🔍 會話查找：user_email={user_email}, question_hash={hash(clean_question)}, session_key={session_key}")
+    print(f"🔍 現有會話數量：{len(learning_sessions)}")
+    
+    # 顯示當前用戶的所有會話
+    user_sessions = [key for key in learning_sessions.keys() if key.startswith(f"{user_email}_")]
+    print(f"🔍 當前用戶會話數量：{len(user_sessions)}")
+    print(f"🔍 當前用戶會話鍵：{user_sessions}")
+    
+    # 顯示會話統計信息
+    if learning_sessions:
+        # 統計不同用戶的會話數量
+        user_counts = {}
+        for key in learning_sessions.keys():
+            if '_question_' in key:
+                user_part = key.split('_question_')[0]
+                user_counts[user_part] = user_counts.get(user_part, 0) + 1
+        
+        print(f"🔍 用戶會話統計：{user_counts}")
+    
+    # 顯示所有會話鍵（用於調試）
+    all_keys = list(learning_sessions.keys())
+    if all_keys:
+        print(f"🔍 所有會話鍵：{all_keys[:5]}...")  # 只顯示前5個
+    else:
+        print(f"🔍 所有會話鍵：[]")
+    
+    # 檢查是否已存在會話
+    if session_key in learning_sessions:
+        existing_session = learning_sessions[session_key]
+        print(f"🔄 使用現有會話：{session_key}")
+        print(f"🔍 現有會話狀態：理解程度={existing_session.get('understanding_level', 0)}, 階段={existing_session.get('learning_stage', 'core_concept_confirmation')}, 對話數={len(existing_session.get('conversation_history', []))}")
+        return existing_session
+    
+    # 如果沒有找到會話，創建新會話
+    learning_sessions[session_key] = {
+        'user_email': user_email,
+        'question': question,
+        'conversation_history': [],
+        'understanding_level': 0,
+        'learning_stage': 'core_concept_confirmation',
+        'concept_progress': [],
+        'created_at': datetime.now().isoformat()
+    }
+    
+    # 立即保存到文件
+    save_sessions_to_file()
+    
+    print(f"🆕 創建新會話：{session_key}")
+    print(f"🔍 會話字典大小：{len(learning_sessions)}")
+    
+    return learning_sessions[session_key]
+
+def build_initial_prompt(question: str, user_answer: str, correct_answer: str) -> str:
+    """構建初始化提示詞"""
+    return f"""{TEACHER_STYLE}
+
+**題目：** {question}
+**學生答案：** {user_answer}
+**正確答案：** {correct_answer}
+
+請分析學生的答案，找出需要改進的地方，並提出一個具體的引導問題來開始教學。
+
+**重要：** 初始化階段不給分數，只提出引導問題。
+
+**回應要求：**
+- 語氣親切自然，如同真正的老師
+- 分析學生答案的優缺點
+- 提出具體的引導問題
+- 不要給出評分（初始化階段）
+- 絕對不要包含「評分：」字樣
+
+請現在生成開場白："""
+
+def build_followup_prompt(question: str, user_answer: str, correct_answer: str, user_input: str, conversation_history: list) -> str:
+    """構建後續對話提示詞"""
+    # 獲取當前學習階段指導
+    current_stage = 'core_concept_confirmation'  # 預設值
+    
+    # 從對話歷史中推斷當前階段，而不是重新查找會話
+    if conversation_history:
+        # 根據對話長度判斷階段
+        if len(conversation_history) >= 6:  # 3輪對話
+            current_stage = 'related_concept_guidance'
+        elif len(conversation_history) >= 4:  # 2輪對話
+            current_stage = 'core_concept_confirmation'
+        else:
+            current_stage = 'core_concept_confirmation'
+    
+    stage_guidance = get_stage_guidance(current_stage)
+    
+    return f"""{TEACHER_STYLE}
+
+**題目：** {question}
+**正確答案：** {correct_answer}
+**學生最新回答：** {user_input}
+
+**對話歷史：**
+{format_conversation_history(conversation_history)}
+
+**當前學習階段指導：**
+{stage_guidance}
+
+請基於學生的回答進行教學指導，並給出評分。
+
+**評分邏輯：**
+1. 第一個問題：根據學生回答質量，給予0-95分的基礎評分
+2. 後續問題：基於當前分數，給予適當加分（1-10分）
+3. 達到95分時：進入反向教導階段
+4. 反向教導完成：直接給出100分
+
+**重要提醒：**
+- 你必須在回應的最後給出評分，格式為「評分：[分數]分」
+- 評分範圍：0-100分
+- 根據學生回答的質量給予適當分數
+- 這是強制要求，必須遵守！
+- 如果沒有評分，系統將無法正常工作！
+
+**評分格式示例：**
+同學，你的回答很好！讓我們繼續深入探討...
+
+評分：85分
+
+**再次強調：**
+- 回應的最後必須包含「評分：[分數]分」
+- 這是系統運作的必要條件
+- 請嚴格遵守評分格式要求！
+
+請現在分析學生的回答並提供教學指導："""
+
+def format_conversation_history(conversation_history: list) -> str:
+    """格式化對話歷史"""
+    if not conversation_history:
+        return "無"
+    
+    formatted = ""
+    for i, msg in enumerate(conversation_history[-4:], 1):  # 只顯示最近4條
+        role = "學生" if msg['role'] == 'user' else "AI導師"
+        formatted += f"{i}. {role}: {msg['content'][:100]}...\n"
+    
+    return formatted
+
+def determine_learning_stage(understanding_level: int) -> str:
+    """根據理解程度確定學習階段"""
+    if understanding_level >= 95:
+        return 'understanding_verification'      # 反向教導
+    elif understanding_level >= 80:
+        return 'application_understanding'       # 應用理解
+    elif understanding_level >= 60:
+        return 'application_understanding'       # 應用理解
+    elif understanding_level >= 30:
+        return 'related_concept_guidance'        # 相關概念引導
+    else:
+        return 'core_concept_confirmation'       # 核心概念確認
+
+def get_stage_guidance(stage: str) -> str:
+    """根據學習階段提供指導"""
+    stage_guidance = {
+        'core_concept_confirmation': f"""
+您目前處於核心概念確認階段。請：
+- 從這道題目最核心的概念開始提問
+- 評估學生對題目核心概念的掌握程度
+- 如果學生對核心概念不清楚，請先解釋核心概念
+- 避免跳脫到不相關的基礎概念，絕對必須保持與題目的相關性
+""",
+        'related_concept_guidance': f"""
+您目前處於相關概念引導階段。請：
+- 圍繞題目核心概念，逐步引導學生理解相關知識點
+- 確保每個問題都與題目核心概念相關
+- 你可以使用具體例子幫助學生理解抽象概念
+- 觀察學生的回答與反饋，適時調整問題難度
+""",
+        'application_understanding': f"""
+您目前處於應用理解階段。請：
+- 讓學生將理解應用到題目情境中
+- 提供與題目相關的練習問題或案例
+- 觀察學生是否能正確應用概念到題目
+- 如果學生應用正確，可以進入理解驗證階段
+""",
+        'understanding_verification': f"""
+您目前處於理解驗證階段。請：
+- 要求學生用自己的話重新解釋題目和答案
+- 評估學生是否真正理解了題目和答案的邏輯
+- 如果學生解釋清楚，可以進入下一題或下一階段
+- 如果學生解釋不清楚，你直接給出正確答案，幫助學生更加理解題目跟答案
+"""
+    }
+    
+    return stage_guidance.get(stage, stage_guidance['core_concept_confirmation'])
+
+def get_stage_display_name(stage: str) -> str:
+    """獲取學習階段的中文顯示名稱"""
+    stage_names = {
+        'core_concept_confirmation': '核心概念確認',
+        'related_concept_guidance': '相關概念引導',
+        'application_understanding': '應用理解',
+        'understanding_verification': '理解驗證',
+        'unknown': '未知階段'
+    }
+    return stage_names.get(stage, stage)
+
+def record_progress(session: dict, score: int, smart_score: int, stage: str):
+    """記錄學習進度"""
+    if 'concept_progress' not in session:
+        session['concept_progress'] = []
+    
+    session['concept_progress'].append({
+        'stage': stage,
+        'understanding_level': smart_score,
+        'score': score,
+        'timestamp': datetime.now().isoformat()
+    })
+
+def extract_score_from_response(ai_response: str) -> int:
+    """從AI回應中提取評分"""
+    try:
+        print(f"🔍 正在提取評分，AI回應長度: {len(ai_response)}")
+        print(f"🔍 AI回應內容: {ai_response}")
+        
+        # 尋找評分格式：評分：[分數]分
+        score_patterns = [
+            r'評分[：:]\s*(\d+)分',
+            r'評分[：:]\s*(\d+)',
+            r'分數[：:]\s*(\d+)分',
+            r'分數[：:]\s*(\d+)',
+            r'(\d+)分',
+            r'評分[：:]\s*(\d+)',
+            r'理解程度[：:]\s*(\d+)',
+            r'評分[：:]\s*(\d+)\s*分',
+            r'評分[：:]\s*(\d+)\s*',
+            r'(\d+)\s*分',
+            r'評分[：:]\s*(\d+)',
+            r'分數[：:]\s*(\d+)'
+        ]
+        
+        for i, pattern in enumerate(score_patterns):
+            match = re.search(pattern, ai_response)
+            if match:
+                score = int(match.group(1))
+                print(f"✅ 找到評分：{score}分 (模式 {i+1})")
+                if 0 <= score <= 100:
+                    return score
+                else:
+                    print(f"⚠️ 評分超出範圍：{score}")
+        
+        print(f"❌ 未找到任何評分格式")
+        numbers = re.findall(r'\d+', ai_response)
+        print(f"🔍 嘗試搜索數字: {numbers}")
+        
+        # 如果沒有找到評分，嘗試從最後幾行中尋找
+        lines = ai_response.strip().split('\n')
+        last_lines = lines[-3:] if len(lines) >= 3 else lines
+        print(f"🔍 檢查最後幾行：{last_lines}")
+        
+        for line in reversed(last_lines):
+            if '評分' in line or '分數' in line:
+                print(f"🔍 在最後幾行中找到評分相關內容：{line}")
+                # 嘗試提取數字
+                numbers_in_line = re.findall(r'\d+', line)
+                if numbers_in_line:
+                    score = int(numbers_in_line[0])
+                    if 0 <= score <= 100:
+                        print(f"✅ 從最後幾行提取到評分：{score}分")
+                        return score
+        
+        return None
+        
+    except Exception as e:
+        logger.error(f"❌ 評分提取失敗: {e}")
+        return None
+
+def clean_ai_response(ai_response: str) -> str:
+    """清理AI回應，移除評分等內部信息"""
+    try:
+        # 移除評分格式
+        cleaned = re.sub(r'評分[：:]\s*\d+分', '', ai_response)
+        # 清理多餘空行
+        cleaned = re.sub(r'\n\s*\n', '\n\n', cleaned)
+        cleaned = cleaned.strip()
+        
+        if not cleaned:
+            return "同學，我已經分析了您的回答。讓我們繼續學習吧！"
+        
+        return cleaned
+        
+    except Exception as e:
+        logger.error(f"❌ 回應清理失敗: {e}")
+        return ai_response
 
 # ==================== 初始化函數 ====================
 
 def init_vector_database():
     """初始化向量資料庫"""
     try:
-        import chromadb
-        from chromadb.config import Settings
+        import os
         
+        # 獲取當前文件的絕對路徑
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+        # 構建向量資料庫的絕對路徑
+        db_path = os.path.join(current_dir, "data", "knowledge_db", "chroma_db")
+        
+        print(f"🔍 向量資料庫路徑: {db_path}")
         
         chroma_client = chromadb.PersistentClient(
-            path="./src/rag_sys/data/knowledge_db/chroma_db",
+            path=db_path,
             settings=Settings(anonymized_telemetry=False)
         )
-
         
         # 獲取或創建集合
         collection = chroma_client.get_or_create_collection(
-            name="mis_knowledge",
+            name="textbook_knowledge",  # 使用有數據的集合
             metadata={"hnsw:space": "cosine"}
         )
         
+        print(f"✅ 向量資料庫初始化成功")
         return chroma_client, collection
         
     except Exception as e:
@@ -64,401 +788,29 @@ def init_vector_database():
 
 def init_gemini():
     """初始化Gemini模型"""
-    if not GEMINI_AVAILABLE:
-        raise ImportError("Gemini不可用，請安裝google-generativeai")
-
     try:
         api_key = get_api_key()
         genai.configure(api_key=api_key)
         
-        # 創建模型
-        model = genai.GenerativeModel('gemini-2.5-flash')
-        
+        # 創建模型實例
+        model = genai.GenerativeModel('gemini-1.5-flash')
+        print(f"✅ Gemini模型初始化成功")
         return model
         
     except Exception as e:
-        print(f"❌ Gemini初始化失敗: {e}")
-        raise
+        logger.error(f"❌ Gemini初始化失敗: {e}")
+        return None
 
-# ==================== 智能判斷函數 ====================
-
-def should_search_database(question: str) -> bool:
-    """智能判斷是否需要查詢向量資料庫"""
-    model = init_gemini()
-    prompt = f"""
-你是一個智能助理，需要判斷學生的問題是否需要查詢MIS（資訊管理系）的學術資料庫。
-
-問題：「{question}」
-
-請仔細分析這個問題，然後根據以下標準判斷：
-
-**需要查詢資料庫的情況**（學術問題）：
-- 詢問MIS相關的技術概念：作業系統、資料庫、網路、演算法、程式設計
-- 詢問具體技術術語：FIFO、LIFO、死鎖、排程、記憶體管理等
-- 詢問系統分析、資訊管理、電腦科學相關概念
-- 以「什麼是...」開頭的技術問題
-- 詢問技術原理、方法、應用的問題
-
-**不需要查詢資料庫的情況**（非學術問題）：
-- 問候語：你好、早安、晚安
-- 自我介紹相關：你是誰、自我介紹、你叫什麼名字
-- 感謝語：謝謝、不客氣
-- 日常對話：天氣、心情、閒聊
-- 基本數學：1+1、簡單計算
-- 一般常識：不涉及MIS專業知識的問題
-- 回答AI的提問
-
-請只回答「需要查詢」或「不需要查詢」，不要解釋。
-"""
-
-    response = model.generate_content(prompt)
-    if response and hasattr(response, 'text') and response.text:
-        result = response.text.strip()
-
-        # 修復字符串匹配邏輯 - 先檢查「不需要查詢」
-        should_search = False  # 預設不查詢
-
-        if "不需要查詢" in result:
-            should_search = False
-        elif "需要查詢" in result:
-            should_search = True
-        else:
-            should_search = False  # 預設不查詢
-        return should_search
-    else:
-        logging.warning("⚠️ AI無回應，使用備用判斷")
-        return False
-
-def get_topic_knowledge(question: str) -> str:
-    """智能獲取主題相關知識"""
+def call_gemini_api(prompt: str) -> str:
+    """調用Gemini API"""
     try:
-        # 智能判斷是否需要查詢向量資料庫
-        if not should_search_database(question):
-            return ""
-
-                # 先翻譯成英文搜索，因為向量資料庫是英文教材
-        english_question = translate_to_english(question)
-
-        # 使用向量資料庫搜索
-        search_results = search_knowledge(english_question, top_k=3)
-
-        if search_results:
-            # 提取前3個結果的內容
-            knowledge = "\n".join([
-                result.get('content', '')[:400]
-                for result in search_results[:4]
-            ])
-            return knowledge
-        return ""
+        model = init_gemini()
+        if not model:
+            return "抱歉，AI服務暫時不可用，請稍後再試。"
+        
+        response = model.generate_content(prompt)
+        return response.text
+        
     except Exception as e:
-        logging.warning(f"獲取主題知識失敗: {e}")
-    return ""
-def translate_to_english(text: str) -> str:
-    """翻譯成英文"""
-    try:
-        gemini_model = init_gemini()
-        prompt = f"Translate to English: {text}"
-        response = gemini_model.generate_content(prompt)
-        if response and hasattr(response, 'text') and response.text:
-            return response.text.strip()
-    except Exception as e:
-        logging.warning(f"翻譯失敗: {e}")
-    return text
-
-def search_knowledge(query: str, top_k: int = 5) -> List[Dict[str, Any]]:
-    """搜索相關知識點"""
-    try:
-        chroma_client, collection = init_vector_database()
-        if not collection:
-            logger.warning("⚠️ 向量資料庫未初始化")
-            return []
-
-        # 使用ChromaDB搜索
-        results = collection.query(
-            query_texts=[query],
-            n_results=top_k
-        )
-
-        # 格式化結果
-        formatted_results = []
-        if results['documents'] and results['documents'][0]:
-            for i, doc in enumerate(results['documents'][0]):
-                metadata = results['metadatas'][0][i] if results['metadatas'] and results['metadatas'][0] else {}
-                distance = results['distances'][0][i] if results['distances'] and results['distances'][0] else 0
-
-                formatted_results.append({
-                    'content': doc,
-                    'metadata': metadata,
-                    'similarity': 1 - distance,  # 轉換為相似度
-                    'title': metadata.get('title', '相關知識'),
-                    'source': metadata.get('source_file', '教學資料'),
-                    'chapter': metadata.get('chapter', '相關章節'),
-                    'keywords': metadata.get('keywords', [])
-                })
-        return formatted_results
-
-    except Exception as e:
-        logger.error(f"❌ 搜索知識點時發生錯誤: {e}")
-        return []
-
-
-# ==================== 核心功能函數 ====================
-
-def create_session_from_quiz_result(session_id: str, user_id: str) -> dict:
-    """從測驗結果創建學習會話"""
-    try:
-        # 從會話ID提取測驗結果ID
-        parts = session_id.split('_')
-        if len(parts) < 3:
-            raise ValueError("無效的會話ID格式")
-        
-        # 新格式: learning_{timestamp}_{result_35}
-        # 需要提取 result_35 格式
-        if len(parts) >= 4 and parts[-2] == 'result':
-            result_id = f"{parts[-2]}_{parts[-1]}"
-        else:
-            result_id = parts[-1]
-        
-
-        
-        # 直接查詢資料庫獲取測驗結果
-        from accessories import sqldb, mongo
-        from sqlalchemy import text
-        import json
-        
-        with sqldb.engine.connect() as conn:
-            # 解析 result_id 格式：result_<quiz_history_id>
-            if not result_id.startswith('result_'):
-                raise ValueError("無效的測驗結果ID格式")
-            
-            try:
-                quiz_history_id = int(result_id.split('_')[1])
-            except (ValueError, IndexError) as e:
-                raise ValueError("無法解析測驗歷史ID")
-            
-            # 查詢測驗結果
-            history_result = conn.execute(text("""
-                SELECT qh.id, qh.quiz_template_id, qh.user_email, qh.quiz_type, 
-                       qh.total_questions, qh.answered_questions, qh.correct_count, qh.wrong_count,
-                       qh.accuracy_rate, qh.average_score, qh.total_time_taken, 
-                       qh.submit_time, qh.status, qh.created_at,
-                       qt.question_ids
-                FROM quiz_history qh
-                LEFT JOIN quiz_templates qt ON qh.quiz_template_id = qt.id
-                WHERE qh.id = :quiz_history_id
-            """), {
-                'quiz_history_id': quiz_history_id
-            }).fetchone()
-            
-            if not history_result:
-                raise ValueError(f"未找到測驗歷史記錄，quiz_history_id: {quiz_history_id}")
-            
-            # 獲取錯題詳情
-            error_result = conn.execute(text("""
-                SELECT mongodb_question_id, user_answer, score, time_taken, created_at
-                FROM quiz_errors 
-                WHERE quiz_history_id = :quiz_history_id
-                ORDER BY created_at
-            """), {
-                'quiz_history_id': quiz_history_id
-            }).fetchall()
-            
-            # 構建錯題字典
-            error_dict = {}
-            for error in error_result:
-                question_id = error[0]
-                user_answer = error[1]
-                error_dict[question_id] = {
-                    'user_answer': user_answer,
-                    'score': error[2],
-                    'time_taken': error[3]
-                }
-            
-            # 解析題目ID列表
-            question_ids_str = history_result[14]
-            print(f"🔍 原始題目ID字串: {question_ids_str}")
-            
-            if question_ids_str:
-                try:
-                    question_ids = json.loads(question_ids_str)
-                    print(f"🔍 解析後的題目ID: {question_ids}")
-                except json.JSONDecodeError as e:
-                    print(f"❌ JSON解析失敗: {e}")
-                    question_ids = []
-            else:
-                print("❌ 題目ID字串為空")
-                question_ids = []
-            
-            print(f"🔍 最終題目ID數量: {len(question_ids)}")
-            
-            # 構建題目陣列
-            questions = []
-            for i, question_id in enumerate(question_ids):
-                try:
-                    print(f"🔍 處理題目 {i+1}: {question_id}")
-                    # 將字串轉換為 ObjectId
-                    from bson import ObjectId
-                    question_obj = mongo.db.exam.find_one({'_id': ObjectId(question_id)})
-                    
-                    if question_obj:
-                        # 檢查是否為錯題
-                        is_correct = question_id not in error_dict
-                        user_answer = error_dict.get(question_id, {}).get('user_answer', '')
-                        
-                        # 解析用戶答案JSON
-                        try:
-                            if user_answer and user_answer.startswith('{'):
-                                answer_data = json.loads(user_answer)
-                                actual_user_answer = answer_data.get('answer', user_answer)
-                            else:
-                                actual_user_answer = user_answer
-                        except json.JSONDecodeError:
-                            actual_user_answer = user_answer
-                        
-                        # 調試：檢查 MongoDB 欄位
-                        print(f"🔍 MongoDB 題目欄位: {list(question_obj.keys())}")
-                        print(f"🔍 題目內容: {question_obj.get('question_text', 'N/A')}")
-                        print(f"🔍 備用欄位: {question_obj.get('question', 'N/A')}")
-                        
-                        question_data = {
-                            'question_id': str(question_obj['_id']),
-                            'question_text': question_obj.get('question_text', question_obj.get('question', '')),
-                            'correct_answer': question_obj.get('answer', ''),
-                            'user_answer': actual_user_answer or '未作答',
-                            'is_correct': is_correct,
-                            'topic': question_obj.get('topic', '計算機概論'),
-                            'difficulty': question_obj.get('difficulty', 2)
-                        }
-                        
-                        questions.append(question_data)
-                        
-                except Exception as e:
-                    print(f"❌ 處理題目 {i+1} 時發生錯誤: {e}")
-                    continue
-            
-            # 創建學習會話
-            session_data = {
-                'session_id': session_id,
-                'user_id': user_id,
-                'quiz_result_id': result_id,
-                'questions': questions,
-                'current_question_index': 0,
-                'conversation_history': [],
-                'created_at': datetime.now().isoformat(),
-                'status': 'active'
-            }
-            
-            learning_sessions[session_id] = session_data
-            return session_data
-            
-    except Exception as e:
-        raise
-
-def handle_tutoring_conversation(session_id: str, question: str, user_id: str, mode: str = "general") -> str:
-    """處理AI教學對話"""
-    try:
-        # 檢查會話是否存在
-        if session_id not in learning_sessions:
-            # 嘗試創建新會話
-            try:
-                create_session_from_quiz_result(session_id, user_id)
-            except Exception as e:
-                return f"學習會話不存在，請重新開始。錯誤: {str(e)}"
-        
-        session = learning_sessions[session_id]
-        conversation_history = session.get('conversation_history', [])
-        
-        # 調試：檢查會話資料
-        print(f"🔍 會話資料: {session}")
-        print(f"🔍 題目數量: {len(session.get('questions', []))}")
-        print(f"🔍 對話歷史長度: {len(conversation_history)}")
-        print(f"🔍 用戶輸入: '{question}'")
-        
-        # 如果是第一次對話或用戶輸入為空，生成歡迎訊息
-        if len(conversation_history) == 0:
-            questions = session.get('questions', [])
-            if questions:
-                current_question = questions[0]
-                print(f"🔍 當前題目: {current_question}")
-                
-                welcome_message = f"""🎓 歡迎來到 AI 智能教學！
-
-我們將一起學習您的錯題。讓我們從第一道題開始：
-
-**題目：** {current_question['question_text']}
-
-我看到您的答案是「{current_question['user_answer']}」，正確答案是「{current_question['correct_answer']}」。
-
-讓我們一起探討這個概念。您有什麼問題想問我嗎？"""
-                
-                session['conversation_history'].append({
-                    'question': '系統歡迎訊息', 
-                    'response': welcome_message, 
-                    'timestamp': datetime.now().isoformat()
-                })
-                return welcome_message
-        
-        # 智能判斷是否需要查詢資料庫
-        topic_knowledge = ""
-        if should_search_database(question):
-            topic_knowledge = get_topic_knowledge(question)
-        
-        # 初始化Gemini
-        try:
-            model = init_gemini()
-        except Exception as e:
-            return f"AI服務暫時不可用，請稍後再試。錯誤: {str(e)}"
-        
-        # 構建教學提示詞
-        questions = session.get('questions', [])
-        current_question = questions[session.get('current_question_index', 0)] if questions else None
-        
-        if current_question:
-            # 如果有相關知識，加入提示詞
-            knowledge_context = f"\n**相關知識背景：**\n{topic_knowledge}" if topic_knowledge else ""
-            
-            teaching_prompt = f"""
-{TEACHER_STYLE}
-
-**當前學習題目：**
-題目：{current_question['question_text']}
-用戶答案：{current_question['user_answer']}
-正確答案：{current_question['correct_answer']}
-主題：{current_question['topic']}
-難度：{current_question['difficulty']}{knowledge_context}
-
-**對話歷史：**
-{chr(10).join([f"用戶: {conv['question']} - AI: {conv['response']}" for conv in conversation_history[-3:]])}
-
-**用戶當前問題：** {question}
-
-請根據以上信息，提供有針對性的教學指導。
-"""
-        else:
-            teaching_prompt = f"""
-{TEACHER_STYLE}
-
-**用戶問題：** {question}
-
-請提供有幫助的回答。
-"""
-        
-        # 生成回應
-        try:
-            response = model.generate_content(teaching_prompt)
-            ai_response = response.text
-            
-            # 更新會話歷史
-            session['conversation_history'].append({
-                'question': question,
-                'response': ai_response,
-                'timestamp': datetime.now().isoformat()
-            })
-            
-            return ai_response
-            
-        except Exception as e:
-            pass
-    except Exception as e:
-        return f"處理您的問題時發生錯誤，請稍後再試。錯誤: {str(e)}"
-
+        logger.error(f"❌ Gemini API調用失敗: {e}")
+        return "抱歉，AI回應生成失敗，請稍後再試。"

@@ -6,9 +6,9 @@ AI 教學系統 API 端點
 import logging
 import json
 from datetime import datetime
-from flask import Blueprint, request, jsonify, session
+from flask import Blueprint, request, jsonify
 from typing import Dict, Any, List, Optional
-import uuid
+
 from accessories import mongo
 from bson.objectid import ObjectId
 
@@ -28,11 +28,7 @@ ai_teacher_bp = Blueprint('ai_teacher', __name__)
 
 # ==================== 工具函數 ====================
 
-def get_user_id() -> str:
-        """獲取用戶 ID"""
-        if 'user_id' not in session:
-            session['user_id'] = f"user_{uuid.uuid4().hex[:8]}"
-        return session['user_id']
+
     
 def _extract_user_answer(user_answer_raw: str) -> str:
     """提取用戶答案的實際內容"""
@@ -78,7 +74,7 @@ def _extract_user_answer(user_answer_raw: str) -> str:
     return user_answer_raw
     
 def chat_with_ai(question: str, conversation_type: str = "general", session_id: str = None) -> dict:
-    """AI 對話處理"""
+    """AI 對話處理 - 簡化版本"""
     try:
         if not RAG_AVAILABLE:
             return {
@@ -89,7 +85,35 @@ def chat_with_ai(question: str, conversation_type: str = "general", session_id: 
 
         if conversation_type == "tutoring" and session_id:
             try:
-                response = handle_tutoring_conversation(session_id, question, get_user_id())
+                # 從請求中獲取必要數據
+                data = request.get_json()
+                correct_answer = data.get('correct_answer', '')
+                user_answer = data.get('user_answer', '')
+                
+                # 判斷是否為初始化請求
+                is_initialization = question.startswith('開始學習會話：')
+                if is_initialization:
+                    actual_question = question.replace('開始學習會話：', '').strip()
+                    user_input = None
+                    print(f"🔍 初始化請求：{actual_question[:50]}...")
+                else:
+                    if '用戶問題：' in question:
+                        parts = question.split('用戶問題：', 1)
+                        actual_question = parts[0].replace('題目：', '').strip()
+                        user_input = parts[1].strip()
+                    else:
+                        actual_question = data.get('question_text', '')
+                        user_input = question
+                    print(f"🔍 正常對話：user_input = {user_input[:50] if user_input else 'None'}...")
+                
+                # 直接調用 verify_token 獲取用戶 email
+                from .api import verify_token
+                token = request.headers.get('Authorization', '').replace('Bearer ', '')
+                user_email = verify_token(token) if token else "anonymous_user"
+                print(f"🔍 用戶email：{user_email}")
+                
+                response = handle_tutoring_conversation(user_email, actual_question, user_answer, correct_answer, user_input)
+                
                 return {
                     'success': True,
                     'response': response,
@@ -98,11 +122,11 @@ def chat_with_ai(question: str, conversation_type: str = "general", session_id: 
                 }
             except Exception as e:
                 logger.error(f"❌ 教學對話失敗: {e}")
-            return {
-                'success': False,
-                    'error': f'教學對話失敗：{str(e)}',
-                    'response': '抱歉，教學對話處理失敗，請重試。'
-            }
+                return {
+                    'success': False,
+                    'error': f'教學對話失敗: {str(e)}',
+                    'response': '抱歉，教學對話處理失敗，請稍後再試。'
+                }
         else:
             return {
                 'success': True,
@@ -312,47 +336,4 @@ def get_quiz_result(result_id):
             'error': f'獲取測驗結果失敗：{str(e)}'
         }), 500
 
-@ai_teacher_bp.route('/start-error-learning', methods=['POST', 'OPTIONS'])
-def start_error_learning():
-    """開始錯題學習"""
-    try:
-        if request.method == 'OPTIONS':
-            return jsonify({'success': True})
-        
-        data = request.get_json()
-        result_id = data.get('result_id', '')
-        
-        # 獲取測驗結果數據
-        result_data = get_quiz_result_data(result_id)
-        
-        if not result_data:
-            return jsonify({
-                'success': False,
-                'error': '未找到測驗結果'
-            }), 404
-        
-        # 檢查是否有錯題
-        wrong_questions = [q for q in result_data.get('questions', []) if not q['is_correct']]
-        
-        if not wrong_questions:
-            return jsonify({
-                'success': False,
-                'error': '沒有錯題需要學習'
-                }), 400
-        
-        # 創建學習會話
-        session_id = f"learning_{get_user_id()}_{datetime.now().strftime('%Y%m%dT%H%M%S')}_{result_id}"
-        
-        return jsonify({
-            'success': True,
-            'session_id': session_id,
-            'wrong_questions_count': len(wrong_questions),
-            'message': f'發現 {len(wrong_questions)} 道錯題，開始學習！'
-        })
-        
-    except Exception as e:
-        logger.error(f"❌ 開始錯題學習失敗: {e}")
-        return jsonify({
-            'success': False,
-            'error': f'開始錯題學習失敗：{str(e)}'
-        }), 500
+
