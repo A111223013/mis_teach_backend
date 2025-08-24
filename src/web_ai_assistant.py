@@ -449,6 +449,75 @@ def create_linebot_calendar_tool():
     
     return linebot_calendar_tool
 
+def _clean_json_string(json_str: str) -> str:
+    """清理JSON字符串，處理轉義字符問題"""
+    try:
+        import re
+        # 基本清理
+        cleaned = json_str.replace('\\n', '\n').replace('\\"', '"')
+        
+        # 處理其他轉義字符 - 修復正則表達式
+        try:
+            cleaned = re.sub(r'\\([^"\\/bfnrt])', r'\1', cleaned)
+        except re.error:
+            # 如果正則表達式失敗，使用簡單替換
+            cleaned = cleaned.replace('\\\\', '\\')
+        
+        # 處理多餘的反斜線
+        try:
+            cleaned = re.sub(r'\\{2,}', '\\', cleaned)
+        except re.error:
+            # 如果正則表達式失敗，使用簡單替換
+            while '\\\\' in cleaned:
+                cleaned = cleaned.replace('\\\\', '\\')
+        
+        # 處理不完整的轉義序列
+        try:
+            cleaned = re.sub(r'\\$', '', cleaned)
+        except re.error:
+            # 如果正則表達式失敗，使用簡單替換
+            if cleaned.endswith('\\'):
+                cleaned = cleaned[:-1]
+        
+        return cleaned
+    except Exception as e:
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.warning(f"JSON清理失敗: {e}")
+        return json_str
+
+def _fix_incomplete_json(json_str: str) -> str:
+    """嘗試修復不完整的JSON字符串"""
+    try:
+        # 基本清理
+        cleaned = json_str.strip()
+        
+        # 嘗試找到最後一個完整的對象
+        brace_count = 0
+        end_pos = -1
+        
+        for i, char in enumerate(cleaned):
+            if char == '{':
+                brace_count += 1
+            elif char == '}':
+                brace_count -= 1
+                if brace_count == 0:
+                    end_pos = i + 1
+                    break
+        
+        if end_pos > 0:
+            # 提取完整的JSON部分
+            complete_json = cleaned[:end_pos]
+            logger.info(f"修復JSON，提取完整部分: {complete_json[:100]}...")
+            return complete_json
+        else:
+            # 如果無法修復，返回原始字符串
+            return json_str
+            
+    except Exception as e:
+        logger.warning(f"JSON修復失敗: {e}")
+        return json_str
+
 # ==================== API路由 ====================
 
 @web_ai_bp.route('/chat', methods=['POST'])
