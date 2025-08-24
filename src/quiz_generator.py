@@ -9,6 +9,7 @@ from typing import Dict, List, Any, Optional
 from datetime import datetime
 import json
 import random
+import time
 
 # 設置日誌
 logging.basicConfig(level=logging.INFO)
@@ -552,3 +553,144 @@ def get_available_departments() -> List[str]:
         "資訊工程學系", "資訊管理學系", "資訊科學學系",
         "電機工程學系", "電子工程學系", "通訊工程學系"
     ]
+
+
+def _parse_quiz_requirements(text: str) -> dict:
+    """從文本中解析考卷需求"""
+    requirements = {
+        'topic': '計算機概論',
+        'question_types': ['single-choice', 'multiple-choice'],
+        'difficulty': 'medium',
+        'question_count': 20,
+        'exam_type': 'knowledge'
+    }
+    
+    text_lower = text.lower()
+    
+    # 檢測知識點
+    topics = ['計算機概論', '程式設計', '資料結構', '演算法', '作業系統', '資料庫', '網路', '軟體工程', '人工智慧', '機器學習']
+    for topic in topics:
+        if topic in text:
+            requirements['topic'] = topic
+            break
+    
+    # 檢測題型
+    if '單選' in text or '選擇' in text:
+        requirements['question_types'] = ['single-choice']
+    elif '多選' in text:
+        requirements['question_types'] = ['multiple-choice']
+    elif '填空' in text:
+        requirements['question_types'] = ['fill-in-the-blank']
+    elif '是非' in text or '判斷' in text:
+        requirements['question_types'] = ['true-false']
+    elif '簡答' in text:
+        requirements['question_types'] = ['short-answer']
+    elif '申論' in text:
+        requirements['question_types'] = ['long-answer']
+    
+    # 檢測難度
+    if '簡單' in text or 'easy' in text_lower:
+        requirements['difficulty'] = 'easy'
+    elif '困難' in text or 'hard' in text_lower:
+        requirements['difficulty'] = 'hard'
+    
+    # 檢測題目數量
+    import re
+    count_match = re.search(r'(\d+)題', text)
+    if count_match:
+        requirements['question_count'] = int(count_match.group(1))
+    
+    # 檢測考古題
+    schools = ['台大', '清大', '交大', '成大', '政大', '中央', '中興', '中山', '中正', '台科大']
+    for school in schools:
+        if school in text:
+            requirements['exam_type'] = 'pastexam'
+            requirements['school'] = school
+            break
+    
+    # 檢測年份
+    year_match = re.search(r'(\d{4})年', text)
+    if year_match:
+        requirements['year'] = year_match.group(1)
+    
+    return requirements
+
+def _is_quiz_generation_request(text: str) -> bool:
+    """檢查是否為考卷生成請求"""
+    quiz_keywords = [
+        '創建', '生成', '建立', '製作', '產生',
+        '考卷', '測驗', '題目', '考試', '練習',
+        '單選題', '多選題', '填空題', '是非題', '簡答題', '申論題'
+    ]
+    
+    text_lower = text.lower()
+    return any(keyword in text_lower for keyword in quiz_keywords)
+
+def create_quiz_generator_tool():
+    """創建考卷生成工具"""
+    from langchain_core.tools import tool
+    
+    @tool
+    def quiz_generator_tool(requirements: str) -> str:
+        """考卷生成工具，根據用戶需求自動創建考卷並保存到數據庫"""
+        try:
+            # 解析用戶需求
+            try:
+                # 嘗試解析JSON格式的需求
+                req_dict = json.loads(requirements)
+            except:
+                # 如果不是JSON，嘗試從文本中提取信息
+                req_dict = _parse_quiz_requirements(requirements)
+            
+            # 生成考卷並保存到數據庫
+            result = generate_and_save_quiz_by_ai(req_dict)
+            
+            if result['success']:
+                quiz_info = result['quiz_info']
+                questions = result['questions']
+                database_ids = result.get('database_ids', [])
+                
+                # 返回可跳轉的考卷數據
+                quiz_data = {
+                    'quiz_id': f"ai_generated_{int(time.time())}",
+                    'template_id': f"ai_template_{int(time.time())}",
+                    'questions': questions,
+                    'time_limit': quiz_info['time_limit'],
+                    'quiz_info': quiz_info,
+                    'database_ids': database_ids
+                }
+                
+                response = f"✅ 考卷生成成功！\n\n"
+                response += f"📝 考卷標題: {quiz_info['title']}\n"
+                response += f"📚 主題: {quiz_info['topic']}\n"
+                response += f"📊 難度: {quiz_info['difficulty']}\n"
+                response += f"🔢 題目數量: {quiz_info['question_count']}\n"
+                response += f"⏱️ 時間限制: {quiz_info['time_limit']}分鐘\n"
+                response += f"💯 總分: {quiz_info['total_score']}分\n\n"
+                
+                if database_ids:
+                    response += f"💾 已保存到數據庫，題目ID: {', '.join(database_ids[:3])}{'...' if len(database_ids) > 3 else ''}\n\n"
+                
+                response += "📋 題目預覽:\n"
+                for i, q in enumerate(questions[:3]):  # 只顯示前3題
+                    response += f"{i+1}. {q['question_text'][:100]}...\n"
+                
+                if len(questions) > 3:
+                    response += f"... 還有 {len(questions)-3} 題\n\n"
+                
+                response += "🚀 **點擊下方按鈕開始測驗！**\n\n"
+                response += "```json\n"
+                response += json.dumps(quiz_data, ensure_ascii=False, indent=2)
+                response += "\n```\n\n"
+                
+                response += "💡 提示：點擊「開始測驗」按鈕即可開始答題！"
+                
+                return response
+            else:
+                return f"❌ 考卷生成失敗: {result.get('error', '未知錯誤')}"
+                
+        except Exception as e:
+            logger.error(f"考卷生成工具執行失敗: {e}")
+            return f"❌ 考卷生成失敗，請稍後再試。錯誤: {str(e)}"
+    
+    return quiz_generator_tool

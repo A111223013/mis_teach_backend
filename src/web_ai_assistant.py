@@ -10,11 +10,30 @@ import json
 from typing import Dict, Any, List
 from datetime import datetime
 import time
+import sys
+import os
 
 # LangChain 導入
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain.agents import create_tool_calling_agent, AgentExecutor
+from src.memory_manager import add_user_message, add_ai_message
+
+# 本地模組導入
+sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
+from tool.api_keys import get_api_key
+
+# LINE Bot 工具導入
+from src.linebot import (
+    generate_quiz_question,
+    generate_knowledge_point,
+    grade_answer,
+    provide_tutoring,
+    learning_analysis_placeholder,
+    goal_setting_placeholder,
+    news_exam_info_placeholder,
+    calendar_placeholder
+)
 
 # 創建藍圖
 web_ai_bp = Blueprint('web-ai', __name__, url_prefix='/web-ai')
@@ -27,15 +46,8 @@ logger = logging.getLogger(__name__)
 
 # 延遲初始化的組件
 llm = None
-tools = []
-agent_executor = None
 
-# ==================== 配置讀取函數 ====================
-
-import sys
-import os
-sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
-from tool.api_keys import get_api_key
+# ==================== 初始化代理人相關函數 ====================
 
 def get_google_api_key():
     """獲取 Google API key"""
@@ -44,8 +56,6 @@ def get_google_api_key():
     except Exception as e:
         logger.error(f"❌ 獲取 API Key 失敗: {e}")
         return None
-
-# ==================== 初始化函數 ====================
 
 def init_llm():
     """初始化LLM模型"""
@@ -69,23 +79,200 @@ def init_llm():
         logging.error(f"❌ LLM初始化失敗: {e}")
         raise RuntimeError(f"LLM初始化失敗: {e}")
 
-def init_tools():
-    """初始化工具列表 - 只包含工具引用，不包含實現"""
-    global tools
+
+def create_platform_specific_agent(platform: str = "web"):
+    """根據平台創建對應的主代理人"""
+    global llm  # 移到函數開頭
+    
     try:
-        # 工具列表 - 實際實現在其他.py文件中
-        tools = [
+        # 根據平台獲取對應工具集
+        platform_tools = get_platform_specific_tools(platform)
+        
+        # 根據平台獲取對應的系統提示詞
+        platform_system_prompt = get_platform_specific_system_prompt(platform)
+        
+        # 獲取 LLM 模型
+        if llm is None:
+            llm = init_llm()
+        
+        # 創建平台特定的提示詞模板
+        prompt = ChatPromptTemplate.from_messages([
+            ("system", platform_system_prompt),
+            ("human", "{input}"),
+            MessagesPlaceholder("agent_scratchpad")
+        ])
+        
+        # 創建平台特定的主代理人
+        platform_agent = create_tool_calling_agent(llm, platform_tools, prompt)
+        
+        # 創建平台特定的執行器
+        platform_executor = AgentExecutor(
+            agent=platform_agent,
+            tools=platform_tools,
+            verbose=True,
+            handle_parsing_errors=True,
+            return_intermediate_steps=False,
+            max_iterations=3 if platform == "linebot" else 1  # LINE Bot 需要更多迭代
+        )
+        
+        logger.info(f"✅ {platform} 平台主代理人創建成功")
+        return platform_executor
+        
+    except Exception as e:
+        logger.error(f"❌ 創建 {platform} 平台主代理人失敗: {e}")
+        raise
+
+# ==================== 共通主要函數 ====================
+
+def get_platform_specific_tools(platform: str = "web"):
+    """根據平台獲取對應的工具集"""
+    if platform == "linebot":
+        # LINE Bot 專用工具 - 從 linebot.py 導入邏輯，在這裡包裝成 tool
+        return [
+            create_linebot_quiz_generator_tool(),
+            create_linebot_knowledge_tool(),
+            create_linebot_grade_tool(),
+            create_linebot_tutor_tool(),
+            create_linebot_learning_analysis_tool(),
+            create_linebot_goal_setting_tool(),
+            create_linebot_news_exam_tool(),
+            create_linebot_calendar_tool(),
+            create_memory_tool()
+        ]
+    else:
+        # 網站完整工具集
+        return [
             create_website_guide_tool(),
             create_learning_progress_tool(),
             create_ai_tutor_tool(),
             create_memory_tool(),
             create_quiz_generator_tool()
         ]
-        logger.info("✅ 工具列表初始化成功")
-        return tools
+
+def create_quiz_generator_tool():
+    """創建考卷生成工具引用 - 邏輯實現在 quiz_generator.py"""
+    from langchain_core.tools import tool
+    
+    @tool
+    def quiz_generator_tool(requirements: str) -> str:
+        """考卷生成工具，根據用戶需求自動創建考卷並保存到數據庫"""
+        try:
+            # 調用 quiz_generator.py 中的實現
+            from src.quiz_generator import create_quiz_generator_tool as create_quiz_tool
+            quiz_tool = create_quiz_tool()
+            return quiz_tool.invoke(requirements)
+        except ImportError:
+            return "❌ 考卷生成系統暫時不可用，請稍後再試。"
+        except Exception as e:
+            logger.error(f"考卷生成工具執行失敗: {e}")
+            return f"❌ 考卷生成失敗，請稍後再試。錯誤: {str(e)}"
+    
+    return quiz_generator_tool
+
+def get_platform_specific_system_prompt(platform: str = "web") -> str:
+    """根據平台獲取對應的系統提示詞"""
+    if platform == "linebot":
+        return """你是一個智能 LINE Bot 助手，專門為 LINE 用戶提供輕量化的學習服務。
+
+你有以下工具可以使用：
+1. linebot_quiz_generator_tool - AI測驗生成（選擇題/知識問答題）
+2. linebot_knowledge_tool - 隨機知識點
+3. linebot_grade_tool - 答案批改和解釋
+4. linebot_tutor_tool - AI導師教學指導
+5. linebot_learning_analysis_tool - 學習分析（開發中）
+6. linebot_goal_setting_tool - 目標設定（開發中）
+7. linebot_news_exam_tool - 最新消息/考試資訊（開發中）
+8. linebot_calendar_tool - 行事曆（開發中）
+9. memory_tool - 記憶管理
+
+重要：記憶管理是核心功能！
+- 使用 memory_tool('view', user_id) 查看對話歷史
+- 每次對話都會自動記錄到記憶中
+- 測驗流程中必須維護上下文連貫性
+
+測驗流程和記憶管理：
+1. 用戶選擇測驗類型（選擇題/知識問答題）
+2. 選擇知識點或隨機
+3. 系統生成題目（不顯示答案）
+4. 用戶答題（A、B、C、D 或文字答案）
+5. 系統使用 linebot_grade_tool 進行批改
+6. 如用戶有疑問，使用 linebot_tutor_tool 請求導師指導
+
+測驗上下文維護：
+- LINE Bot 會自動提供對話上下文，你不需要主動尋找記憶
+- 當收到包含上下文的測驗批改請求時，直接進行智能批改
+- 如果沒有上下文，正常回應
+
+工具使用說明：
+- linebot_grade_tool(answer, correct_answer="", question="") - 可以只提供答案，系統會自動處理
+- 當用戶輸入 A、B、C、D 時，LINE Bot 會自動提供上下文
+
+開發中功能：
+- 學習分析、目標設定、最新消息/考試資訊、行事曆等功能目前顯示「開發中」訊息
+- 這些功能會提供功能預覽和說明
+
+請根據用戶的問題，選擇最適合的工具來幫助他們。這些工具會提供簡潔、實用的回應，適合在 LINE 聊天中顯示簡單明瞭不要長篇大論。
+
+重要：當使用工具時，請直接返回工具的完整回應，不要重新格式化或摘要。
+
+記住：你是一個助手，不是工具本身。請使用工具來幫助用戶，而不是直接回答問題。"""
+    else:
+        return """你是一個智能網站助手，能夠幫助用戶了解網站功能、查詢學習進度、提供AI教學指導，以及創建考卷。
+
+你有以下工具可以使用：
+1. website_guide_tool - 網站導覽和功能介紹
+2. learning_progress_tool - 查詢學習進度和統計
+3. ai_tutor_tool - AI智能教學指導
+4. quiz_generator_tool - 考卷生成和測驗
+
+請根據用戶的問題，選擇最適合的工具來幫助他們。如果用戶的問題不屬於以上任何類別，請禮貌地引導他們使用適當的功能。
+
+關於考卷生成功能：
+- 當用戶要求創建考卷、測驗或題目時，使用 quiz_generator_tool
+- 支持知識點測驗和考古題兩種類型
+- 可以指定知識點、題型、難度、題目數量等參數
+- 支持自然語言描述需求，如"幫我創建20題計算機概論的單選題"
+
+重要：當使用工具時，請直接返回工具的完整回應，不要重新格式化或摘要。特別是考卷生成工具的回應包含重要的JSON數據，必須完整保留。
+
+記住：你是一個助手，不是工具本身。請使用工具來幫助用戶，而不是直接回答問題。"""
+
+def process_message(message: str, user_id: str = "default", platform: str = "web") -> Dict[str, Any]:
+    """處理用戶訊息 - 主代理人模式，支援平台區分"""
+    try:
+        # 添加用戶訊息到記憶
+        add_user_message(user_id, message)
+        
+        # 根據平台創建對應的主代理人
+        platform_executor = create_platform_specific_agent(platform)
+        
+        # 使用平台特定的主代理人處理
+        result = platform_executor.invoke({
+            "input": message,
+            "context": {"user_id": user_id, "platform": platform}
+        })
+        
+        # 格式化回應
+        response = result.get("output", "抱歉，我無法理解您的請求。")
+        
+        # 添加AI回應到記憶
+        add_ai_message(user_id, response)
+        
+        return {
+            'success': True,
+            'message': response,
+            'timestamp': datetime.now().isoformat()
+        }
+        
     except Exception as e:
-        logger.error(f"❌ 工具列表初始化失敗: {e}")
-        raise
+        logger.error(f"❌ 處理訊息失敗: {e}")
+        return {
+            'success': False,
+            'error': f'處理訊息失敗：{str(e)}',
+            'timestamp': datetime.now().isoformat()
+        }
+
+# ==================== 網站相關工具函數 ====================
 
 def create_website_guide_tool():
     """創建網站導覽工具引用"""
@@ -163,285 +350,110 @@ def create_memory_tool():
     
     return memory_tool
 
-def create_quiz_generator_tool():
-    """創建考卷生成工具引用"""
+# ==================== LINE Bot 相關工具函數 ====================
+
+def create_linebot_quiz_generator_tool():
+    """創建 LINE Bot 測驗生成工具 - 調用 linebot.py 的邏輯"""
     from langchain_core.tools import tool
     
     @tool
-    def quiz_generator_tool(requirements: str) -> str:
-        """考卷生成工具，根據用戶需求自動創建考卷並保存到數據庫"""
-        try:
-            # 調用其他.py文件中的實現
-            from src.quiz_generator import generate_and_save_quiz_by_ai, get_available_topics, get_available_schools, get_available_years, get_available_departments
-            
-            # 解析用戶需求
-            import json
+    def linebot_quiz_generator_tool(requirements: str) -> str:
+        """LINE Bot 測驗生成工具"""
+        return generate_quiz_question(requirements)
+    
+    return linebot_quiz_generator_tool
+
+def create_linebot_knowledge_tool():
+    """創建 LINE Bot 知識點工具 - 調用 linebot.py 的邏輯"""
+    from langchain_core.tools import tool
+    
+    @tool
+    def linebot_knowledge_tool(query: str) -> str:
+        """LINE Bot 知識點工具"""
+        return generate_knowledge_point(query)
+    
+    return linebot_knowledge_tool
+
+def create_linebot_grade_tool():
+    """創建 LINE Bot 批改工具 - 調用 linebot.py 的邏輯"""
+    from langchain_core.tools import tool
+    
+    @tool
+    def linebot_grade_tool(answer: str, correct_answer: str = "", question: str = "") -> str:
+        """LINE Bot 批改工具 - 可以只提供答案，系統會自動從記憶中獲取題目信息"""
+        # 如果只提供了答案，嘗試從記憶中獲取題目信息
+        if answer and not question:
             try:
-                # 嘗試解析JSON格式的需求
-                req_dict = json.loads(requirements)
+                from src.memory_manager import _user_memories
+                # 這裡需要根據實際情況調整，暫時返回提示信息
+                return f"正在批改答案：{answer}。請確保題目信息完整。"
             except:
-                # 如果不是JSON，嘗試從文本中提取信息
-                req_dict = _parse_quiz_requirements(requirements)
-            
-            # 生成考卷並保存到數據庫
-            result = generate_and_save_quiz_by_ai(req_dict)
-            
-            if result['success']:
-                quiz_info = result['quiz_info']
-                questions = result['questions']
-                database_ids = result.get('database_ids', [])
-                
-                # 返回可跳轉的考卷數據
-                quiz_data = {
-                    'quiz_id': f"ai_generated_{int(time.time())}",
-                    'template_id': f"ai_template_{int(time.time())}",
-                    'questions': questions,
-                    'time_limit': quiz_info['time_limit'],
-                    'quiz_info': quiz_info,
-                    'database_ids': database_ids  # 添加數據庫ID
-                }
-                
-                response = f"✅ 考卷生成成功！\n\n"
-                response += f"📝 考卷標題: {quiz_info['title']}\n"
-                response += f"📚 主題: {quiz_info['topic']}\n"
-                response += f"📊 難度: {quiz_info['difficulty']}\n"
-                response += f"🔢 題目數量: {quiz_info['question_count']}\n"
-                response += f"⏱️ 時間限制: {quiz_info['time_limit']}分鐘\n"
-                response += f"💯 總分: {quiz_info['total_score']}分\n\n"
-                
-                if database_ids:
-                    response += f"💾 已保存到數據庫，題目ID: {', '.join(database_ids[:3])}{'...' if len(database_ids) > 3 else ''}\n\n"
-                
-                response += "📋 題目預覽:\n"
-                for i, q in enumerate(questions[:3]):  # 只顯示前3題
-                    response += f"{i+1}. {q['question_text'][:100]}...\n"
-                
-                if len(questions) > 3:
-                    response += f"... 還有 {len(questions)-3} 題\n\n"
-                
-                response += "🚀 **點擊下方按鈕開始測驗！**\n\n"
-                response += "```json\n"
-                response += json.dumps(quiz_data, ensure_ascii=False, indent=2)
-                response += "\n```\n\n"
-                
-                response += "💡 提示：點擊「開始測驗」按鈕即可開始答題！"
-                
-                return response
-            else:
-                return f"❌ 考卷生成失敗: {result.get('error', '未知錯誤')}"
-                
-        except ImportError:
-            return "❌ 考卷生成系統暫時不可用，請稍後再試。"
-        except Exception as e:
-            logger.error(f"考卷生成工具執行失敗: {e}")
-            return f"❌ 考卷生成失敗，請稍後再試。錯誤: {str(e)}"
-    
-    return quiz_generator_tool
-
-def _parse_quiz_requirements(text: str) -> dict:
-    """從文本中解析考卷需求"""
-    requirements = {
-        'topic': '計算機概論',
-        'question_types': ['single-choice', 'multiple-choice'],
-        'difficulty': 'medium',
-        'question_count': 20,
-        'exam_type': 'knowledge'
-    }
-    
-    text_lower = text.lower()
-    
-    # 檢測知識點
-    topics = ['計算機概論', '程式設計', '資料結構', '演算法', '作業系統', '資料庫', '網路', '軟體工程', '人工智慧', '機器學習']
-    for topic in topics:
-        if topic in text:
-            requirements['topic'] = topic
-            break
-    
-    # 檢測題型
-    if '單選' in text or '選擇' in text:
-        requirements['question_types'] = ['single-choice']
-    elif '多選' in text:
-        requirements['question_types'] = ['multiple-choice']
-    elif '填空' in text:
-        requirements['question_types'] = ['fill-in-the-blank']
-    elif '是非' in text or '判斷' in text:
-        requirements['question_types'] = ['true-false']
-    elif '簡答' in text:
-        requirements['question_types'] = ['short-answer']
-    elif '申論' in text:
-        requirements['question_types'] = ['long-answer']
-    
-    # 檢測難度
-    if '簡單' in text or 'easy' in text_lower:
-        requirements['difficulty'] = 'easy'
-    elif '困難' in text or 'hard' in text_lower:
-        requirements['difficulty'] = 'hard'
-    
-    # 檢測題目數量
-    import re
-    count_match = re.search(r'(\d+)題', text)
-    if count_match:
-        requirements['question_count'] = int(count_match.group(1))
-    
-    # 檢測考古題
-    schools = ['台大', '清大', '交大', '成大', '政大', '中央', '中興', '中山', '中正', '台科大']
-    for school in schools:
-        if school in text:
-            requirements['exam_type'] = 'pastexam'
-            requirements['school'] = school
-            break
-    
-    # 檢測年份
-    year_match = re.search(r'(\d{4})年', text)
-    if year_match:
-        requirements['year'] = year_match.group(1)
-    
-    return requirements
-
-def _is_quiz_generation_request(text: str) -> bool:
-    """檢查是否為考卷生成請求"""
-    quiz_keywords = [
-        '創建', '生成', '建立', '製作', '產生',
-        '考卷', '測驗', '題目', '考試', '練習',
-        '單選題', '多選題', '填空題', '是非題', '簡答題', '申論題'
-    ]
-    
-    text_lower = text.lower()
-    return any(keyword in text_lower for keyword in quiz_keywords)
-
-def init_agent_executor():
-    """初始化主代理人執行器"""
-    global agent_executor
-    try:
-        # 系統提示詞
-        system_prompt = """你是一個智能網站助手，能夠幫助用戶了解網站功能、查詢學習進度、提供AI教學指導，管理對話記憶，以及創建考卷。
-
-你有以下工具可以使用：
-1. website_guide_tool - 網站導覽和功能介紹
-2. learning_progress_tool - 查詢學習進度和統計
-3. ai_tutor_tool - AI智能教學指導
-4. memory_tool - 管理對話記憶
-5. quiz_generator_tool - 考卷生成和測驗
-
-請根據用戶的問題，選擇最適合的工具來幫助他們。如果用戶的問題不屬於以上任何類別，請禮貌地引導他們使用適當的功能。
-
-關於考卷生成功能：
-- 當用戶要求創建考卷、測驗或題目時，使用 quiz_generator_tool
-- 支持知識點測驗和考古題兩種類型
-- 可以指定知識點、題型、難度、題目數量等參數
-- 支持自然語言描述需求，如"幫我創建20題計算機概論的單選題"
-
-重要：當使用工具時，請直接返回工具的完整回應，不要重新格式化或摘要。特別是考卷生成工具的回應包含重要的JSON數據，必須完整保留。
-
-記住：你是一個助手，不是工具本身。請使用工具來幫助用戶，而不是直接回答問題。"""
-
-        # 創建提示詞模板 - 移除chat_history變數
-        prompt = ChatPromptTemplate.from_messages([
-            ("system", system_prompt),
-            ("human", "{input}"),
-            MessagesPlaceholder("agent_scratchpad")
-        ])
-
-        # 創建主代理人
-        agent = create_tool_calling_agent(llm, tools, prompt)
+                return f"正在批改答案：{answer}。請確保題目信息完整。"
         
-        # 創建執行器 - 設置為不重新格式化工具回應
-        agent_executor = AgentExecutor(
-            agent=agent,
-            tools=tools,
-            verbose=True,
-            handle_parsing_errors=True,
-            return_intermediate_steps=False,  # 不返回中間步驟
-            max_iterations=1  # 限制迭代次數，避免AI重新處理
-        )
-        
-        logger.info("✅ 主代理人執行器初始化成功")
-        return agent_executor
-        
-    except Exception as e:
-        logger.error(f"❌ 主代理人執行器初始化失敗: {e}")
-        raise
-
-# ==================== 核心處理函數 ====================
-
-def get_web_ai_service():
-    """獲取Web AI服務 - 延遲初始化"""
-    global llm, tools, agent_executor
+        return grade_answer(answer, correct_answer, question)
     
-    if llm is None:
-        llm = init_llm()
-    if not tools:
-        tools = init_tools()
-    if agent_executor is None:
-        agent_executor = init_agent_executor()
-    
-    return {
-        'llm': llm,
-        'tools': tools,
-        'agent_executor': agent_executor
-    }
+    return linebot_grade_tool
 
-def process_message(message: str, user_id: str = "default") -> Dict[str, Any]:
-    """處理用戶訊息 - 主代理人模式"""
-    try:
-        # 添加用戶訊息到記憶
-        from src.memory_manager import add_user_message, add_ai_message
-        
-        # 檢查是否為考卷生成請求
-        if _is_quiz_generation_request(message):
-            logger.info("🎯 檢測到考卷生成請求，直接調用工具")
-            
-            # 直接調用考卷生成工具
-            from src.web_ai_assistant import create_quiz_generator_tool
-            quiz_tool = create_quiz_generator_tool()
-            response = quiz_tool.invoke(message)
-            
-            # 添加AI回應到記憶
-            add_ai_message(user_id, response)
-            
-            return {
-                'success': True,
-                'message': response,
-                'timestamp': datetime.now().isoformat()
-            }
-        
-        # 添加用戶訊息到記憶
-        add_user_message(user_id, message)
-        
-        # 獲取服務
-        service = get_web_ai_service()
-        
-        # 使用主代理人處理其他請求
-        result = service['agent_executor'].invoke({
-            "input": message,
-            "context": {"user_id": user_id}
-        })
-        
-        # 格式化回應
-        response = result.get("output", "抱歉，我無法理解您的請求。")
-        
-        # 添加AI回應到記憶
-        add_ai_message(user_id, response)
-        
-        return {
-            'success': True,
-            'message': response,
-            'timestamp': datetime.now().isoformat()
-        }
-        
-    except Exception as e:
-        logger.error(f"❌ 處理訊息失敗: {e}")
-        return {
-            'success': False,
-            'error': f'處理訊息失敗：{str(e)}',
-            'timestamp': datetime.now().isoformat()
-        }
+def create_linebot_tutor_tool():
+    """創建 LINE Bot 導師工具 - 調用 linebot.py 的邏輯"""
+    from langchain_core.tools import tool
+    
+    @tool
+    def linebot_tutor_tool(question: str, user_answer: str, correct_answer: str) -> str:
+        """LINE Bot 導師工具"""
+        return provide_tutoring(question, user_answer, correct_answer)
+    
+    return linebot_tutor_tool
+
+def create_linebot_learning_analysis_tool():
+    """創建 LINE Bot 學習分析工具 - 開發中"""
+    from langchain_core.tools import tool
+    
+    @tool
+    def linebot_learning_analysis_tool(query: str = "") -> str:
+        """LINE Bot 學習分析工具 - 開發中"""
+        return learning_analysis_placeholder()
+    
+    return linebot_learning_analysis_tool
+
+def create_linebot_goal_setting_tool():
+    """創建 LINE Bot 目標設定工具 - 開發中"""
+    from langchain_core.tools import tool
+    
+    @tool
+    def linebot_goal_setting_tool(query: str = "") -> str:
+        """LINE Bot 目標設定工具 - 開發中"""
+        return goal_setting_placeholder()
+    
+    return linebot_goal_setting_tool
+
+def create_linebot_news_exam_tool():
+    """創建 LINE Bot 最新消息/考試資訊工具 - 開發中"""
+    from langchain_core.tools import tool
+    
+    @tool
+    def linebot_news_exam_tool(query: str = "") -> str:
+        """LINE Bot 最新消息/考試資訊工具 - 開發中"""
+        return news_exam_info_placeholder()
+    
+    return linebot_news_exam_tool
+
+def create_linebot_calendar_tool():
+    """創建 LINE Bot 行事曆工具 - 開發中"""
+    from langchain_core.tools import tool
+    
+    @tool
+    def linebot_calendar_tool(query: str = "") -> str:
+        """LINE Bot 行事曆工具 - 開發中"""
+        return calendar_placeholder()
+    
+    return linebot_calendar_tool
 
 # ==================== API路由 ====================
 
 @web_ai_bp.route('/chat', methods=['POST'])
 def chat():
-    """聊天API - 接收用戶訊息並返回AI回應"""
+    """聊天API - 接收用戶訊息並返回AI回應，支援平台區分"""
     try:
         data = request.get_json()
         if not data or 'message' not in data:
@@ -449,9 +461,10 @@ def chat():
         
         message = data['message']
         user_id = data.get('user_id', 'default')
+        platform = data.get('platform', 'web')  # 新增平台參數
         
         # 處理訊息
-        result = process_message(message, user_id)
+        result = process_message(message, user_id, platform)
         
         return jsonify(result)
         
@@ -496,49 +509,3 @@ def quick_action():
             'error': f'快速動作API錯誤：{str(e)}'
         }), 500
 
-@web_ai_bp.route('/status', methods=['GET'])
-def get_status():
-    """狀態檢查API"""
-    try:
-        service = get_web_ai_service()
-        return jsonify({
-            'success': True,
-            'status': 'ready',
-            'llm_ready': service['llm'] is not None,
-            'tools_ready': len(service['tools']) > 0,
-            'agent_ready': service['agent_executor'] is not None,
-            'timestamp': datetime.now().isoformat()
-        })
-    except Exception as e:
-        logger.error(f"❌ 狀態檢查失敗: {e}")
-        return jsonify({
-            'success': False,
-            'status': 'error',
-            'error': str(e),
-            'timestamp': datetime.now().isoformat()
-        }), 500
-
-@web_ai_bp.route('/health', methods=['GET'])
-def health_check():
-    """健康檢查API"""
-    return jsonify({
-        'success': True,
-        'status': 'healthy',
-        'timestamp': datetime.now().isoformat()
-    })
-
-# ==================== 初始化檢查 ====================
-
-def check_system_ready():
-    """檢查系統是否準備就緒"""
-    try:
-        service = get_web_ai_service()
-        logger.info("✅ Web AI 系統初始化完成")
-        return True
-    except Exception as e:
-        logger.error(f"❌ Web AI 系統初始化失敗: {e}")
-        return False
-
-# 系統啟動時檢查
-if __name__ == "__main__":
-    check_system_ready()
