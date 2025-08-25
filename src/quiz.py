@@ -179,7 +179,8 @@ def submit_quiz():
         print("✅ 使用前端傳遞的完整題目數據")
         questions = questions_data
         total_questions = len(questions)
-        quiz_type = 'ai_generated'  # AI生成的考卷類型
+        quiz_type = 'knowledge'  # AI生成的考卷類型，使用 knowledge 類型
+        template_id_int = int(template_id)  # 確保 template_id_int 在所有分支中都有定義
         
         # 確保題目格式正確
         for i, question in enumerate(questions):
