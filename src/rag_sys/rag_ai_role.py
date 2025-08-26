@@ -422,9 +422,32 @@ def translate_to_english(text: str) -> str:
 請只返回英文翻譯，不要添加任何解釋或額外文字。"""
     
     response = model.generate_content(prompt)
-    if response and hasattr(response, 'text') and response.text:
-        english_text = response.text.strip()
-        return english_text
+    
+    # 檢查回應是否有效
+    if not response or not hasattr(response, 'text'):
+        return "Translation failed: Invalid response format"
+    
+    # 檢查安全評級
+    if hasattr(response, 'candidates') and response.candidates:
+        candidate = response.candidates[0]
+        if hasattr(candidate, 'safety_ratings') and candidate.safety_ratings:
+            # 檢查是否有安全問題
+            for rating in candidate.safety_ratings:
+                if rating.category in ['HARM_CATEGORY_HARASSMENT', 'HARM_CATEGORY_HATE_SPEECH', 
+                                     'HARM_CATEGORY_SEXUALLY_EXPLICIT', 'HARM_CATEGORY_DANGEROUS_CONTENT']:
+                    if rating.probability in ['HIGH', 'MEDIUM']:
+                        return "Translation failed: Response blocked by safety filter"
+    
+    # 安全地存取回應文字
+    try:
+        if response.text:
+            english_text = response.text.strip()
+            return english_text
+        else:
+            return "Translation failed: Empty response"
+    except Exception as text_error:
+        logger.error(f"無法存取回應文字: {text_error}")
+        return "Translation failed: Cannot access response text"
 
 
 # ==================== 輔助功能 ====================
@@ -752,7 +775,28 @@ def call_gemini_api(prompt: str) -> str:
             return "抱歉，AI服務暫時不可用，請稍後再試。"
         
         response = model.generate_content(prompt)
-        return response.text
+        
+        # 檢查回應是否有效
+        if not response or not hasattr(response, 'text'):
+            return "抱歉，AI回應格式不正確，請稍後再試。"
+        
+        # 檢查安全評級
+        if hasattr(response, 'candidates') and response.candidates:
+            candidate = response.candidates[0]
+            if hasattr(candidate, 'safety_ratings') and candidate.safety_ratings:
+                # 檢查是否有安全問題
+                for rating in candidate.safety_ratings:
+                    if rating.category in ['HARM_CATEGORY_HARASSMENT', 'HARM_CATEGORY_HATE_SPEECH', 
+                                         'HARM_CATEGORY_SEXUALLY_EXPLICIT', 'HARM_CATEGORY_DANGEROUS_CONTENT']:
+                        if rating.probability in ['HIGH', 'MEDIUM']:
+                            return "抱歉，AI回應被安全過濾器阻擋，請稍後再試。"
+        
+        # 安全地存取回應文字
+        try:
+            return response.text
+        except Exception as text_error:
+            logger.error(f"無法存取回應文字: {text_error}")
+            return "抱歉，無法存取AI回應，請稍後再試。"
         
     except Exception as e:
         logger.error(f"❌ Gemini API調用失敗: {e}")
