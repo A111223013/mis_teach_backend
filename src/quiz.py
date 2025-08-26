@@ -185,6 +185,8 @@ def submit_quiz():
         
         if template_id.startswith('ai_template_'):
             template_id_int = None  # AI生成的考卷不需要template_id_int
+            # 對於AI生成的考卷，將template_id設為None，避免資料庫錯誤
+            template_id = None
         else:
             try:
                 template_id_int = int(template_id)
@@ -457,11 +459,15 @@ def submit_quiz():
                 'accuracy_rate': round(accuracy_rate, 2),
                 'average_score': round(average_score, 2),
                 'time_taken': time_taken,
-                'submit_time': datetime.now(),
+                                'submit_time': datetime.now(),
                 'quiz_history_id': quiz_history_id
             })
         else:
             # 創建新記錄
+            # 對於AI生成的考卷，quiz_template_id設為NULL（資料庫允許NULL）
+            # 對於傳統考卷，使用整數template_id
+            db_quiz_template_id = None if quiz_template_id is None else quiz_template_id
+            
             result = conn.execute(text("""
                 INSERT INTO quiz_history 
                 (quiz_template_id, user_email, quiz_type, total_questions, answered_questions,
@@ -469,7 +475,7 @@ def submit_quiz():
                 VALUES (:quiz_template_id, :user_email, :quiz_type, :total_questions, :answered_questions,
                        :correct_count, :wrong_count, :accuracy_rate, :average_score, :total_time_taken, :submit_time, :status)
             """), {
-                'quiz_template_id': quiz_template_id,
+                'quiz_template_id': db_quiz_template_id,
                 'user_email': user_email,
                 'quiz_type': quiz_type,
                 'total_questions': total_questions,

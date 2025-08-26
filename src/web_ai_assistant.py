@@ -607,3 +607,28 @@ def quick_action():
             'error': f'快速動作API錯誤：{str(e)}'
         }), 500
 
+
+# =============== 轉發/對齊前端期待的資料端點 ===============
+
+@web_ai_bp.route('/get-quiz-from-database', methods=['POST', 'OPTIONS'])
+def web_get_quiz_from_database():
+    
+    try:
+        if request.method == 'OPTIONS':
+            return jsonify({'success': True})
+
+        data = request.get_json(silent=True) or {}
+        quiz_ids = data.get('quiz_ids', [])
+
+        if not quiz_ids:
+            return jsonify({'success': False, 'message': '缺少考卷ID'}), 400
+
+        # 從 ai_teacher 匯入核心實作並呼叫
+        from .ai_teacher import get_quiz_from_database
+        result = get_quiz_from_database(quiz_ids)
+        return jsonify(result)
+
+    except Exception as e:
+        logger.error(f"❌ web-ai/get-quiz-from-database 錯誤: {e}")
+        return jsonify({'success': False, 'message': f'獲取考卷數據失敗：{str(e)}'}), 500
+
