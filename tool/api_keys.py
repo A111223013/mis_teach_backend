@@ -8,12 +8,6 @@ import os
 import random
 from typing import List
 
-# 預設的API密鑰（用於開發和測試）
-DEFAULT_API_KEYS = [
-    "sk-proj-your-default-key-here-1",
-    "sk-proj-your-default-key-here-2"
-]
-
 def load_env_file(file_path: str) -> dict:
     """載入.env文件"""
     env_vars = {}
