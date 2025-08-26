@@ -17,7 +17,7 @@ import os
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain.agents import create_tool_calling_agent, AgentExecutor
-from src.memory_manager import add_user_message, add_ai_message
+# from memory_manager import add_user_message, add_ai_message
 
 # 本地模組導入
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
@@ -46,6 +46,8 @@ logger = logging.getLogger(__name__)
 
 # 延遲初始化的組件
 llm = None
+tools = []
+agent_executor = None
 
 # ==================== 初始化代理人相關函數 ====================
 
@@ -112,7 +114,7 @@ def create_platform_specific_agent(platform: str = "web"):
             verbose=True,
             handle_parsing_errors=True,
             return_intermediate_steps=False,
-            max_iterations=3 if platform == "linebot" else 1  # LINE Bot 需要更多迭代
+            max_iterations=10  # 增加迭代次數，允許AI完成複雜任務
         )
         
         logger.info(f"✅ {platform} 平台主代理人創建成功")
@@ -121,6 +123,25 @@ def create_platform_specific_agent(platform: str = "web"):
     except Exception as e:
         logger.error(f"❌ 創建 {platform} 平台主代理人失敗: {e}")
         raise
+
+# ==================== 核心處理函數 ====================
+
+def get_web_ai_service():
+    """獲取Web AI服務 - 延遲初始化"""
+    global llm, tools, agent_executor
+    
+    if llm is None:
+        llm = init_llm()
+    if not tools:
+        tools = get_platform_specific_tools("web")
+    if agent_executor is None:
+        agent_executor = create_platform_specific_agent("web")
+    
+    return {
+        'llm': llm,
+        'tools': tools,
+        'agent_executor': agent_executor
+    }
 
 # ==================== 共通主要函數 ====================
 
@@ -150,21 +171,21 @@ def get_platform_specific_tools(platform: str = "web"):
         ]
 
 def create_quiz_generator_tool():
-    """創建考卷生成工具引用 - 邏輯實現在 quiz_generator.py"""
+    """創建考卷生成工具 - 調用quiz_generator.py中的函數"""
     from langchain_core.tools import tool
     
     @tool
     def quiz_generator_tool(requirements: str) -> str:
         """考卷生成工具，根據用戶需求自動創建考卷並保存到數據庫"""
         try:
-            # 調用 quiz_generator.py 中的實現
-            from src.quiz_generator import create_quiz_generator_tool as create_quiz_tool
-            quiz_tool = create_quiz_tool()
-            return quiz_tool.invoke(requirements)
-        except ImportError:
-            return "❌ 考卷生成系統暫時不可用，請稍後再試。"
+            # 導入quiz_generator.py中的主要函數
+            from quiz_generator import execute_quiz_generation
+            
+            # 直接調用quiz_generator.py中的函數
+            return execute_quiz_generation(requirements)
+                
         except Exception as e:
-            logger.error(f"考卷生成工具執行失敗: {e}")
+            logger.error(f"❌ 考卷生成工具執行失敗: {e}")
             return f"❌ 考卷生成失敗，請稍後再試。錯誤: {str(e)}"
     
     return quiz_generator_tool
@@ -240,8 +261,8 @@ def get_platform_specific_system_prompt(platform: str = "web") -> str:
 def process_message(message: str, user_id: str = "default", platform: str = "web") -> Dict[str, Any]:
     """處理用戶訊息 - 主代理人模式，支援平台區分"""
     try:
-        # 添加用戶訊息到記憶
-        add_user_message(user_id, message)
+        # 添加用戶訊息到記憶 - 暫時註釋掉，避免依賴問題
+        # add_user_message(user_id, message)
         
         # 根據平台創建對應的主代理人
         platform_executor = create_platform_specific_agent(platform)
@@ -255,8 +276,8 @@ def process_message(message: str, user_id: str = "default", platform: str = "web
         # 格式化回應
         response = result.get("output", "抱歉，我無法理解您的請求。")
         
-        # 添加AI回應到記憶
-        add_ai_message(user_id, response)
+        # 添加AI回應到記憶 - 暫時註釋掉，避免依賴問題
+        # add_ai_message(user_id, response)
         
         return {
             'success': True,
@@ -322,7 +343,15 @@ def create_ai_tutor_tool():
         try:
             # 調用其他.py文件中的實現
             from src.rag_sys.rag_ai_role import handle_tutoring_conversation
-            return handle_tutoring_conversation("default_session", query, "default_user")
+            # 為web_ai_assistant提供默認參數
+            user_email = "web_user"
+            question = query
+            user_answer = "未提供"
+            correct_answer = "未提供"
+            user_input = query
+            
+            result = handle_tutoring_conversation(user_email, question, user_answer, correct_answer, user_input)
+            return result.get('response', '抱歉，AI導師回應失敗，請稍後再試。')
         except ImportError:
             return "❌ AI導師系統暫時不可用，請稍後再試。"
         except Exception as e:
