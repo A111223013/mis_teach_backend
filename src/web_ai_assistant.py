@@ -179,7 +179,7 @@ def create_quiz_generator_tool():
         """考卷生成工具，根據用戶需求自動創建考卷並保存到數據庫"""
         try:
             # 導入quiz_generator.py中的主要函數
-            from quiz_generator import execute_quiz_generation
+            from src.quiz_generator import execute_quiz_generation
             
             # 直接調用quiz_generator.py中的函數
             return execute_quiz_generation(requirements)

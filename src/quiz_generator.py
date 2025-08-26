@@ -159,8 +159,13 @@ class SmartQuizGenerator:
             logger.info(f"✅ 成功保存 {len(saved_ids)} 道題目到數據庫")
             return saved_ids
             
+        except ImportError as e:
+            logger.warning(f"⚠️ 無法導入數據庫模組: {e}")
+            logger.info("📝 跳過數據庫保存，僅生成考卷")
+            return []
         except Exception as e:
             logger.error(f"❌ 保存題目到數據庫失敗: {e}")
+            logger.info("📝 跳過數據庫保存，僅生成考卷")
             return []
     
     def _convert_to_database_format(self, question: Dict, requirements: Dict) -> Dict:
