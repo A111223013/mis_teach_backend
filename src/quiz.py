@@ -180,7 +180,16 @@ def submit_quiz():
         questions = questions_data
         total_questions = len(questions)
         quiz_type = 'knowledge'  # AI生成的考卷類型，使用 knowledge 類型
-        template_id_int = int(template_id)  # 確保 template_id_int 在所有分支中都有定義
+        
+        # 處理template_id - AI生成的考卷使用字符串格式  ##這裡到時候要改成 另種編碼 以區別
+        
+        if template_id.startswith('ai_template_'):
+            template_id_int = None  # AI生成的考卷不需要template_id_int
+        else:
+            try:
+                template_id_int = int(template_id)
+            except ValueError:
+                template_id_int = None
         
         # 確保題目格式正確
         for i, question in enumerate(questions):
@@ -195,7 +204,15 @@ def submit_quiz():
         print("⚠️ 沒有前端題目數據，嘗試從資料庫讀取")
         # 從SQL獲取模板信息
         with sqldb.engine.connect() as conn:
-            template_id_int = int(template_id)
+            # 處理template_id - 確保是整數
+            try:
+                template_id_int = int(template_id)
+            except ValueError:
+                return jsonify({
+                    'success': False,
+                    'message': f'無效的template_id格式: {template_id}'
+                }), 400
+            
             template = conn.execute(text("""
                 SELECT * FROM quiz_templates WHERE id = :template_id
             """), {'template_id': template_id_int}).fetchone()
@@ -406,7 +423,8 @@ def submit_quiz():
     # 更新或創建SQL記錄
     with sqldb.engine.connect() as conn:
         # 使用從測驗數據獲取的類型
-        quiz_template_id = template_id_int  # 使用實際的模板ID
+        # 對於AI生成的考卷，template_id_int可能為None，使用原始template_id
+        quiz_template_id = template_id_int if template_id_int is not None else template_id
         
         # 查找現有的quiz_history記錄
         existing_record = conn.execute(text("""
@@ -1293,7 +1311,15 @@ def get_grading_progress(template_id):
         
         # 檢查測驗狀態
         with sqldb.engine.connect() as conn:
-            template_id_int = int(template_id)
+            # 處理template_id - 對於AI生成的考卷，直接使用字符串
+            if template_id.startswith('ai_template_'):
+                template_id_for_query = template_id
+            else:
+                try:
+                    template_id_int = int(template_id)
+                    template_id_for_query = template_id_int
+                except ValueError:
+                    return jsonify({'message': f'無效的template_id格式: {template_id}'}), 400
             
             # 檢查是否有完成的測驗記錄
             history_result = conn.execute(text("""
@@ -1302,7 +1328,7 @@ def get_grading_progress(template_id):
                 WHERE quiz_template_id = :template_id AND user_email = :user_email
                 ORDER BY created_at DESC LIMIT 1
             """), {
-                'template_id': template_id_int,
+                'template_id': template_id_for_query,
                 'user_email': user_email
             }).fetchone()
             
