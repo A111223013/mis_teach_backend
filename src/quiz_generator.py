@@ -228,7 +228,7 @@ class SmartQuizGenerator:
             'topic': '計算機概論',
             'question_types': ['single-choice', 'multiple-choice'],
             'difficulty': 'medium',
-            'question_count': 5,  # 改為5題默認
+            'question_count': 1,  # 改為1題默認，避免強制5題
             'exam_type': 'knowledge',
             'school': '',
             'year': '',
@@ -931,7 +931,7 @@ def _parse_quiz_requirements(text: str) -> dict:
         'topic': '計算機概論',
         'question_types': ['single-choice', 'multiple-choice'],
         'difficulty': 'medium',
-        'question_count': 5,  # 改為5題默認
+        'question_count': 1,  # 改為1題默認，避免強制5題
         'exam_type': 'knowledge'
     }
     
@@ -966,9 +966,21 @@ def _parse_quiz_requirements(text: str) -> dict:
     
     # 檢測題目數量
     import re
-    count_match = re.search(r'(\d+)題', text)
-    if count_match:
-        requirements['question_count'] = int(count_match.group(1))
+    # 支援多種題目數量表達方式：1題、1提、1道、1個等
+    count_patterns = [
+        r'(\d+)題',  # 1題
+        r'(\d+)提',  # 1提
+        r'(\d+)道',  # 1道
+        r'(\d+)個',  # 1個
+        r'(\d+)條',  # 1條
+        r'(\d+)項',  # 1項
+    ]
+    
+    for pattern in count_patterns:
+        count_match = re.search(pattern, text)
+        if count_match:
+            requirements['question_count'] = int(count_match.group(1))
+            break
     
     # 檢測考古題
     schools = ['台大', '清大', '交大', '成大', '政大', '中央', '中興', '中山', '中正', '台科大']
