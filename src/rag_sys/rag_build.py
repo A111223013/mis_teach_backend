@@ -113,9 +113,54 @@ class RAGBuilder:
             model = genai.GenerativeModel('gemini-2.5-flash')
             response = model.generate_content(prompt)
             
+            # 檢查回應是否有效
+            if not response or not hasattr(response, 'text'):
+                logger.warning("⚠️ AI回應無效或格式不正確")
+                return [{
+                    "title": f"知識點 - {chapter_info}",
+                    "content": text[:500],
+                    "keywords": [],
+                    "difficulty": 3,
+                    "category": "一般",
+                    "examples": []
+                }]
+            
+            # 檢查安全評級
+            if hasattr(response, 'candidates') and response.candidates:
+                candidate = response.candidates[0]
+                if hasattr(candidate, 'safety_ratings') and candidate.safety_ratings:
+                    # 檢查是否有安全問題
+                    for rating in candidate.safety_ratings:
+                        if rating.category in ['HARM_CATEGORY_HARASSMENT', 'HARM_CATEGORY_HATE_SPEECH', 
+                                             'HARM_CATEGORY_SEXUALLY_EXPLICIT', 'HARM_CATEGORY_DANGEROUS_CONTENT']:
+                            if rating.probability in ['HIGH', 'MEDIUM']:
+                                logger.warning(f"⚠️ AI回應被安全過濾器阻擋: {rating.category}")
+                                return [{
+                                    "title": f"知識點 - {chapter_info}",
+                                    "content": text[:500],
+                                    "keywords": [],
+                                    "difficulty": 3,
+                                    "category": "一般",
+                                    "examples": []
+                                }]
+            
+            # 安全地存取回應文字
+            try:
+                response_text = response.text
+            except Exception as text_error:
+                logger.error(f"⚠️ 無法存取回應文字: {text_error}")
+                return [{
+                    "title": f"知識點 - {chapter_info}",
+                    "content": text[:500],
+                    "keywords": [],
+                    "difficulty": 3,
+                    "category": "一般",
+                    "examples": []
+                }]
+            
             # 解析 JSON 回應
             try:
-                result = json.loads(response.text)
+                result = json.loads(response_text)
                 return result.get('knowledge_points', [])
             except json.JSONDecodeError:
                 # 如果 JSON 解析失敗，返回基本結構

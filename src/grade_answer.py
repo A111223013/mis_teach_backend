@@ -1,9 +1,3 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-"""
-AI答案評分模組 - 使用Gemini API進行智能評分，支援並行處理
-"""
-
 import json
 import re
 import concurrent.futures
@@ -20,7 +14,7 @@ class AnswerGrader:
             api_key = get_api_key()
             genai.configure(api_key=api_key)
             # 使用正確的模型名稱
-            self.model = genai.GenerativeModel('gemini-2.5-flash')
+            self.model = genai.GenerativeModel('gemini-2.0-flash')
         except Exception as e:
             print(f"❌ Gemini API 初始化失敗: {e}")
             self.model = None
@@ -136,7 +130,7 @@ class AnswerGrader:
             # 使用指定的API金鑰索引
             api_key = self._get_api_key_by_index(api_key_index)
             genai.configure(api_key=api_key)
-            model = genai.GenerativeModel('gemini-2.5-flash')
+            model = genai.GenerativeModel('gemini-2.0-flash')
             return model
         except Exception as e:
             print(f"❌ 創建批次模型失敗: {e}")
@@ -166,41 +160,33 @@ class AnswerGrader:
             
             if model:
                 response = model.generate_content(prompt)
+                
+                # 調試：顯示AI的完整回應
+                print(f"🔍 AI完整回應:")
+                print(f"🔍 {response.text}")
+                print(f"🔍 回應長度: {len(response.text)}")
+                
                 result = self._parse_ai_response(response.text)
                 if result:
-                    return result['is_correct'], result['score'], result['feedback']
-            
-            return False, 0, {'error': 'AI評分失敗'}
-            
-        except Exception as e:
-            print(f"❌ AI評分異常: {str(e)}")
-            return False, 0, {'error': f'評分失敗: {str(e)}'}
-    
-    
-    def _ai_grade_answer(self, user_answer: Any, question_text: str, correct_answer: str, 
-                         options: List[str], question_type: str) -> Tuple[bool, float, Dict[str, Any]]:
-        """AI統一評分 - 核心函數"""
-        try:
-            
-            # 構建AI評分提示
-            prompt = self._build_grading_prompt(user_answer, question_text, correct_answer, options, question_type)
-            
-            # 調用AI評分
-            if self.model:
-                response = self.model.generate_content(prompt)
-                result = self._parse_ai_response(response.text)
-                if result:
-                    # 確保評分邏輯一致性：分數 ≥ 80 的答案被標記為正確
+                    print(f"🔍 解析後的結果: {result}")
+                    
+                    # 確保評分邏輯一致性：分數 ≥ 85 的答案被標記為正確
                     score = result.get('score', 0)
-                    is_correct = score >= 80
+                    is_correct = score >= 85
+                    
+                    print(f"🔍 AI給的分數: {score}")
+                    print(f"🔍 AI判斷的正確性: {result.get('is_correct')}")
+                    print(f"🔍 系統計算的正確性: {is_correct}")
                     
                     # 如果AI的判斷與我們的標準不一致，進行修正
                     if result.get('is_correct') != is_correct:
+                        print(f"⚠️ AI判斷與系統標準不一致，進行修正")
                         result['is_correct'] = is_correct
                     
                     return result['is_correct'], result['score'], result['feedback']
+                else:
+                    print(f"❌ AI回應解析失敗")
             
-            # 如果AI評分失敗，返回默認結果
             return False, 0, {'error': 'AI評分失敗'}
             
         except Exception as e:
@@ -213,12 +199,24 @@ class AnswerGrader:
         prompt = f"""
 請作為一位專業的MIS課程教師，對以下學生答案進行評分。
 
+**評分任務說明**：
+請記住你只需要評分學生的答案，不要評分正確答案。正確答案只是用來參考比較的標準。
+
+**題目資訊**：
 題目類型：{question_type}
 題目內容：{question_text}
 
+**需要評分的內容**：
 學生答案：{user_answer}
+
+**參考標準（不要評分這個）**：
 正確答案：{correct_answer}
 選項：{options if options else '無'}
+
+**評分重點**：
+1. **只評分學生答案的內容**，與正確答案進行比較
+2. **學生答案必須與題目內容相關**，不能是無意義的數字或符號
+3. 如果學生答案與題目要求完全無關，必須給0分
 
 評分要求：
 1. 仔細分析學生答案的內容和邏輯
@@ -227,18 +225,27 @@ class AnswerGrader:
 4. 提供具體的評分理由和改進建議
 5. 必須填寫優點、需要改進的地方和學習建議，不能留空
 
-評分標準：
+**評分標準**：
 - 90-100分：完全正確，答案完整且準確
 - 80-89分：接近正確，主要概念正確但有小錯誤
 - 60-79分：勉強及格，部分正確但理解不夠深入
 - 40-59分：部分正確，有基本概念但錯誤較多
-- 0-39分：錯誤，主要概念錯誤或答案不完整
+- 0-39分：錯誤，主要概念錯誤或與題目無關
 
-正確性判斷標準：
-- 分數 ≥ 80分：答案被認為是正確的 (is_correct: true)
-- 分數 < 80分：答案被認為是不正確的 (is_correct: false)
+**特別注意**：
+- 對於問答題，學生答案必須包含正確答案的核心概念和關鍵信息
+- 如果學生只回答數字、符號或與題目無關的內容，必須給0分
+- 評分要客觀公正，不能因為學生努力就給高分
+- 如果學生答案與題目內容完全無關，必須給0分
+- 只有當學生答案在內容上與題目有實質關聯時，才能給分數
 
-請以JSON格式返回評分結果：
+
+
+**正確性判斷**：
+- 分數 ≥ 85分：答案被認為是正確的 (is_correct: true)
+- 分數 < 85分：答案被認為是不正確的 (is_correct: false)
+
+請務必以嚴格規範的JSON格式返回評分結果，不要有任何其他文字：
 {{
     "is_correct": true/false,
     "score": 分數(0-100),
@@ -250,12 +257,21 @@ class AnswerGrader:
     }}
 }}
 
-注意：
-1. 請根據答案的實際內容和質量進行評分，不要簡單地比較字符串
-2. 對於網路拓樸等概念性題目，如果學生能正確列出主要類型並說明特點，即使格式不完美，也應該給予較高分數
-3. 分數 ≥ 80分時，is_correct 必須設為 true
-4. 優點、需要改進的地方、學習建議這三個字段必須有具體內容，不能為空或寫"無"
-5. 如果學生答案完全錯誤，優點可以寫"勇於嘗試"或"認真作答"，需要改進的地方要具體指出錯誤，學習建議要給出具體的學習方向
+**評分示例**：
+題目：說明CPU中Instruction Register及Program Counter的用途
+學生答案：10
+正確答案：Instruction Register (IR)：存放目前正在執行的指令。Program Counter (PC)：存放下一個要執行的指令的記憶體位址
+評分：0分，is_correct: false（因為"10"只是數字，與題目完全無關，不包含任何CPU概念）
+
+題目：Linux檔案系統中，"rwx"代表何意義？
+學生答案：100
+正確答案：r代表讀取權限，w代表寫入權限，x代表執行權限
+評分：0分，is_correct: false（因為"100"只是數字，與題目完全無關，不包含任何權限概念）
+
+題目：說明CPU中Instruction Register及Program Counter的用途
+學生答案：Instruction Register存放指令，Program Counter存放下一個指令的位址
+正確答案：Instruction Register (IR)：存放目前正在執行的指令。Program Counter (PC)：存放下一個要執行的指令的記憶體位址
+評分：85分，is_correct: true（因為學生答案包含了正確的核心概念）
 """
         return prompt
     

@@ -144,23 +144,44 @@ class SmartQuizGenerator:
         try:
             from accessories import mongo
             
-            saved_ids = []
+            # 檢查 mongo 對象是否可用
+            if mongo is None or mongo.db is None:
+                logger.warning("⚠️ MongoDB 連接不可用")
+                logger.info("📝 跳過數據庫保存，僅生成考卷")
+                return []
             
-            for question in questions:
-                # 轉換為數據庫格式
-                db_question = self._convert_to_database_format(question, requirements)
-                
-                # 插入到數據庫
-                result = mongo.db.exam.insert_one(db_question)
-                saved_ids.append(str(result.inserted_id))
-                
-                logger.info(f"💾 題目已保存到數據庫，ID: {result.inserted_id}")
+            # 創建完整的考卷文檔
+            quiz_doc = {
+                "quiz_id": f"ai_generated_{int(time.time())}",
+                "title": f"{requirements.get('topic', 'AI生成')}知識點測驗",
+                "type": "knowledge",
+                "creator_email": "ai_system@mis_teach.com",
+                "create_time": datetime.now().isoformat(),
+                "time_limit": requirements.get('time_limit', 60),
+                "questions": questions,
+                "metadata": {
+                    "topic": requirements.get('topic', 'AI生成'),
+                    "difficulty": requirements.get('difficulty', 'medium'),
+                    "question_count": len(questions)
+                }
+            }
             
-            logger.info(f"✅ 成功保存 {len(saved_ids)} 道題目到數據庫")
-            return saved_ids
+            # 插入到quizzes集合
+            result = mongo.db.quizzes.insert_one(quiz_doc)
+            quiz_id = str(result.inserted_id)
             
+            logger.info(f"💾 考卷已保存到數據庫，ID: {quiz_id}")
+            logger.info(f"✅ 成功保存考卷到數據庫，包含 {len(questions)} 道題目")
+            
+            return [quiz_id]  # 返回考卷ID而不是題目ID
+            
+        except ImportError as e:
+            logger.warning(f"⚠️ 無法導入數據庫模組: {e}")
+            logger.info("📝 跳過數據庫保存，僅生成考卷")
+            return []
         except Exception as e:
-            logger.error(f"❌ 保存題目到數據庫失敗: {e}")
+            logger.error(f"❌ 保存考卷到數據庫失敗: {e}")
+            logger.info("📝 跳過數據庫保存，僅生成考卷")
             return []
     
     def _convert_to_database_format(self, question: Dict, requirements: Dict) -> Dict:
@@ -223,7 +244,7 @@ class SmartQuizGenerator:
             'topic': '計算機概論',
             'question_types': ['single-choice', 'multiple-choice'],
             'difficulty': 'medium',
-            'question_count': 5,  # 改為5題默認
+            'question_count': 1,  # 改為1題默認，避免強制5題
             'exam_type': 'knowledge',
             'school': '',
             'year': '',
@@ -926,7 +947,7 @@ def _parse_quiz_requirements(text: str) -> dict:
         'topic': '計算機概論',
         'question_types': ['single-choice', 'multiple-choice'],
         'difficulty': 'medium',
-        'question_count': 5,  # 改為5題默認
+        'question_count': 1,  # 改為1題默認，避免強制5題
         'exam_type': 'knowledge'
     }
     
@@ -961,9 +982,21 @@ def _parse_quiz_requirements(text: str) -> dict:
     
     # 檢測題目數量
     import re
-    count_match = re.search(r'(\d+)題', text)
-    if count_match:
-        requirements['question_count'] = int(count_match.group(1))
+    # 支援多種題目數量表達方式：1題、1提、1道、1個等
+    count_patterns = [
+        r'(\d+)題',  # 1題
+        r'(\d+)提',  # 1提
+        r'(\d+)道',  # 1道
+        r'(\d+)個',  # 1個
+        r'(\d+)條',  # 1條
+        r'(\d+)項',  # 1項
+    ]
+    
+    for pattern in count_patterns:
+        count_match = re.search(pattern, text)
+        if count_match:
+            requirements['question_count'] = int(count_match.group(1))
+            break
     
     # 檢測考古題
     schools = ['台大', '清大', '交大', '成大', '政大', '中央', '中興', '中山', '中正', '台科大']

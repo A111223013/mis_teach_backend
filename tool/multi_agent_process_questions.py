@@ -140,24 +140,50 @@ def read_image_base64(image_path):
         return encoded
 
 def call_gemini_model(prompt, image_base64=None):
-    model = genai.GenerativeModel("gemini-2.0-flash")
-
-    if image_base64:
-        import base64
-        import io
-        from PIL import Image
-
-        image_data = base64.b64decode(image_base64)
-        image = Image.open(io.BytesIO(image_data))
-
-        response = model.generate_content([
-            prompt,
-            image  # 注意這裡是直接傳圖片物件
-        ])
-    else:
-        response = model.generate_content(prompt)
-
-    return response.text.strip()
+    """調用主代理人模型"""
+    try:
+        model = genai.GenerativeModel("gemini-2.0-flash")
+        
+        if image_base64:
+            import base64
+            import io
+            from PIL import Image
+            
+            image_data = base64.b64decode(image_base64)
+            image = Image.open(io.BytesIO(image_data))
+            
+            response = model.generate_content([
+                prompt,
+                image  # 注意這裡是直接傳圖片物件
+            ])
+        else:
+            response = model.generate_content(prompt)
+        
+        # 檢查回應是否有效
+        if not response or not hasattr(response, 'text'):
+            return "AI回應格式不正確"
+        
+        # 檢查安全評級
+        if hasattr(response, 'candidates') and response.candidates:
+            candidate = response.candidates[0]
+            if hasattr(candidate, 'safety_ratings') and candidate.safety_ratings:
+                # 檢查是否有安全問題
+                for rating in candidate.safety_ratings:
+                    if rating.category in ['HARM_CATEGORY_HARASSMENT', 'HARM_CATEGORY_HATE_SPEECH', 
+                                         'HARM_CATEGORY_SEXUALLY_EXPLICIT', 'HARM_CATEGORY_DANGEROUS_CONTENT']:
+                        if rating.probability in ['HIGH', 'MEDIUM']:
+                            return "AI回應被安全過濾器阻擋"
+        
+        # 安全地存取回應文字
+        try:
+            return response.text.strip()
+        except Exception as text_error:
+            print(f"⚠️ 無法存取回應文字: {text_error}")
+            return "無法存取AI回應"
+            
+    except Exception as e:
+        print(f"⚠️ 主代理人調用失敗：{e}")
+        return f"主代理人調用失敗：{e}"
 
 def call_llama_model(prompt):
     """調用次代理人模型（改為使用 Gemini）"""
@@ -165,10 +191,33 @@ def call_llama_model(prompt):
         # 使用 Gemini 作為次代理人，而不是本地 Ollama
         model = genai.GenerativeModel("gemini-2.0-flash")
         response = model.generate_content(prompt)
-        return response.text.strip()
+        
+        # 檢查回應是否有效
+        if not response or not hasattr(response, 'text'):
+            return "AI回應格式不正確"
+        
+        # 檢查安全評級
+        if hasattr(response, 'candidates') and response.candidates:
+            candidate = response.candidates[0]
+            if hasattr(candidate, 'safety_ratings') and candidate.safety_ratings:
+                # 檢查是否有安全問題
+                for rating in candidate.safety_ratings:
+                    if rating.category in ['HARM_CATEGORY_HARASSMENT', 'HARM_CATEGORY_HATE_SPEECH', 
+                                         'HARM_CATEGORY_SEXUALLY_EXPLICIT', 'HARM_CATEGORY_DANGEROUS_CONTENT']:
+                        if rating.probability in ['HIGH', 'MEDIUM']:
+                            return "AI回應被安全過濾器阻擋"
+        
+        # 安全地存取回應文字
+        try:
+            return response.text.strip()
+        except Exception as text_error:
+            print(f"⚠️ 無法存取回應文字: {text_error}")
+            return "無法存取AI回應"
+            
     except Exception as e:
         print(f"⚠️ 次代理人調用失敗，使用備用方案：{e}")
-       
+        return f"次代理人調用失敗：{e}"
+
 
 # ========== 處理 single ==========
 def process_question(question):
