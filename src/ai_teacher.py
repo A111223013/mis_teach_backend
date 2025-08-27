@@ -90,6 +90,9 @@ def chat_with_ai(question: str, conversation_type: str = "general", session_id: 
                 correct_answer = data.get('correct_answer', '')
                 user_answer = data.get('user_answer', '')
                 
+                # 新增：獲取AI批改的評分反饋
+                grading_feedback = data.get('grading_feedback', {})
+                
                 # 判斷是否為初始化請求
                 is_initialization = question.startswith('開始學習會話：')
                 if is_initialization:
@@ -108,7 +111,8 @@ def chat_with_ai(question: str, conversation_type: str = "general", session_id: 
                 token = request.headers.get('Authorization', '').replace('Bearer ', '')
                 user_email = verify_token(token) if token else "anonymous_user"
 
-                response = handle_tutoring_conversation(user_email, actual_question, user_answer, correct_answer, user_input)
+                # 傳遞AI批改的評分反饋
+                response = handle_tutoring_conversation(user_email, actual_question, user_answer, correct_answer, user_input, grading_feedback)
                 
                 return {
                     'success': True,
@@ -120,21 +124,22 @@ def chat_with_ai(question: str, conversation_type: str = "general", session_id: 
                 logger.error(f"❌ 教學對話失敗: {e}")
                 return {
                     'success': False,
-                    'error': f'教學對話失敗: {str(e)}',
-                    'response': '抱歉，教學對話處理失敗，請稍後再試。'
+                    'error': f'教學對話失敗：{str(e)}',
+                    'response': '抱歉，教學對話處理失敗，請重試。'
                 }
         else:
+            # 其他類型的對話處理
             return {
-                'success': True,
-                'response': f'您好！我是AI教學助手。關於「{question}」，我很樂意為您解答。請使用AI導師功能獲得更專業的指導。',
-                'conversation_type': 'general'
+                'success': False,
+                'error': '不支援的對話類型',
+                'response': '抱歉，此對話類型不支援。'
             }
-        
+            
     except Exception as e:
-        logger.error(f"❌ AI對話失敗: {e}")
+        logger.error(f"❌ AI對話處理失敗: {e}")
         return {
             'success': False,
-            'error': f'AI對話失敗：{str(e)}',
+            'error': f'AI對話處理失敗：{str(e)}',
             'response': '抱歉，AI對話處理失敗，請重試。'
         }
 
@@ -172,7 +177,7 @@ def get_quiz_result_data(result_id: str) -> dict:
             
             # 獲取所有題目的用戶答案
             answers_result = conn.execute(text("""
-                SELECT mongodb_question_id, user_answer, is_correct, score, created_at
+                SELECT mongodb_question_id, user_answer, is_correct, score, feedback, created_at
                 FROM quiz_answers 
                 WHERE quiz_history_id = :quiz_history_id
                 ORDER BY created_at
@@ -187,13 +192,14 @@ def get_quiz_result_data(result_id: str) -> dict:
                 user_answer = answer[1]
                 is_correct = bool(answer[2])  # 確保為 boolean 類型
                 score = float(answer[3]) if answer[3] else 0
-                created_at = answer[4]
+                feedback = json.loads(answer[4]) if answer[4] else {}  # 將JSON字符串轉換回Python字典
+                created_at = answer[5]
                 
-
                 answers_dict[question_id] = {
                     'user_answer': user_answer,
                     'is_correct': is_correct,
                     'score': score,
+                    'feedback': feedback,  # 添加feedback字段
                     'created_at': created_at
                 }
             
@@ -234,7 +240,8 @@ def get_quiz_result_data(result_id: str) -> dict:
                     'difficulty': question_obj.get('difficulty', 2),
                     'options': question_obj.get('options', []),
                     'image_file': question_obj.get('image_file', ''),
-                    'key_points': question_obj.get('key_points', '')
+                    'key_points': question_obj.get('key_points', ''),
+                    'feedback': answer_info.get('feedback', {})  # 添加feedback字段
                 }
                 
                 questions.append(question_data)

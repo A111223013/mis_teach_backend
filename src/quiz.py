@@ -104,13 +104,16 @@ def init_quiz_tables():
                         user_answer TEXT NOT NULL,
                         is_correct BOOLEAN NOT NULL DEFAULT FALSE,
                         score DECIMAL(5,2) DEFAULT 0,
+                        feedback JSON,
+                        answer_time_seconds INT DEFAULT 0,  -- 新增：每題作答時間（秒）
                         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                         FOREIGN KEY (quiz_history_id) REFERENCES quiz_history(id) ON DELETE CASCADE,
                         INDEX idx_quiz_history_id (quiz_history_id),
                         INDEX idx_user_email (user_email),
                         INDEX idx_mongodb_question_id (mongodb_question_id),
                         INDEX idx_is_correct (is_correct),
-                        INDEX idx_created_at (created_at)
+                        INDEX idx_created_at (created_at),
+                        INDEX idx_answer_time (answer_time_seconds)  -- 新增：作答時間索引
                     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
                 """))
                 conn.commit()
@@ -158,6 +161,15 @@ def submit_quiz():
     template_id = data.get('template_id')
     answers = data.get('answers', {})
     time_taken = data.get('time_taken', 0)
+    question_answer_times = data.get('question_answer_times', {})  # 新增：提取每題作答時間
+    frontend_questions = data.get('questions', [])  # 新增：提取前端發送的題目數據
+    
+    # 調試日誌
+    print(f"🔍 Debug: 接收到的數據 - template_id: {template_id}")
+    print(f"🔍 Debug: 接收到的數據 - answers keys: {list(answers.keys())}")
+    print(f"🔍 Debug: 接收到的數據 - time_taken: {time_taken}")
+    print(f"🔍 Debug: 接收到的數據 - question_answer_times: {question_answer_times}")
+    print(f"🔍 Debug: 接收到的數據 - frontend_questions length: {len(frontend_questions) if frontend_questions else 0}")
     
     if not template_id:
         return jsonify({
@@ -199,55 +211,61 @@ def submit_quiz():
         
         # 從模板獲取題目數量
         
-        # 從MongoDB exam集合獲取題目詳情
-        questions = []
-        for i, question_id in enumerate(question_ids):
-            # 嘗試使用ObjectId查詢
-            exam_question = mongo.db.exam.find_one({"_id": ObjectId(question_id)})
-            if not exam_question:
-                # 如果ObjectId查詢失敗，嘗試直接查詢
-                exam_question = mongo.db.exam.find_one({"_id": question_id})
-            
-            if exam_question:
-                # 正確讀取題目類型
-                exam_type = exam_question.get('type', 'single')
-                if exam_type == 'group':
-                    # 如果是題組，讀取子題目的answer_type
-                    sub_questions = exam_question.get('sub_questions', [])
-                    if sub_questions:
-                        # 使用第一個子題目的類型
-                        question_type = sub_questions[0].get('answer_type', 'single-choice')
-                    else:
-                        question_type = 'single-choice'
-                else:
-                    # 如果是單題，直接讀取answer_type
-                    question_type = exam_question.get('answer_type', 'single-choice')
+        # 優先使用前端發送的題目數據，如果沒有則從MongoDB獲取
+        if frontend_questions and len(frontend_questions) > 0:
+            print("✅ 使用前端發送的題目數據")
+            questions = frontend_questions
+        else:
+            print("🔄 從MongoDB獲取題目數據")
+            # 從MongoDB exam集合獲取題目詳情
+            questions = []
+            for i, question_id in enumerate(question_ids):
+                # 嘗試使用ObjectId查詢
+                exam_question = mongo.db.exam.find_one({"_id": ObjectId(question_id)})
+                if not exam_question:
+                    # 如果ObjectId查詢失敗，嘗試直接查詢
+                    exam_question = mongo.db.exam.find_one({"_id": question_id})
                 
-                question = {
-                    'id': i + 1,
-                    'question_text': exam_question.get('question_text', ''),
-                    'type': question_type,  # 使用正確的題目類型
-                    'options': exam_question.get('options', []),
-                    'correct_answer': exam_question.get('answer', ''),
-                    'original_exam_id': str(exam_question.get('_id', '')),
-                    'image_file': exam_question.get('image_file', ''),
-                    'key_points': exam_question.get('key-points', '')
-                }
-                questions.append(question)
-            else:
-                print(f"⚠️ 找不到題目ID: {question_id}")
-                # 創建一個空的題目記錄
-                question = {
-                    'id': i + 1,
-                    'question_text': f'題目 {i + 1} (ID: {question_id})',
-                    'type': 'single-choice',
-                    'options': [],
-                    'correct_answer': '',
-                    'original_exam_id': question_id,
-                    'image_file': '',
-                    'key_points': ''
-                }
-                questions.append(question)
+                if exam_question:
+                    # 正確讀取題目類型
+                    exam_type = exam_question.get('type', 'single')
+                    if exam_type == 'group':
+                        # 如果是題組，讀取子題目的answer_type
+                        sub_questions = exam_question.get('sub_questions', [])
+                        if sub_questions:
+                            # 使用第一個子題目的類型
+                            question_type = sub_questions[0].get('answer_type', 'single-choice')
+                        else:
+                            question_type = 'single-choice'
+                    else:
+                        # 如果是單題，直接讀取answer_type
+                        question_type = exam_question.get('answer_type', 'single-choice')
+                    
+                    question = {
+                        'id': i + 1,
+                        'question_text': exam_question.get('question_text', ''),
+                        'type': question_type,  # 使用正確的題目類型
+                        'options': exam_question.get('options', []),
+                        'correct_answer': exam_question.get('answer', ''),
+                        'original_exam_id': str(exam_question.get('_id', '')),
+                        'image_file': exam_question.get('image_file', ''),
+                        'key_points': exam_question.get('key-points', '')
+                    }
+                    questions.append(question)
+                else:
+                    print(f"⚠️ 找不到題目ID: {question_id}")
+                    # 創建一個空的題目記錄
+                    question = {
+                        'id': i + 1,
+                        'question_text': f'題目 {i + 1} (ID: {question_id})',
+                        'type': 'single-choice',
+                        'options': [],
+                        'correct_answer': '',
+                        'original_exam_id': question_id,
+                        'image_file': '',
+                        'key_points': ''
+                    }
+                    questions.append(question)
         
         # 成功獲取題目詳情
     
@@ -268,32 +286,35 @@ def submit_quiz():
     answered_questions = []  # 已作答題目（所有類型都使用AI評分）
     unanswered_questions = []    # 未作答題目
     
-    for i in range(total_questions):
-        question = questions[i]
-        question_type = question.get('type', '')
-        user_answer = answers.get(str(i))
+    # 處理已作答題目
+    for i, question in enumerate(questions):
+        question_id = question.get('original_exam_id', '')
+        user_answer = answers.get(str(i), '')
         
-        # 檢查題目狀態 - 判斷是否已作答
-        if (user_answer is None or 
-            user_answer == "" or 
-            user_answer == "null" or 
-            user_answer == "undefined" or
-            (isinstance(user_answer, str) and user_answer.strip() == "")):
+        if user_answer:  # 只處理有答案的題目
+            # 獲取作答時間（秒數）
+            answer_time_seconds = question_answer_times.get(str(i), 0)
+            
+            # 調試日誌
+            print(f"🔍 Debug: 題目 {i} - answer_time_seconds: {answer_time_seconds}")
+            
+            # 構建題目資料
+            q_data = {
+                'index': i,
+                'question': question,
+                'user_answer': user_answer,
+                'answer_time_seconds': answer_time_seconds  # 每題作答時間（秒）
+            }
+            
+            answered_questions.append(q_data)
+        else:
             # 未作答題目：收集到未作答列表
             unanswered_count += 1
             unanswered_questions.append({
                 'index': i,
                 'question': question,
                 'user_answer': '',
-                'question_type': question_type
-            })
-        else:
-            # 已作答題目：收集到已作答列表（所有類型都使用AI評分）
-            answered_questions.append({
-                'index': i,
-                'question': question,
-                'user_answer': user_answer,
-                'question_type': question_type
+                'question_type': question.get('type', '')
             })
 
     
@@ -307,7 +328,7 @@ def submit_quiz():
         for q_data in answered_questions:
             question = q_data['question']
             user_answer = q_data['user_answer']
-            question_type = q_data['question_type']
+            question_type = question.get('type', '')
             
             # 對於AI評分，使用原始完整答案，不進行截斷
             # 這樣AI能看到完整的圖片內容，評分更準確
@@ -344,7 +365,7 @@ def submit_quiz():
                 wrong_questions.append({
                     'question_id': question.get('id', q_data['index'] + 1),
                     'question_text': question.get('question_text', ''),
-                    'question_type': q_data['question_type'],
+                    'question_type': question.get('type', ''),  # 從question對象獲取type
                     'user_answer': q_data['user_answer'],
                     'correct_answer': question.get('correct_answer', ''),
                     'options': question.get('options', []),
@@ -354,6 +375,13 @@ def submit_quiz():
                     'score': score,
                     'feedback': feedback
                 })
+            
+            # 保存AI評分結果到 answered_questions 中，供後續使用
+            q_data['ai_result'] = {
+                'is_correct': is_correct,
+                'score': score,
+                'feedback': feedback
+            }
         
         # AI批量評分完成
     else:
@@ -436,45 +464,46 @@ def submit_quiz():
         
         # 儲存所有題目的用戶答案到 quiz_answers 表
         # 1. 儲存已作答題目（AI評分結果）
-        for q_data in answered_questions:
-            i = q_data['index']
+        for i, q_data in enumerate(answered_questions):
             question = q_data['question']
             user_answer = q_data['user_answer']
             question_id = question.get('original_exam_id', '')
             
-            # 檢查是否為錯題
-            is_wrong = any(wrong_q.get('original_exam_id') == question_id for wrong_q in wrong_questions)
-            is_correct = not is_wrong
+            # 獲取AI評分結果
+            ai_result = q_data.get('ai_result', {})
+            is_correct = ai_result.get('is_correct', False)
+            score = ai_result.get('score', 0)
+            feedback = ai_result.get('feedback', {})
+            
+            # 獲取作答時間（秒數）
+            answer_time_seconds = q_data.get('answer_time_seconds', 0)
+            
+            # 調試日誌
+            print(f"🔍 Debug: 保存題目 {i} - answer_time_seconds: {answer_time_seconds}")
             
             # 構建用戶答案資料
             answer_data = {
                 'answer': user_answer,
-                'feedback': {}  # 答對的題目沒有 feedback
+                'feedback': feedback  # 使用AI批改的feedback
             }
-            
-            # 如果是錯題，添加 feedback
-            if is_wrong:
-                wrong_q = next((wq for wq in wrong_questions if wq.get('original_exam_id') == question_id), None)
-                if wrong_q:
-                    answer_data['feedback'] = wrong_q.get('feedback', {})
-            
-            score = 0 if is_wrong else 100
             
             # 使用新的長答案存儲方法，保持數據完整性
             stored_answer = _store_long_answer(user_answer, 'unknown', quiz_history_id, question_id, user_email)
             
-            # 插入到 quiz_answers 表
+            # 插入到 quiz_answers 表，包含feedback和作答時間
             conn.execute(text("""
                 INSERT INTO quiz_answers 
-                (quiz_history_id, user_email, mongodb_question_id, user_answer, is_correct, score)
-                VALUES (:quiz_history_id, :user_email, :mongodb_question_id, :user_answer, :is_correct, :score)
+                (quiz_history_id, user_email, mongodb_question_id, user_answer, is_correct, score, feedback, answer_time_seconds)
+                VALUES (:quiz_history_id, :user_email, :mongodb_question_id, :user_answer, :is_correct, :score, :feedback, :answer_time_seconds)
             """), {
                 'quiz_history_id': quiz_history_id,
                 'user_email': user_email,
                 'mongodb_question_id': question_id,
                 'user_answer': stored_answer,  # 使用存儲後的答案引用
                 'is_correct': is_correct,
-                'score': score
+                'score': score,
+                'feedback': json.dumps(feedback),  # 將feedback轉換為JSON字符串
+                'answer_time_seconds': answer_time_seconds  # 每題作答時間（秒）
             })
         
         # 2. 儲存未作答題目
@@ -492,15 +521,16 @@ def submit_quiz():
             # 插入到 quiz_answers 表
             conn.execute(text("""
                 INSERT INTO quiz_answers 
-                (quiz_history_id, user_email, mongodb_question_id, user_answer, is_correct, score)
-                VALUES (:quiz_history_id, :user_email, :mongodb_question_id, :user_answer, :is_correct, :score)
+                (quiz_history_id, user_email, mongodb_question_id, user_answer, is_correct, score, answer_time_seconds)
+                VALUES (:quiz_history_id, :user_email, :mongodb_question_id, :user_answer, :is_correct, :score, :answer_time_seconds)
             """), {
                 'quiz_history_id': quiz_history_id,
                 'user_email': user_email,
                 'mongodb_question_id': question_id,
                 'user_answer': '',  # 未作答題目答案為空
                 'is_correct': False,  # 未作答題目標記為錯誤
-                'score': 0
+                'score': 0,
+                'answer_time_seconds': 0
             })
         
         # 保留原有的錯題儲存邏輯（向後兼容）
@@ -561,9 +591,9 @@ def submit_quiz():
                     'question_text': q_data['question'].get('question_text', ''),
                     'user_answer': q_data['user_answer'],
                     'correct_answer': q_data['question'].get('correct_answer', ''),
-                    'is_correct': not any(wrong_q.get('original_exam_id') == q_data['question'].get('original_exam_id', '') for wrong_q in wrong_questions),
-                    'score': next((wrong_q.get('score', 0) for wrong_q in wrong_questions if wrong_q.get('original_exam_id') == q_data['question'].get('original_exam_id', '')), 100),
-                    'feedback': next((wrong_q.get('feedback', {}) for wrong_q in wrong_questions if wrong_q.get('original_exam_id') == q_data['question'].get('original_exam_id', '')), {})
+                    'is_correct': q_data.get('ai_result', {}).get('is_correct', False),
+                    'score': q_data.get('ai_result', {}).get('score', 0),
+                    'feedback': q_data.get('ai_result', {}).get('feedback', {})
                 }
                 for q_data in answered_questions
             ]
@@ -724,7 +754,7 @@ def get_quiz_result(result_id):
 
         # 獲取所有題目的用戶答案（從quiz_answers表）
         answers_result = conn.execute(text("""
-            SELECT mongodb_question_id, user_answer, is_correct, score, created_at
+            SELECT mongodb_question_id, user_answer, is_correct, score, feedback, answer_time_seconds, created_at
             FROM quiz_answers 
             WHERE quiz_history_id = :quiz_history_id
             ORDER BY created_at
@@ -751,7 +781,9 @@ def get_quiz_result(result_id):
                 'user_answer': json.loads(answer[1]) if answer[1] else '',
                 'is_correct': bool(answer[2]),
                 'score': float(answer[3]) if answer[3] else 0,
-                'answer_time': answer[4].isoformat() if answer[4] else None
+                'feedback': json.loads(answer[4]) if answer[4] else {}, # 將JSON字符串轉換回Python字典
+                'answer_time_seconds': answer[5] if answer[5] else 0,
+                'answer_time': answer[6].isoformat() if answer[6] else None
             }
         
         # 獲取題目ID列表
@@ -852,6 +884,7 @@ def get_quiz_result(result_id):
                 'is_marked': False,  # 目前沒有標記功能
                 'user_answer': answer_info.get('user_answer', {}).get('answer', ''),
                 'score': answer_info.get('score', 0),
+                'answer_time_seconds': answer_info.get('answer_time_seconds', 0),
                 'answer_time': answer_info.get('answer_time')
             }
             

@@ -163,10 +163,11 @@ TEACHER_STYLE = """你是一位經驗豐富的資管系教授，正在一對一�
 
 # ==================== 核心功能 ====================
 
-def handle_tutoring_conversation(user_email: str, question: str, user_answer: str, correct_answer: str, user_input: str = None) -> dict:
+def handle_tutoring_conversation(user_email: str, question: str, user_answer: str, correct_answer: str, user_input: str = None, grading_feedback: dict = None) -> dict:
     """
     處理AI教學對話 - 重構版本
     整合了會話管理、知識檢索、AI回應和學習進度更新
+    新增：支援AI批改的評分反饋
     """
     try:
         # 1. 獲取或創建會話
@@ -180,10 +181,10 @@ def handle_tutoring_conversation(user_email: str, question: str, user_answer: st
         # 3. 構建AI提示詞
         if is_initial:
             # 初始化：分析學生答案，提出引導問題
-            prompt = build_initial_prompt(question, user_answer, correct_answer)
+            prompt = build_initial_prompt(question, user_answer, correct_answer, grading_feedback)
         else:
             # 後續對話：基於學生回答進行教學
-            prompt = build_followup_prompt(question, user_answer, correct_answer, user_input, conversation_history)
+            prompt = build_followup_prompt(question, user_answer, correct_answer, user_input, conversation_history, grading_feedback)
         
         # 4. 增強提示詞（RAG功能）
         enhanced_prompt = enhance_prompt_with_knowledge(prompt, question)
@@ -359,7 +360,7 @@ def enhance_prompt_with_knowledge(prompt: str, question: str) -> str:
             return prompt
         
         # 3. 檢索相關知識
-        knowledge_results = search_knowledge(question, top_k=3)
+        knowledge_results = search_knowledge(question, top_k=2)  # 減少檢索數量
         
         if knowledge_results:
             # 4. 構建知識增強部分
@@ -495,13 +496,26 @@ def get_or_create_session(user_email: str, question: str) -> dict:
     
     return learning_sessions[session_key]
 
-def build_initial_prompt(question: str, user_answer: str, correct_answer: str) -> str:
+def build_initial_prompt(question: str, user_answer: str, correct_answer: str, grading_feedback: dict = None) -> str:
     """構建初始化提示詞"""
+    
+    # 如果有AI批改的評分反饋，加入提示詞中
+    feedback_section = ""
+    if grading_feedback:
+        feedback_section = f"""
+
+**AI批改評分反饋（請參考使用）：**
+- 優點：{grading_feedback.get('strengths', '無')}
+- 需要改進：{grading_feedback.get('weaknesses', '無')}
+- 學習建議：{grading_feedback.get('suggestions', '無')}
+- 評分說明：{grading_feedback.get('explanation', '無')}
+"""
+    
     return f"""{TEACHER_STYLE}
 
 **題目：** {question}
 **學生答案：** {user_answer}
-**正確答案：** {correct_answer}
+**正確答案：** {correct_answer}{feedback_section}
 
 請分析學生的答案，找出需要改進的地方，並提出一個具體的引導問題來開始教學。
 
@@ -509,14 +523,14 @@ def build_initial_prompt(question: str, user_answer: str, correct_answer: str) -
 
 **回應要求：**
 - 語氣親切自然，如同真正的老師
-- 分析學生答案的優缺點
+- 分析學生答案的優缺點（可參考AI批改反饋）
 - 提出具體的引導問題
 - 不要給出評分（初始化階段）
 - 絕對不要包含「評分：」字樣
 
 請現在生成開場白："""
 
-def build_followup_prompt(question: str, user_answer: str, correct_answer: str, user_input: str, conversation_history: list) -> str:
+def build_followup_prompt(question: str, user_answer: str, correct_answer: str, user_input: str, conversation_history: list, grading_feedback: dict = None) -> str:
     """構建後續對話提示詞"""
     # 獲取當前學習階段指導
     current_stage = 'core_concept_confirmation'  # 預設值
@@ -533,11 +547,23 @@ def build_followup_prompt(question: str, user_answer: str, correct_answer: str, 
     
     stage_guidance = get_stage_guidance(current_stage)
     
+    # 如果有AI批改的評分反饋，加入提示詞中
+    feedback_section = ""
+    if grading_feedback:
+        feedback_section = f"""
+
+**AI批改評分反饋（請參考使用）：**
+- 優點：{grading_feedback.get('strengths', '無')}
+- 需要改進：{grading_feedback.get('weaknesses', '無')}
+- 學習建議：{grading_feedback.get('suggestions', '無')}
+- 評分說明：{grading_feedback.get('explanation', '無')}
+"""
+    
     return f"""{TEACHER_STYLE}
 
 **題目：** {question}
 **正確答案：** {correct_answer}
-**學生最新回答：** {user_input}
+**學生最新回答：** {user_input}{feedback_section}
 
 **對話歷史：**
 {format_conversation_history(conversation_history)}
@@ -545,7 +571,19 @@ def build_followup_prompt(question: str, user_answer: str, correct_answer: str, 
 **當前學習階段指導：**
 {stage_guidance}
 
-請基於學生的回答進行教學指導，並給出評分。
+請基於學生的回答進行教學指導，並按照以下步驟進行：
+
+**教學步驟：**
+1. **評估學生回答**：分析學生回答的質量
+2. **給出正確答案**：如果學生回答錯誤，直接給出正確答案
+3. **提出下一個問題**：基於當前進度，提出相關的延伸問題
+4. **給出評分**：根據學生回答質量給予適當分數
+
+**重要要求：**
+- 不要重複問學生「你知道嗎？」或「你覺得呢？」
+- 如果學生回答錯誤，直接給出正確答案
+- 避免陷入循環提問
+- 每次都要給出評分
 
 **評分邏輯：**
 1. 第一個問題：根據學生回答質量，給予0-95分的基礎評分
@@ -774,7 +812,15 @@ def call_gemini_api(prompt: str) -> str:
         if not model:
             return "抱歉，AI服務暫時不可用，請稍後再試。"
         
-        response = model.generate_content(prompt)
+        # 設置生成參數，確保回應完整
+        generation_config = {
+            'max_output_tokens': 4000,  # 增加最大輸出長度
+            'temperature': 0.7,
+            'top_p': 0.8,
+            'top_k': 40
+        }
+        
+        response = model.generate_content(prompt, generation_config=generation_config)
         
         # 檢查回應是否有效
         if not response or not hasattr(response, 'text'):
