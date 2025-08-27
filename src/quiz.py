@@ -13,11 +13,103 @@ from bson import ObjectId
 from src.grade_answer import batch_grade_ai_questions
 import time
 import hashlib
+import logging
+from typing import List
+
 quiz_bp = Blueprint('quiz', __name__)
 
+# 設置日誌
+logger = logging.getLogger(__name__)
 
+# ==================== 工具函數 ====================
 
-
+def get_quiz_from_database(quiz_ids: List[str]) -> dict:
+    """從資料庫獲取考卷數據"""
+    try:
+        # 從 MongoDB 獲取考卷數據
+        # 根據你提供的數據結構，quiz_ids 應該是考卷的 _id，而不是題目的 _id
+        quiz_doc = None
+        
+        for quiz_id in quiz_ids:
+            try:
+                # 嘗試使用 ObjectId 查詢
+                quiz_doc = mongo.db.quizzes.find_one({"_id": ObjectId(quiz_id)})
+                if not quiz_doc:
+                    # 如果 ObjectId 查詢失敗，嘗試直接查詢
+                    quiz_doc = mongo.db.quizzes.find_one({"_id": quiz_id})
+                
+                if quiz_doc:
+                    logger.info(f"找到考卷: {quiz_doc.get('title', 'Unknown')}")
+                    break
+                    
+            except Exception as e:
+                logger.error(f"處理考卷ID {quiz_id} 時發生錯誤: {e}")
+                continue
+        
+        if not quiz_doc:
+            return {
+                'success': False,
+                'message': '沒有找到有效的考卷數據'
+            }
+        
+        # 從考卷文檔中提取題目數據
+        questions = quiz_doc.get('questions', [])
+        if not questions:
+            return {
+                'success': False,
+                'message': '考卷中沒有題目數據'
+            }
+        
+        # 轉換題目格式為前端需要的格式
+        formatted_questions = []
+        for i, question in enumerate(questions):
+            formatted_question = {
+                'id': question.get('id', i + 1),
+                'question_text': question.get('question_text', ''),
+                'type': question.get('type', 'single-choice'),
+                'options': question.get('options', []),
+                'correct_answer': question.get('correct_answer', ''),
+                'original_exam_id': question.get('original_exam_id', ''),
+                'image_file': question.get('image_file', ''),
+                'key_points': question.get('key_points', ''),
+                'explanation': question.get('explanation', ''),
+                'topic': question.get('topic', ''),
+                'difficulty': question.get('difficulty', 'medium')
+            }
+            formatted_questions.append(formatted_question)
+        
+        # 構建考卷數據
+        quiz_data = {
+            'quiz_id': quiz_doc.get('quiz_id', f"ai_generated_{int(datetime.now().timestamp())}"),
+            'template_id': f"ai_template_{int(datetime.now().timestamp())}",
+            'questions': formatted_questions,
+            'time_limit': quiz_doc.get('time_limit', 60),
+            'quiz_info': {
+                'title': quiz_doc.get('title', f'AI生成的考卷 ({len(formatted_questions)}題)'),
+                'exam_type': quiz_doc.get('type', 'knowledge'),
+                'topic': quiz_doc.get('metadata', {}).get('topic', '計算機概論'),
+                'difficulty': quiz_doc.get('metadata', {}).get('difficulty', 'medium'),
+                'question_count': len(formatted_questions),
+                'time_limit': quiz_doc.get('time_limit', 60),
+                'total_score': len(formatted_questions) * 5,
+                'created_at': quiz_doc.get('create_time', datetime.now().isoformat())
+            },
+            'database_ids': quiz_ids
+        }
+        
+        logger.info(f"成功載入考卷: {quiz_data['quiz_info']['title']}, 題目數量: {len(formatted_questions)}")
+        
+        return {
+            'success': True,
+            'data': quiz_data
+        }
+        
+    except Exception as e:
+        logger.error(f"獲取考卷數據時發生錯誤: {e}")
+        return {
+            'success': False,
+            'message': f'獲取考卷數據失敗: {str(e)}'
+        }
 
 
 def init_quiz_tables():
@@ -435,11 +527,15 @@ def submit_quiz():
                 'accuracy_rate': round(accuracy_rate, 2),
                 'average_score': round(average_score, 2),
                 'time_taken': time_taken,
-                'submit_time': datetime.now(),
+                                'submit_time': datetime.now(),
                 'quiz_history_id': quiz_history_id
             })
         else:
             # 創建新記錄
+            # 對於AI生成的考卷，quiz_template_id設為NULL（資料庫允許NULL）
+            # 對於傳統考卷，使用整數template_id
+            db_quiz_template_id = None if quiz_template_id is None else quiz_template_id
+            
             result = conn.execute(text("""
                 INSERT INTO quiz_history 
                 (quiz_template_id, user_email, quiz_type, total_questions, answered_questions,
@@ -447,7 +543,7 @@ def submit_quiz():
                 VALUES (:quiz_template_id, :user_email, :quiz_type, :total_questions, :answered_questions,
                        :correct_count, :wrong_count, :accuracy_rate, :average_score, :total_time_taken, :submit_time, :status)
             """), {
-                'quiz_template_id': quiz_template_id,
+                'quiz_template_id': db_quiz_template_id,
                 'user_email': user_email,
                 'quiz_type': quiz_type,
                 'total_questions': total_questions,
@@ -1543,4 +1639,32 @@ def get_long_answer(answer_id: str):
         return jsonify({
             'success': False,
             'error': f'獲取長答案失敗: {str(e)}'
+        }), 500
+
+@quiz_bp.route('/get-quiz-from-database', methods=['POST', 'OPTIONS'])
+def get_quiz_from_database_endpoint():
+    """從資料庫獲取考卷數據"""
+    try:
+        if request.method == 'OPTIONS':
+            return jsonify({'success': True})
+        
+        data = request.get_json()
+        quiz_ids = data.get('quiz_ids', [])
+        
+        if not quiz_ids:
+            return jsonify({
+                'success': False,
+                'message': '缺少考卷ID'
+            }), 400
+        
+        # 調用獲取考卷數據函數
+        result = get_quiz_from_database(quiz_ids)
+        
+        return jsonify(result)
+        
+    except Exception as e:
+        logger.error(f"❌ 獲取考卷數據失敗: {e}")
+        return jsonify({
+            'success': False,
+            'message': f'獲取考卷數據失敗：{str(e)}'
         }), 500
