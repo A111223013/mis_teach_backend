@@ -7,6 +7,7 @@ from src.login import login_bp
 from src.register import register_bp
 from src.dashboard import dashboard_bp
 from src.quiz import quiz_bp, init_quiz_tables
+from src.ai_quiz import ai_quiz_bp
 from src.materials_api import materials_bp
 import os
 
