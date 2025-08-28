@@ -7,6 +7,7 @@ from src.login import login_bp
 from src.register import register_bp
 from src.dashboard import dashboard_bp
 from src.quiz import quiz_bp, init_quiz_tables
+from src.ai_quiz import ai_quiz_bp
 from src.materials_api import materials_bp
 import os
 
@@ -62,6 +63,7 @@ app.register_blueprint(login_bp, url_prefix='/login')
 app.register_blueprint(register_bp, url_prefix='/register')
 app.register_blueprint(dashboard_bp, url_prefix='/dashboard')
 app.register_blueprint(quiz_bp, url_prefix='/quiz')
+app.register_blueprint(ai_quiz_bp, url_prefix='/ai_quiz')
 app.register_blueprint(ai_teacher_bp, url_prefix='/ai_teacher')
 app.register_blueprint(user_guide_bp, url_prefix='/user-guide')
 app.register_blueprint(web_ai_bp, url_prefix='/web-ai')
