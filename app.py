@@ -21,6 +21,7 @@ from src.ai_teacher import ai_teacher_bp
 from src.user_guide_api import user_guide_bp
 from src.web_ai_assistant import web_ai_bp
 from src.linebot import linebot_bp  # 新增 LINE Bot Blueprint
+from src.learning_analytics import analytics_bp  # 從統一模組導入學習分析 API Blueprint
 
 # Initialize Flask app
 app = Flask(__name__)
@@ -66,6 +67,7 @@ app.register_blueprint(user_guide_bp, url_prefix='/user-guide')
 app.register_blueprint(web_ai_bp, url_prefix='/web-ai')
 app.register_blueprint(linebot_bp, url_prefix='/linebot') # 註冊 LINE Bot Blueprint
 app.register_blueprint(materials_bp, url_prefix="/materials")
+app.register_blueprint(analytics_bp, url_prefix="/analytics")  # 註冊學習分析 API Blueprint
 
 # 創建靜態文件服務路由 (用於圖片)
 @app.route('/static/images/<path:filename>')
