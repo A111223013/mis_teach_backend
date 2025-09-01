@@ -1,0 +1,482 @@
+[
+  {
+    "name": "數位邏輯基礎 (類比vs數位訊號, 布林代數Boolean Algebra, 邏輯閘-AND/OR/NOT/XOR/NAND/NOR)",
+    "block_title": "資料庫基礎與SQL查詢 (SQL基礎, 查詢進階)",
+    "dependencies": []
+  },
+  {
+    "name": "網路基礎概論 (定義與功能, 網路分類-LAN/MAN/WAN, 拓樸-Star/Bus/Ring/Mesh, 效能指標-頻寬/延遲/吞吐量)",
+    "block_title": "應用安全與管理 (應用安全, 安全管理)",
+    "dependencies": []
+  },
+  {
+    "name": "資安維運技術 (漏洞管理與修補, 事件回應Incident Response, 備援與災難復原)",
+    "block_title": "記憶體與錯誤處理 (記憶體管理, 例外處理與錯誤處理)",
+    "dependencies": []
+  },
+  {
+    "name": "雲端基礎架構 (資料中心Data Center, 分散式儲存-HDFS/Ceph, 負載平衡Load Balancer)",
+    "block_title": "軟體工程基礎 (軟體工程概論)",
+    "dependencies": []
+  },
+  {
+    "name": "記憶體系統 (RAM, ROM, 記憶體位址與資料匯流排)",
+    "block_title": "軟體工程基礎 (軟體工程概論)",
+    "dependencies": []
+  },
+  {
+    "name": "雲端整合應用 (雲端與AI/大數據整合)",
+    "block_title": "資料庫安全與維護 (資料庫安全與備援)",
+    "dependencies": []
+  },
+  {
+    "name": "資料連結層技術 (封包框架, MAC位址, 錯誤偵測-CRC, 乙太網路Ethernet, ARP)",
+    "block_title": "網路基礎與架構 (網路基礎概念, 網路模型)",
+    "dependencies": []
+  },
+  {
+    "name": "系統與應用安全 (作業系統安全, Web安全-SQL Injection/XSS/CSRF, 行動應用安全, 雲端安全)",
+    "block_title": "網路基礎與架構 (網路基礎概念, 網路模型)",
+    "dependencies": []
+  },
+  {
+    "name": "線性資料結構 (Array, Linked List, Stack, Queue)",
+    "block_title": "人工智慧基礎 (人工智慧概論, 機器學習基礎)",
+    "dependencies": []
+  },
+  {
+    "name": "記憶體管理 (Stack/Heap, Pointer, 記憶體配置/釋放, Garbage Collection)",
+    "block_title": "人工智慧基礎 (人工智慧概論, 機器學習基礎)",
+    "dependencies": []
+  },
+  {
+    "name": "資安基礎概念 (CIA三要素-Confidentiality/Integrity/Availability, 常見威脅-惡意程式/社交工程/網路攻擊)",
+    "block_title": "加密技術與應用 (密碼學基礎)",
+    "dependencies": []
+  },
+  {
+    "name": "雜湊技術 (Hash Function, 碰撞解決, Hash Table)",
+    "block_title": "軟體專案管理 (軟體專案管理)",
+    "dependencies": []
+  },
+  {
+    "name": "AI倫理與社會影響 (AI倫理與偏差, AI安全與風險, AI與未來工作)",
+    "block_title": "網路基礎與架構 (網路基礎概念, 網路模型)",
+    "dependencies": []
+  },
+  {
+    "name": "軟體專案管理 (專案規劃與時程估算-PERT/Gantt, 風險管理, 成本估算-COCOMO)",
+    "block_title": "網路基礎與架構 (網路基礎概念, 網路模型)",
+    "dependencies": []
+  },
+  {
+    "name": "數位系統設計 (狀態機State Machine, CPLD, FPGA)",
+    "block_title": "開發方法與流程 (軟體開發方法)",
+    "dependencies": []
+  },
+  {
+    "name": "深度學習架構 (神經網路基礎-Perceptron/MLP, CNN, RNN/LSTM/GRU, Transformer/Attention)",
+    "block_title": "AI應用與影響 (AI應用領域, AI與社會)",
+    "dependencies": []
+  },
+  {
+    "name": "資料預處理與特徵工程 (資料前處理-Normalization/Standardization, 特徵選擇/降維-PCA/LDA, 特徵抽取)",
+    "block_title": "雲端基礎與虛擬化 (雲端計算概論, 虛擬化技術)",
+    "dependencies": []
+  },
+  {
+    "name": "加密技術綜合 (對稱式加密-AES/DES, 非對稱式加密-RSA/ECC, 雜湊函數-MD5/SHA-2/SHA-3)",
+    "block_title": "雲端基礎與虛擬化 (雲端計算概論, 虛擬化技術)",
+    "dependencies": []
+  },
+  {
+    "name": "行程與執行緒管理 (Process/Thread, PCB, 行程排程Scheduling演算法, 行程間通訊IPC)",
+    "block_title": "記憶體與錯誤處理 (記憶體管理, 例外處理與錯誤處理)",
+    "dependencies": []
+  },
+  {
+    "name": "IT專案管理與評估",
+    "block_title": "記憶體與錯誤處理 (記憶體管理, 例外處理與錯誤處理)",
+    "dependencies": []
+  },
+  {
+    "name": "商業智慧系統 (資料倉儲Data Warehouse, ETL流程, 商業智慧BI)",
+    "block_title": "網路協定分層 (實體層與資料連結層, 網路層, 傳輸層, 應用層)",
+    "dependencies": []
+  },
+  {
+    "name": "圖結構與演算法 (Graph表示法-鄰接矩陣/鄰接串列, BFS/DFS, MST-Prim's/Kruskal's, 最短路徑-Dijkstra's/Bellman-Ford)",
+    "block_title": "網路協定分層 (實體層與資料連結層, 網路層, 傳輸層, 應用層)",
+    "dependencies": []
+  },
+  {
+    "name": "SQL進階查詢技術 (聚合函數-COUNT/AVG/SUM/MAX/MIN, 子查詢, JOIN-Inner/Outer/Cross)",
+    "block_title": "雲端基礎與虛擬化 (雲端計算概論, 虛擬化技術)",
+    "dependencies": []
+  },
+  {
+    "name": "資料結構與演算法基礎 (定義與重要性, 效能分析-時間/空間複雜度, Big O Notation)",
+    "block_title": "雲端基礎與虛擬化 (雲端計算概論, 虛擬化技術)",
+    "dependencies": []
+  },
+  {
+    "name": "實體層技術 (訊號編碼, 傳輸媒介-有線/無線)",
+    "block_title": "雲端基礎與虛擬化 (雲端計算概論, 虛擬化技術)",
+    "dependencies": []
+  },
+  {
+    "name": "企業系統類型 (交易處理系統TPS, 管理報表系統MIS, 決策支援系統DSS, 企業資源規劃ERP, 供應鏈管理SCM, 顧客關係管理CRM)",
+    "block_title": "雲端基礎與虛擬化 (雲端計算概論, 虛擬化技術)",
+    "dependencies": []
+  },
+  {
+    "name": "軟體工程概論 (定義, 原則, 軟體生命週期)",
+    "block_title": "程式語言基礎 (程式語言概論, 語法與語義)",
+    "dependencies": []
+  },
+  {
+    "name": "非監督學習技術 (聚類演算法-K-Means/分層聚類)",
+    "block_title": "演算法技術 (雜湊表與演算法, 排序與搜尋)",
+    "dependencies": []
+  },
+  {
+    "name": "序向邏輯電路設計 (閂鎖器Latch/正反器Flip-Flop, 計數器Counter, 暫存器Register)",
+    "block_title": "演算法技術 (雜湊表與演算法, 排序與搜尋)",
+    "dependencies": []
+  },
+  {
+    "name": "SQL語言綜合 (DDL, DML-SELECT/INSERT/UPDATE/DELETE, DCL-GRANT/REVOKE, TCL-COMMIT/ROLLBACK)",
+    "block_title": "深度學習技術 (深度學習)",
+    "dependencies": []
+  },
+  {
+    "name": "資料庫基礎概念 (資料/資訊/知識, 定義與特性, 系統組成: DBMS/Database/Application)",
+    "block_title": "深度學習技術 (深度學習)",
+    "dependencies": []
+  },
+  {
+    "name": "進階資料處理 (資料探勘Data Mining, 大數據-Big Data/Hadoop/Spark)",
+    "block_title": "資料庫設計與正規化 (正規化與設計)",
+    "dependencies": []
+  },
+  {
+    "name": "資安治理與風險管理 (風險評估, ISO 27001與安全治理, 零信任架構Zero Trust)",
+    "block_title": "資料庫設計與正規化 (正規化與設計)",
+    "dependencies": []
+  },
+  {
+    "name": "軟體品質與管理 (軟體品質模型-ISO 9126/25010, 品質保證流程, Code Review與Refactoring)",
+    "block_title": "程式設計實務 (程式語言的實務應用)",
+    "dependencies": []
+  },
+  {
+    "name": "NoSQL資料庫實作 (MongoDB, Cassandra, Redis)",
+    "block_title": "軟體維護與品質 (軟體維護與演化, 軟體品質保證)",
+    "dependencies": []
+  },
+  {
+    "name": "OOP程式設計 (Class/Object, Encapsulation, Inheritance, Polymorphism)",
+    "block_title": "記憶體與系統設計 (記憶體單元與儲存, 數位系統設計)",
+    "dependencies": []
+  },
+  {
+    "name": "同步與死結處理 (競爭條件Race Condition/互斥Mutual Exclusion, 臨界區Critical Section, 號誌Semaphore/監控器Monitor, 死結Deadlock處理)",
+    "block_title": "AI應用與影響 (AI應用領域, AI與社會)",
+    "dependencies": []
+  },
+  {
+    "name": "需求工程 (Requirement Engineering)",
+    "block_title": "資料庫設計與正規化 (正規化與設計)",
+    "dependencies": []
+  },
+  {
+    "name": "網路分層模型 (OSI七層, TCP/IP模型)",
+    "block_title": "AI應用與影響 (AI應用領域, AI與社會)",
+    "dependencies": []
+  },
+  {
+    "name": "分散式系統理論 (CAP理論-Consistency/Availability/Partition Tolerance)",
+    "block_title": "資料處理與模型優化 (特徵工程, 模型評估與驗證)",
+    "dependencies": []
+  },
+  {
+    "name": "資料模型演進 (階層式, 網路, 關聯式, 物件導向, NoSQL與新興模型)",
+    "block_title": "資訊系統基礎 (MIS概論, 資訊系統類型)",
+    "dependencies": []
+  },
+  {
+    "name": "資料庫安全管理 (使用者授權與角色, SQL Injection防範)",
+    "block_title": "記憶體與錯誤處理 (記憶體管理, 例外處理與錯誤處理)",
+    "dependencies": []
+  },
+  {
+    "name": "視圖 (View) 的應用與管理",
+    "block_title": "記憶體與錯誤處理 (記憶體管理, 例外處理與錯誤處理)",
+    "dependencies": []
+  },
+  {
+    "name": "人工智慧概論 (定義與歷史, 弱AI vs 強AI)",
+    "block_title": "程式結構與設計 (控制結構, 函數與參數傳遞, 物件導向程式設計OOP)",
+    "dependencies": []
+  },
+  {
+    "name": "數位簽章與憑證體系",
+    "block_title": "程式結構與設計 (控制結構, 函數與參數傳遞, 物件導向程式設計OOP)",
+    "dependencies": []
+  },
+  {
+    "name": "開發維運工具 (軟體版本管理-Git/SVN, 持續整合與持續部署CI/CD)",
+    "block_title": "機器學習演算法 (常見演算法)",
+    "dependencies": []
+  },
+  {
+    "name": "電子商務與知識管理 (E-Commerce, 知識管理KM)",
+    "block_title": "AI應用與影響 (AI應用領域, AI與社會)",
+    "dependencies": []
+  },
+  {
+    "name": "傳輸層協定 (TCP/UDP, 三向交握/四次揮手, 流量控制/壅塞控制)",
+    "block_title": "資料庫設計與正規化 (正規化與設計)",
+    "dependencies": []
+  },
+  {
+    "name": "資料庫 vs 檔案系統的比較",
+    "block_title": "應用安全與管理 (應用安全, 安全管理)",
+    "dependencies": []
+  },
+  {
+    "name": "組合邏輯電路設計 (數位電路與邏輯函數, 半加器/全加器, 編碼器Encoder/解碼器Decoder, 多工器Multiplexer/解多工器Demultiplexer, 比較器Comparator)",
+    "block_title": "機器學習演算法 (常見演算法)",
+    "dependencies": []
+  },
+  {
+    "name": "新興安全技術 (區塊鏈與安全, AI在資安中的應用)",
+    "block_title": "AI應用與影響 (AI應用領域, AI與社會)",
+    "dependencies": []
+  },
+  {
+    "name": "開發實踐 (函式庫與框架Library/Framework, 程式碼風格, 單元測試Unit Test/除錯Debugging)",
+    "block_title": "資料庫交易與效能管理 (交易管理, 索引與效能調校)",
+    "dependencies": []
+  },
+  {
+    "name": "基本程式結構 (資料型態與變數, 流程控制-if/for/while/switch, 遞迴Recursion)",
+    "block_title": "深度學習技術 (深度學習)",
+    "dependencies": []
+  },
+  {
+    "name": "大型資料庫架構 (分割Partitioning, 分片Sharding, 分散式資料庫)",
+    "block_title": "演算法技術 (雜湊表與演算法, 排序與搜尋)",
+    "dependencies": []
+  },
+  {
+    "name": "系統設計與建模 (UML圖-Use Case/Class/Sequence/Activity, 系統設計)",
+    "block_title": "資訊系統基礎 (MIS概論, 資訊系統類型)",
+    "dependencies": []
+  },
+  {
+    "name": "系統開發方法論 (系統發展生命週期SDLC, 敏捷式方法Agile)",
+    "block_title": "深度學習技術 (深度學習)",
+    "dependencies": []
+  },
+  {
+    "name": "主要雲端平台服務 (AWS-EC2/S3/RDS/Lambda, Google Cloud Platform, Microsoft Azure)",
+    "block_title": "雲端安全與應用 (雲端安全, 雲端應用)",
+    "dependencies": []
+  },
+  {
+    "name": "資訊系統基礎 (定義, MIS角色與價值, 組織與系統互動)",
+    "block_title": "檔案系統與同步 (檔案系統, 同步與死結)",
+    "dependencies": []
+  },
+  {
+    "name": "樹結構與演算法 (Tree遍歷Traversal, Binary Tree/BST, 平衡樹-AVL/Red-Black Tree, Heap/優先佇列)",
+    "block_title": "資料處理與模型優化 (特徵工程, 模型評估與驗證)",
+    "dependencies": []
+  },
+  {
+    "name": "網路層協定與技術 (IP位址-IPv4/IPv6, 子網路遮罩/CIDR, 路由協定-RIP/OSPF/BGP, NAT, ICMP/Ping)",
+    "block_title": "加密技術與應用 (密碼學基礎)",
+    "dependencies": []
+  },
+  {
+    "name": "模型訓練與評估 (訓練集/驗證集/測試集劃分, 評估指標-Accuracy/Precision/Recall/F1, 交叉驗證, 過擬合/欠擬合)",
+    "block_title": "系統開發與組織影響 (資訊系統開發與導入, 資訊科技與組織)",
+    "dependencies": []
+  },
+  {
+    "name": "檔案系統管理 (架構與功能, 檔案存取方法, 目錄結構, 磁碟空間管理)",
+    "block_title": "邏輯電路設計 (組合邏輯電路, 序向邏輯電路)",
+    "dependencies": []
+  },
+  {
+    "name": "身分認證與存取控制 (使用者認證, 存取控制機制)",
+    "block_title": "資訊安全基礎 (資訊安全概論)",
+    "dependencies": []
+  },
+  {
+    "name": "數位轉型與整合 (數位轉型Digital Transformation, 雲端MIS, AI與MIS整合)",
+    "block_title": "網路與系統防護 (網路安全, 系統安全)",
+    "dependencies": []
+  },
+  {
+    "name": "AI應用領域 (自然語言處理NLP, 電腦視覺CV, 語音辨識, 生成式AI-GAN/Diffusion)",
+    "block_title": "資料庫基礎與SQL查詢 (SQL基礎, 查詢進階)",
+    "dependencies": []
+  },
+  {
+    "name": "雲端安全管理 (身分與存取管理-IAM, 雲端資安標準-CIS/NIST, 雲端加密與防護)",
+    "block_title": "軟體工程基礎 (軟體工程概論)",
+    "dependencies": []
+  },
+  {
+    "name": "反正規化 (Denormalization) 策略與取捨",
+    "block_title": "程式設計實務 (程式語言的實務應用)",
+    "dependencies": []
+  },
+  {
+    "name": "Serverless架構與邊緣運算 (Edge Computing)",
+    "block_title": "深度學習技術 (深度學習)",
+    "dependencies": []
+  },
+  {
+    "name": "備援與高可用性 (備份與還原Backup & Recovery, 高可用性HA, 災難復原DR)",
+    "block_title": "深度學習技術 (深度學習)",
+    "dependencies": []
+  },
+  {
+    "name": "併發控制機制 (鎖定Locking, 死結Deadlock處理)",
+    "block_title": "演算法技術 (雜湊表與演算法, 排序與搜尋)",
+    "dependencies": []
+  },
+  {
+    "name": "物件導向技術綜合 (OOP基礎-Class/Inheritance/Polymorphism, 物件導向分析OOA, 物件導向設計OOD)",
+    "block_title": "資料結構基礎 (資料結構概論)",
+    "dependencies": []
+  },
+  {
+    "name": "開發模型 (瀑布模型Waterfall, 演化式模型Evolutionary, 敏捷開發-Agile/Scrum/XP, DevOps)",
+    "block_title": "資料結構基礎 (資料結構概論)",
+    "dependencies": []
+  },
+  {
+    "name": "雲端計算概論 (定義, 服務模式-IaaS/PaaS/SaaS, 部署模式-公有雲/私有雲/混合雲/多雲)",
+    "block_title": "軟體專案管理 (軟體專案管理)",
+    "dependencies": []
+  },
+  {
+    "name": "效能調優技術 (索引-B-Tree/Hash, 查詢最佳化, 資料庫快取Buffer Pool)",
+    "block_title": "雲端安全與應用 (雲端安全, 雲端應用)",
+    "dependencies": []
+  },
+  {
+    "name": "網路程式設計 (Socket程式設計)",
+    "block_title": "軟體工程基礎 (軟體工程概論)",
+    "dependencies": []
+  },
+  {
+    "name": "虛擬化技術 (系統虛擬化-VMware/KVM/Hyper-V, 容器化-Docker/LXC, 容器編排-Kubernetes)",
+    "block_title": "數位邏輯基礎 (數位邏輯概論)",
+    "dependencies": []
+  },
+  {
+    "name": "網路安全防護 (防火牆Firewall, IDS/IPS, VPN/安全通訊協定-SSL-TLS/IPSec)",
+    "block_title": "演算法技術 (雜湊表與演算法, 排序與搜尋)",
+    "dependencies": []
+  },
+  {
+    "name": "軟體測試綜合 (測試層次-Unit/Integration/System, 測試方法-Black Box/White Box, 自動化測試)",
+    "block_title": "AI應用與影響 (AI應用領域, AI與社會)",
+    "dependencies": []
+  },
+  {
+    "name": "正規化理論與實務 (1NF, 2NF, 3NF, BCNF)",
+    "block_title": "應用安全與管理 (應用安全, 安全管理)",
+    "dependencies": []
+  },
+  {
+    "name": "現代企業應用 (商業智慧BI, 資料倉儲與資料探勘, 即時決策支持系統)",
+    "block_title": "軟體專案管理 (軟體專案管理)",
+    "dependencies": []
+  },
+  {
+    "name": "軟體維護類型 (Corrective/Adaptive/Perfective/Preventive)",
+    "block_title": "程式語言基礎 (程式語言概論, 語法與語義)",
+    "dependencies": []
+  },
+  {
+    "name": "雲端資料庫服務 (AWS RDS, Google Cloud Spanner)",
+    "block_title": "記憶體與系統設計 (記憶體單元與儲存, 數位系統設計)",
+    "dependencies": []
+  },
+  {
+    "name": "無線與行動網路 (無線標準-Wi-Fi/Bluetooth/5G, 行動網路架構-Cellular/Handoff)",
+    "block_title": "資料庫交易與效能管理 (交易管理, 索引與效能調校)",
+    "dependencies": []
+  },
+  {
+    "name": "交易管理與ACID特性",
+    "block_title": "網路安全與管理 (網路安全, 無線與行動網路, 網路管理與新興技術)",
+    "dependencies": []
+  },
+  {
+    "name": "記憶體管理技術 (記憶體分區/分頁Paging, 分段Segmentation, 虛擬記憶體Virtual Memory, 置換演算法Page Replacement)",
+    "block_title": "雲端安全與應用 (雲端安全, 雲端應用)",
+    "dependencies": []
+  },
+  {
+    "name": "應用層協定 (DNS, HTTP/HTTPS, FTP, SMTP, POP3/IMAP)",
+    "block_title": "人工智慧基礎 (人工智慧概論, 機器學習基礎)",
+    "dependencies": []
+  },
+  {
+    "name": "排序與搜尋演算法 (排序-冒泡/選擇/插入/快速/合併/堆積, 搜尋-線性/二元)",
+    "block_title": "數位邏輯基礎 (數位邏輯概論)",
+    "dependencies": []
+  },
+  {
+    "name": "機器學習範疇 (機器學習/深度學習與AI關係, 監督式/非監督式/強化學習)",
+    "block_title": "檔案系統與同步 (檔案系統, 同步與死結)",
+    "dependencies": []
+  },
+  {
+    "name": "新興網路技術 (IoT物聯網網路, SDN軟體定義網路, 雲端網路/邊緣運算)",
+    "block_title": "加密技術與應用 (密碼學基礎)",
+    "dependencies": []
+  },
+  {
+    "name": "基礎機器學習演算法 (線性回歸/邏輯回歸, 決策樹/隨機森林, SVM, KNN)",
+    "block_title": "檔案系統與同步 (檔案系統, 同步與死結)",
+    "dependencies": []
+  },
+  {
+    "name": "錯誤處理機制 (Exception處理, try-catch-finally)",
+    "block_title": "網路協定分層 (實體層與資料連結層, 網路層, 傳輸層, 應用層)",
+    "dependencies": []
+  },
+  {
+    "name": "網路安全技術 (防火牆, VPN, IDS/IPS, 加密協定-SSL-TLS/IPSec)",
+    "block_title": "雲端架構與平台 (雲端基礎架構, 雲端運算平台)",
+    "dependencies": []
+  },
+  {
+    "name": "作業系統概論 (定義與功能, 演進-批次/多工/分時, Kernel與使用者模式)",
+    "block_title": "作業系統基礎 (作業系統概論)",
+    "dependencies": []
+  },
+  {
+    "name": "關聯式模型核心概念 (Relation/Attribute/Tuple, Primary Key/Foreign Key, 完整性約束)",
+    "block_title": "作業系統基礎 (作業系統概論)",
+    "dependencies": []
+  },
+  {
+    "name": "I/O系統管理 (I/O硬體與軟體, Buffering/Caching, 磁碟排程演算法)",
+    "block_title": "網路安全與管理 (網路安全, 無線與行動網路, 網路管理與新興技術)",
+    "dependencies": []
+  },
+  {
+    "name": "程式語言概論 (高階/低階語言, Compiler/Interpreter, 程式範型-Procedural/OOP/Functional)",
+    "block_title": "程式結構與設計 (控制結構, 函數與參數傳遞, 物件導向程式設計OOP)",
+    "dependencies": []
+  }
+]
