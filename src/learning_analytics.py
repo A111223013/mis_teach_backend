@@ -1,695 +1,656 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-學習成效分析模組 - 統一版本
-提供知識圖譜分析、掌握率計算、學習弱點分析等功能
-支援兩種數據結構：知識關係圖和題目數據
+學習成效分析模組 - 模組化函數式版本
+MySQL + MongoDB 雙資料庫架構
+後端只負責數據分析和計算，不處理UI邏輯
 """
 
-import json
-import sqlite3
-import pandas as pd
-from typing import Dict, List, Any, Optional
-from datetime import datetime, timedelta
 import logging
-import numpy as np
+from typing import Dict, List, Any, Optional
+from datetime import datetime
 from collections import defaultdict
 from flask import Blueprint, jsonify, request
+import sqlite3  # 實際使用時改為 MySQL 連接器
 
 # 設置日誌
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-class LearningAnalytics:
-    """學習成效分析器 - 統一版本"""
-    
-    def __init__(self, db_path: str = "instance/mis_teach.db"):
-        self.db_path = db_path
-        self.knowledge_hierarchy = self._init_knowledge_hierarchy()
+# ==================== 資料載入模組 ====================
+
+def get_student_quiz_records(student_email: str, limit: int = 100) -> List[Dict]:
+    """從MySQL獲取學生答題紀錄"""
+    try:
+        # 實際使用時改為MySQL查詢
+        # SELECT mongodb_question_id, is_correct, answer_time_seconds, quiz_date
+        # FROM quiz_answers 
+        # WHERE user_email = %s 
+        # ORDER BY quiz_date DESC 
+        # LIMIT %s
         
-    def _init_knowledge_hierarchy(self) -> Dict[str, Dict[str, Any]]:
-        """初始化知識層次結構"""
-        return {
-            "計算機概論": {
-                "name": "計算機概論",
-                "weight": 1.0,
-                "sub_topics": {
-                    "硬體系統": {
-                        "name": "硬體系統",
-                        "weight": 0.3,
-                        "concepts": [
-                            "CPU架構", "記憶體管理", "儲存設備", "輸入輸出設備"
-                        ]
-                    },
-                    "軟體系統": {
-                        "name": "軟體系統", 
-                        "weight": 0.25,
-                        "concepts": [
-                            "作業系統", "程式語言", "應用軟體", "系統軟體"
-                        ]
-                    },
-                    "網路技術": {
-                        "name": "網路技術",
-                        "weight": 0.25,
-                        "concepts": [
-                            "網路拓樸", "通訊協定", "網路安全", "網際網路"
-                        ]
-                    },
-                    "資料處理": {
-                        "name": "資料處理",
-                        "weight": 0.2,
-                        "concepts": [
-                            "資料結構", "演算法", "資料庫", "資料分析"
-                        ]
-                    }
-                }
+        # 這裡使用模擬數據
+        return [
+            {
+                "mongodb_question_id": "q1",
+                "is_correct": True,
+                "answer_time_seconds": 45,
+                "quiz_date": "2024-01-15"
             },
-            "資訊管理": {
-                "name": "資訊管理",
-                "weight": 1.0,
-                "sub_topics": {
-                    "系統分析": {
-                        "name": "系統分析",
-                        "weight": 0.4,
-                        "concepts": [
-                            "需求分析", "系統設計", "流程建模", "資料建模"
-                        ]
-                    },
-                    "專案管理": {
-                        "name": "專案管理",
-                        "weight": 0.3,
-                        "concepts": [
-                            "專案規劃", "時程管理", "風險管理", "品質管理"
-                        ]
-                    },
-                    "企業應用": {
-                        "name": "企業應用",
-                        "weight": 0.3,
-                        "concepts": [
-                            "ERP系統", "CRM系統", "SCM系統", "BI系統"
-                        ]
-                    }
-                }
+            {
+                "mongodb_question_id": "q2", 
+                "is_correct": False,
+                "answer_time_seconds": 90,
+                "quiz_date": "2024-01-15"
+            },
+            {
+                "mongodb_question_id": "q3",
+                "is_correct": True,
+                "answer_time_seconds": 30,
+                "quiz_date": "2024-01-15"
             }
-        }
-    
-    def get_mock_data(self) -> Dict[str, Any]:
-        """獲取模擬學習數據"""
+        ]
+    except Exception as e:
+        logger.error(f"獲取學生答題紀錄失敗: {e}")
+        return []
+
+def get_knowledge_structure() -> Dict[str, Any]:
+    """從MongoDB獲取知識結構"""
+    try:
+        # 實際使用時改為MongoDB查詢
+        # db.domains.find()
+        # db.blocks.find()
+        # db.micro_concepts.find()
+        
+        # 這裡使用模擬數據
         return {
-            "questions": [
+            "domains": [
                 {
-                    "id": 1,
-                    "text": "Linux檔案系統中，檔案或目錄的屬性「rwx」代表何意義？",
-                    "difficulty": "一般",
-                    "big_topic": "計算機概論",
-                    "sub_topic": "軟體系統",
-                    "concepts": ["作業系統", "檔案權限"],
-                    "detail_knowledge_key": ["檔案權限", "Linux系統"]
-                },
-                {
-                    "id": 2,
-                    "text": "說明CPU中Instruction Register及Program counter各有何用途？",
-                    "difficulty": "困難",
-                    "big_topic": "計算機概論",
-                    "sub_topic": "硬體系統",
-                    "concepts": ["CPU架構", "指令執行"],
-                    "detail_knowledge_key": ["CPU架構", "指令執行", "暫存器"]
-                },
-                {
-                    "id": 3,
-                    "text": "試說明及比較IP address及MAC address？",
-                    "difficulty": "一般",
-                    "big_topic": "計算機概論",
-                    "sub_topic": "網路技術",
-                    "concepts": ["網路協定", "網路位址"],
-                    "detail_knowledge_key": ["網路協定", "IP位址", "MAC位址"]
-                },
-                {
-                    "id": 4,
-                    "text": "何謂資料庫正規化？請說明其目的與步驟？",
-                    "difficulty": "困難",
-                    "big_topic": "計算機概論",
-                    "sub_topic": "資料處理",
-                    "concepts": ["資料庫", "資料正規化"],
-                    "detail_knowledge_key": ["資料庫", "資料正規化", "資料庫設計"]
-                },
-                {
-                    "id": 5,
-                    "text": "系統開發生命週期包含哪些階段？",
-                    "difficulty": "簡單",
-                    "big_topic": "資訊管理",
-                    "sub_topic": "系統分析",
-                    "concepts": ["系統分析", "開發流程"],
-                    "detail_knowledge_key": ["系統分析", "開發流程", "軟體工程"]
+                    "_id": "domain_1",
+                    "name": "計算機概論",
+                    "blocks": ["block_1", "block_2"]
                 }
             ],
-            "student_answers": [
+            "blocks": [
                 {
-                    "question_id": 1,
-                    "is_correct": False,
-                    "answer_time": 45,
-                    "total_time": 120,
-                    "score": 30
+                    "_id": "block_1",
+                    "domain_id": "domain_1",
+                    "title": "硬體系統",
+                    "micro_concepts": ["micro_1", "micro_2"]
                 },
                 {
-                    "question_id": 2,
-                    "is_correct": True,
-                    "answer_time": 90,
-                    "total_time": 180,
-                    "score": 85
+                    "_id": "block_2",
+                    "domain_id": "domain_1", 
+                    "title": "軟體系統",
+                    "micro_concepts": ["micro_3", "micro_4"]
+                }
+            ],
+            "micro_concepts": [
+                {
+                    "_id": "micro_1",
+                    "name": "CPU架構",
+                    "block_id": "block_1",
+                    "depends_on": []
                 },
                 {
-                    "question_id": 3,
-                    "is_correct": False,
-                    "answer_time": 60,
-                    "total_time": 150,
-                    "score": 45
+                    "_id": "micro_2",
+                    "name": "記憶體管理",
+                    "block_id": "block_1",
+                    "depends_on": ["micro_1"]
                 },
                 {
-                    "question_id": 4,
-                    "is_correct": False,
-                    "answer_time": 120,
-                    "total_time": 200,
-                    "score": 25
+                    "_id": "micro_3",
+                    "name": "作業系統",
+                    "block_id": "block_2",
+                    "depends_on": ["micro_1", "micro_2"]
                 },
                 {
-                    "question_id": 5,
-                    "is_correct": True,
-                    "answer_time": 30,
-                    "total_time": 90,
-                    "score": 90
+                    "_id": "micro_4",
+                    "name": "程式語言",
+                    "block_id": "block_2",
+                    "depends_on": ["micro_3"]
                 }
             ]
         }
-    
-    def get_mock_knowledge_graph(self) -> Dict[str, Any]:
-        """獲取模擬知識關係圖數據"""
-        return {
-            "knowledge_nodes": [
-                {
-                    "id": "stack",
-                    "name": "堆疊",
-                    "type": "concept",
-                    "category": "資料結構"
-                },
-                {
-                    "id": "array",
-                    "name": "陣列操作",
-                    "type": "concept",
-                    "category": "演算法"
-                },
-                {
-                    "id": "sorting",
-                    "name": "排序演算法",
-                    "type": "concept",
-                    "category": "演算法"
-                },
-                {
-                    "id": "data_structure",
-                    "name": "資料結構",
-                    "type": "topic",
-                    "category": "計算機概論"
-                },
-                {
-                    "id": "algorithm",
-                    "name": "演算法",
-                    "type": "topic",
-                    "category": "計算機概論"
-                }
-            ],
-            "knowledge_edges": [
-                {
-                    "source": "堆疊",
-                    "target": "資料結構",
-                    "type": "hierarchy"
-                },
-                {
-                    "source": "陣列操作",
-                    "target": "排序演算法",
-                    "type": "pre-requisite"
-                },
-                {
-                    "source": "排序演算法",
-                    "target": "演算法",
-                    "type": "hierarchy"
-                },
-                {
-                    "source": "堆疊",
-                    "target": "演算法",
-                    "type": "application"
-                }
-            ]
-        }
-    
-    def calculate_concept_mastery(self, mock_data: Dict[str, Any]) -> Dict[str, Any]:
-        """計算小知識點掌握率"""
-        concept_stats = defaultdict(lambda: {
+    except Exception as e:
+        logger.error(f"獲取知識結構失敗: {e}")
+        return {"domains": [], "blocks": [], "micro_concepts": []}
+
+def get_questions_by_micro_concept(micro_concept_ids: List[str]) -> List[Dict]:
+    """從MongoDB獲取題目，根據小知識點ID"""
+    try:
+        # 實際使用時改為MongoDB查詢
+        # db.questions.find({micro_concept_ids: {$in: micro_concept_ids}})
+        
+        # 這裡使用模擬數據
+        return [
+            {
+                "_id": "q1",
+                "micro_concept_ids": ["micro_1"],
+                "difficulty": "中等"
+            },
+            {
+                "_id": "q2",
+                "micro_concept_ids": ["micro_2"],
+                "difficulty": "困難"
+            },
+            {
+                "_id": "q3", 
+                "micro_concept_ids": ["micro_3"],
+                "difficulty": "簡單"
+            }
+        ]
+    except Exception as e:
+        logger.error(f"獲取題目失敗: {e}")
+        return []
+
+# ==================== 知識分析模組 ====================
+
+def calculate_micro_concept_mastery(student_email: str, micro_concept_id: str) -> Dict[str, Any]:
+    """計算學生對特定小知識點的掌握度"""
+    try:
+        # 1. 獲取學生答題紀錄
+        quiz_records = get_student_quiz_records(student_email)
+        
+        # 2. 獲取該小知識點對應的題目
+        questions = get_questions_by_micro_concept([micro_concept_id])
+        question_ids = [q["_id"] for q in questions]
+        
+        # 3. 篩選相關題目的答題紀錄
+        relevant_records = [
+            record for record in quiz_records 
+            if record["mongodb_question_id"] in question_ids
+        ]
+        
+        if not relevant_records:
+            return {
+                "micro_concept_id": micro_concept_id,
+                "mastery_score": 0,
+                "accuracy": 0,
+                "time_factor": 0,
             "total_questions": 0,
             "correct_answers": 0,
-            "total_time": 0,
-            "difficulty_scores": {"簡單": 0, "一般": 0, "困難": 0},
-            "concept_scores": []
-        })
+                "avg_time": 0
+            }
         
-        # 統計每個概念的答題情況
-        for question in mock_data["questions"]:
-            # 使用 detail_knowledge_key 作為主要知識點
-            for concept in question.get("detail_knowledge_key", question.get("concepts", [])):
-                concept_stats[concept]["total_questions"] += 1
-                concept_stats[concept]["difficulty_scores"][question["difficulty"]] += 1
+        # 4. 計算基礎統計
+        total_questions = len(relevant_records)
+        correct_answers = sum(1 for r in relevant_records if r["is_correct"])
+        accuracy = correct_answers / total_questions
         
-        # 統計答題結果
-        for answer in mock_data["student_answers"]:
-            question = next(q for q in mock_data["questions"] if q["id"] == answer["question_id"])
-            for concept in question.get("detail_knowledge_key", question.get("concepts", [])):
-                if answer["is_correct"]:
-                    concept_stats[concept]["correct_answers"] += 1
-                concept_stats[concept]["total_time"] += answer["answer_time"]
-                concept_stats[concept]["concept_scores"].append(answer["score"])
+        # 5. 計算時間因子（基於認知負荷理論）
+        answer_times = [r["answer_time_seconds"] for r in relevant_records]
+        avg_time = sum(answer_times) / len(answer_times)
         
-        # 計算掌握率
-        concept_mastery = {}
-        for concept, stats in concept_stats.items():
-            if stats["total_questions"] > 0:
-                # 基礎掌握率（答對率）
-                accuracy_rate = stats["correct_answers"] / stats["total_questions"]
-                
-                # 時間效率分數（標準化答題時間）
-                avg_time = stats["total_time"] / stats["total_questions"]
-                time_efficiency = max(0, 1 - (avg_time - 60) / 120)  # 60秒為基準，120秒為標準差
-                
-                # 難度加權分數
-                difficulty_weight = (
-                    stats["difficulty_scores"]["簡單"] * 0.3 +
-                    stats["difficulty_scores"]["一般"] * 0.5 +
-                    stats["difficulty_scores"]["困難"] * 0.2
-                ) / stats["total_questions"]
-                
-                # 綜合掌握率
-                mastery_rate = (
-                    accuracy_rate * 0.6 +
-                    time_efficiency * 0.3 +
-                    difficulty_weight * 0.1
-                ) * 100
-                
-                concept_mastery[concept] = {
-                    "mastery_rate": round(mastery_rate, 2),
-                    "accuracy_rate": round(accuracy_rate * 100, 2),
-                    "time_efficiency": round(time_efficiency * 100, 2),
-                    "total_questions": stats["total_questions"],
-                    "correct_answers": stats["correct_answers"],
+        # 理想答題時間範圍：60-120秒
+        if avg_time < 60:
+            time_factor = max(0, 1 - (60 - avg_time) / 60)  # 太快扣分
+        elif avg_time > 120:
+            time_factor = max(0, 1 - (avg_time - 120) / 120)  # 太慢扣分
+        else:
+            time_factor = 1.0  # 理想時間範圍
+        
+        # 6. 計算掌握度分數 (α=0.7, β=0.3)
+        alpha, beta = 0.7, 0.3
+        mastery_score = alpha * accuracy + beta * time_factor
+        
+        return {
+            "micro_concept_id": micro_concept_id,
+            "mastery_score": round(mastery_score * 100, 2),
+            "accuracy": round(accuracy * 100, 2),
+            "time_factor": round(time_factor * 100, 2),
+            "total_questions": total_questions,
+            "correct_answers": correct_answers,
                     "avg_time": round(avg_time, 2)
                 }
         
-        return concept_mastery
-    
-    def calculate_topic_mastery(self, concept_mastery: Dict[str, Any]) -> Dict[str, Any]:
-        """計算大知識點掌握率"""
-        topic_mastery = {}
+    except Exception as e:
+        logger.error(f"計算小知識點掌握度失敗: {e}")
+        return {"error": str(e)}
+
+def calculate_block_mastery(student_email: str, block_id: str) -> Dict[str, Any]:
+    """計算學生對章節的掌握度"""
+    try:
+        # 1. 獲取知識結構
+        knowledge_structure = get_knowledge_structure()
         
-        for big_topic, topic_info in self.knowledge_hierarchy.items():
-            topic_concepts = []
-            topic_weighted_score = 0
-            total_weight = 0
-            
-            # 收集該大知識點下的所有小知識點
-            for sub_topic, sub_info in topic_info["sub_topics"].items():
-                for concept in sub_info["concepts"]:
-                    if concept in concept_mastery:
-                        topic_concepts.append({
-                            "name": concept,
-                            "mastery_rate": concept_mastery[concept]["mastery_rate"],
-                            "sub_topic": sub_topic
-                        })
-                        # 加權計算
-                        weight = sub_info["weight"] / len(sub_info["concepts"])
-                        topic_weighted_score += concept_mastery[concept]["mastery_rate"] * weight
-                        total_weight += weight
-            
-            if total_weight > 0:
-                overall_mastery = topic_weighted_score / total_weight
-                topic_mastery[big_topic] = {
-                    "name": big_topic,
-                    "overall_mastery": round(overall_mastery, 2),
-                    "concepts": topic_concepts,
-                    "concept_count": len(topic_concepts),
-                    "mastered_concepts": len([c for c in topic_concepts if c["mastery_rate"] >= 70])
-                }
+        # 2. 找到該block下的所有micro_concepts
+        block_info = next(
+            (b for b in knowledge_structure["blocks"] if b["_id"] == block_id), 
+            None
+        )
         
-        return topic_mastery
-    
-    def generate_knowledge_graph(self, concept_mastery: Dict[str, Any], topic_mastery: Dict[str, Any]) -> Dict[str, Any]:
-        """生成知識圖譜數據"""
+        if not block_info:
+            return {"error": "找不到章節資訊"}
+        
+        micro_concept_ids = block_info["micro_concepts"]
+        
+        # 3. 計算每個micro_concept的掌握度
+        micro_masteries = []
+        for micro_id in micro_concept_ids:
+            mastery = calculate_micro_concept_mastery(student_email, micro_id)
+            if "error" not in mastery:
+                micro_masteries.append(mastery)
+        
+        if not micro_masteries:
+            return {
+                "block_id": block_id,
+                "mastery_score": 0,
+                "micro_concepts": [],
+                "total_micro_concepts": len(micro_concept_ids)
+            }
+        
+        # 4. 計算章節整體掌握度
+        total_mastery = sum(m["mastery_score"] for m in micro_masteries)
+        avg_mastery = total_mastery / len(micro_masteries)
+        
+        return {
+            "block_id": block_id,
+            "mastery_score": round(avg_mastery, 2),
+            "micro_concepts": micro_masteries,
+            "total_micro_concepts": len(micro_concept_ids),
+            "mastered_concepts": len([m for m in micro_masteries if m["mastery_score"] >= 70])
+        }
+        
+    except Exception as e:
+        logger.error(f"計算章節掌握度失敗: {e}")
+        return {"error": str(e)}
+
+def calculate_domain_mastery(student_email: str, domain_id: str) -> Dict[str, Any]:
+    """計算學生對大知識點的掌握度"""
+    try:
+        # 1. 獲取知識結構
+        knowledge_structure = get_knowledge_structure()
+        
+        # 2. 找到該domain下的所有blocks
+        domain_info = next(
+            (d for d in knowledge_structure["domains"] if d["_id"] == domain_id), 
+            None
+        )
+        
+        if not domain_info:
+            return {"error": "找不到大知識點資訊"}
+        
+        block_ids = domain_info["blocks"]
+        
+        # 3. 計算每個block的掌握度
+        block_masteries = []
+        for block_id in block_ids:
+            mastery = calculate_block_mastery(student_email, block_id)
+            if "error" not in mastery:
+                block_masteries.append(mastery)
+        
+        if not block_masteries:
+            return {
+                "domain_id": domain_id,
+                "mastery_score": 0,
+                "blocks": [],
+                "total_blocks": len(block_ids)
+            }
+        
+        # 4. 計算大知識點整體掌握度
+        total_mastery = sum(b["mastery_score"] for b in block_masteries)
+        avg_mastery = total_mastery / len(block_masteries)
+        
+        return {
+            "domain_id": domain_id,
+            "mastery_score": round(avg_mastery, 2),
+            "blocks": block_masteries,
+            "total_blocks": len(block_ids),
+            "mastered_blocks": len([b for b in block_masteries if b["mastery_score"] >= 70])
+        }
+        
+    except Exception as e:
+        logger.error(f"計算大知識點掌握度失敗: {e}")
+        return {"error": str(e)}
+
+# ==================== 依存關係檢查模組 ====================
+
+def check_dependency_issues(student_email: str) -> List[Dict[str, Any]]:
+    """檢查知識依存關係問題"""
+    try:
+        # 1. 獲取知識結構
+        knowledge_structure = get_knowledge_structure()
+        
+        # 2. 獲取學生所有小知識點掌握度
+        all_micro_concepts = knowledge_structure["micro_concepts"]
+        dependency_issues = []
+        
+        for micro_concept in all_micro_concepts:
+            if micro_concept["depends_on"]:
+                # 檢查當前小知識點掌握度
+                current_mastery = calculate_micro_concept_mastery(
+                    student_email, micro_concept["_id"]
+                )
+                
+                if "error" in current_mastery:
+                    continue
+                
+                # 檢查前置知識掌握度
+                prerequisite_issues = []
+                for prereq_id in micro_concept["depends_on"]:
+                    prereq_mastery = calculate_micro_concept_mastery(
+                        student_email, prereq_id
+                    )
+                    
+                    if "error" not in prereq_mastery:
+                        # 如果前置知識掌握度低於當前知識點，記錄問題
+                        if prereq_mastery["mastery_score"] < current_mastery["mastery_score"]:
+                            prereq_info = next(
+                                (mc for mc in all_micro_concepts if mc["_id"] == prereq_id), 
+                                None
+                            )
+                            
+                            prerequisite_issues.append({
+                                "prerequisite_id": prereq_id,
+                                "prerequisite_name": prereq_info["name"] if prereq_info else "未知",
+                                "prerequisite_mastery": prereq_mastery["mastery_score"],
+                                "current_mastery": current_mastery["mastery_score"],
+                                "gap": current_mastery["mastery_score"] - prereq_mastery["mastery_score"]
+                            })
+                
+                if prerequisite_issues:
+                    dependency_issues.append({
+                        "micro_concept_id": micro_concept["_id"],
+                        "micro_concept_name": micro_concept["name"],
+                        "issues": prerequisite_issues,
+                        "severity": "high" if len(prerequisite_issues) > 1 else "medium"
+                    })
+        
+        return dependency_issues
+        
+    except Exception as e:
+        logger.error(f"檢查依存關係失敗: {e}")
+        return []
+
+# ==================== 報告生成模組 ====================
+
+def generate_weakness_report(student_email: str) -> Dict[str, Any]:
+    """生成弱點分析報告"""
+    try:
+        # 1. 獲取知識結構
+        knowledge_structure = get_knowledge_structure()
+        
+        # 2. 計算所有小知識點掌握度
+        all_micro_concepts = knowledge_structure["micro_concepts"]
+        micro_masteries = []
+        
+        for micro_concept in all_micro_concepts:
+            mastery = calculate_micro_concept_mastery(student_email, micro_concept["_id"])
+            if "error" not in mastery:
+                mastery["name"] = micro_concept["name"]
+                mastery["block_id"] = micro_concept["block_id"]
+                micro_masteries.append(mastery)
+        
+        # 3. 分類弱點
+        critical_weaknesses = [m for m in micro_masteries if m["mastery_score"] < 40]
+        moderate_weaknesses = [m for m in micro_masteries if 40 <= m["mastery_score"] < 60]
+        
+        # 4. 檢查依存關係問題
+        dependency_issues = check_dependency_issues(student_email)
+        
+        # 5. 生成建議
+        recommendations = []
+        
+        # 高優先級建議：處理依存關係問題
+        for issue in dependency_issues:
+            for prereq_issue in issue["issues"]:
+                recommendations.append({
+                    "priority": "high",
+                    "action": "複習前置知識",
+                    "target": prereq_issue["prerequisite_name"],
+                    "reason": f"為學習「{issue['micro_concept_name']}」打基礎",
+                    "estimated_time": "30-45分鐘"
+                })
+        
+        # 中優先級建議：處理低掌握度知識點
+        for weakness in critical_weaknesses + moderate_weaknesses:
+            recommendations.append({
+                "priority": "medium" if weakness["mastery_score"] >= 40 else "high",
+                "action": "加強練習",
+                "target": weakness["name"],
+                "reason": f"掌握度偏低 ({weakness['mastery_score']}%)",
+                "estimated_time": "45-60分鐘"
+            })
+        
+        return {
+            "student_email": student_email,
+            "summary": {
+                "total_concepts": len(micro_masteries),
+                "critical_weaknesses": len(critical_weaknesses),
+                "moderate_weaknesses": len(moderate_weaknesses),
+                "dependency_issues": len(dependency_issues)
+            },
+            "weaknesses": {
+                "critical": critical_weaknesses,
+                "moderate": moderate_weaknesses
+            },
+            "dependency_issues": dependency_issues,
+            "recommendations": recommendations
+        }
+        
+    except Exception as e:
+        logger.error(f"生成弱點報告失敗: {e}")
+        return {"error": str(e)}
+
+def generate_knowledge_graph_data(student_email: str) -> Dict[str, Any]:
+    """生成知識圖譜數據（供前端渲染）"""
+    try:
+        # 1. 獲取知識結構
+        knowledge_structure = get_knowledge_structure()
+        
+        # 2. 計算各層級掌握度
         nodes = []
         edges = []
         
-        # 添加大知識點節點
-        for topic_name, topic_info in topic_mastery.items():
-            nodes.append({
-                "id": f"topic_{topic_name}",
-                "label": topic_name,
-                "type": "topic",
-                "mastery_rate": topic_info["overall_mastery"],
-                "size": 30,
-                "color": self._get_color_by_mastery(topic_info["overall_mastery"])
-            })
+        # 添加domain節點
+        for domain in knowledge_structure["domains"]:
+            domain_mastery = calculate_domain_mastery(student_email, domain["_id"])
+            if "error" not in domain_mastery:
+                nodes.append({
+                    "id": domain["_id"],
+                    "label": domain["name"],
+                    "type": "domain",
+                    "mastery_score": domain_mastery["mastery_score"],
+                    "size": 35
+                })
         
-        # 添加小知識點節點
-        for concept_name, concept_info in concept_mastery.items():
-            nodes.append({
-                "id": f"concept_{concept_name}",
-                "label": concept_name,
-                "type": "concept",
-                "mastery_rate": concept_info["mastery_rate"],
-                "size": 20,
-                "color": self._get_color_by_mastery(concept_info["mastery_rate"])
-            })
-            
-            # 找到對應的大知識點
-            for topic_name, topic_info in self.knowledge_hierarchy.items():
-                for sub_topic, sub_info in topic_info["sub_topics"].items():
-                    if concept_name in sub_info["concepts"]:
-                        edges.append({
-                            "source": f"concept_{concept_name}",
-                            "target": f"topic_{topic_name}",
-                            "type": "belongs_to"
-                        })
-                        break
+        # 添加block節點
+        for block in knowledge_structure["blocks"]:
+            block_mastery = calculate_block_mastery(student_email, block["_id"])
+            if "error" not in block_mastery:
+                nodes.append({
+                    "id": block["_id"],
+                    "label": block["title"],
+                    "type": "block",
+                    "mastery_score": block_mastery["mastery_score"],
+                    "size": 28
+                })
+                
+                # 連接domain和block
+                edges.append({
+                    "source": block["_id"],
+                    "target": block["domain_id"],
+                    "type": "belongs_to"
+                })
+        
+        # 添加micro_concept節點
+        for micro_concept in knowledge_structure["micro_concepts"]:
+            micro_mastery = calculate_micro_concept_mastery(
+                student_email, micro_concept["_id"]
+            )
+            if "error" not in micro_mastery:
+                nodes.append({
+                    "id": micro_concept["_id"],
+                    "label": micro_concept["name"],
+                    "type": "micro_concept",
+                    "mastery_score": micro_mastery["mastery_score"],
+                    "size": 20
+                })
+                
+                # 連接micro_concept和block
+                edges.append({
+                    "source": micro_concept["_id"],
+                    "target": micro_concept["block_id"],
+                    "type": "belongs_to"
+                })
+        
+        # 添加依存關係邊
+        for micro_concept in knowledge_structure["micro_concepts"]:
+            if micro_concept["depends_on"]:
+                for prereq_id in micro_concept["depends_on"]:
+                    edges.append({
+                        "source": micro_concept["_id"],
+                        "target": prereq_id,
+                        "type": "depends_on"
+                    })
         
         return {
             "nodes": nodes,
             "edges": edges
         }
-    
-    def _get_color_by_mastery(self, mastery_rate: float) -> str:
-        """根據掌握率獲取顏色"""
-        if mastery_rate >= 80:
-            return "#28a745"  # 綠色 - 優秀
-        elif mastery_rate >= 60:
-            return "#ffc107"  # 黃色 - 良好
-        elif mastery_rate >= 40:
-            return "#fd7e14"  # 橙色 - 一般
-        else:
-            return "#dc3545"  # 紅色 - 需加強
-    
-    def identify_weaknesses(self, concept_mastery: Dict[str, Any]) -> Dict[str, Any]:
-        """識別學習弱點和補強建議"""
-        weaknesses = []
-        recommendations = []
         
-        # 找出掌握率低的概念
-        for concept, info in concept_mastery.items():
-            if info["mastery_rate"] < 60:
-                weaknesses.append({
-                    "concept": concept,
-                    "mastery_rate": info["mastery_rate"],
-                    "issues": []
-                })
-                
-                # 分析具體問題
-                if info["accuracy_rate"] < 50:
-                    weaknesses[-1]["issues"].append("答題正確率過低")
-                if info["time_efficiency"] < 50:
-                    weaknesses[-1]["issues"].append("答題時間過長")
-                if info["total_questions"] < 2:
-                    weaknesses[-1]["issues"].append("練習題目不足")
-        
-        # 生成補強建議
-        for weakness in weaknesses:
-            if weakness["mastery_rate"] < 40:
-                recommendations.append({
-                    "concept": weakness["concept"],
-                    "priority": "高",
-                    "suggestions": [
-                        "重新學習基礎概念",
-                        "多做相關練習題",
-                        "尋求老師或同學協助"
-                    ]
-                })
-            elif weakness["mastery_rate"] < 60:
-                recommendations.append({
-                    "concept": weakness["concept"],
-                    "priority": "中",
-                    "suggestions": [
-                        "複習相關概念",
-                        "增加練習頻率",
-                        "注意答題時間控制"
-                    ]
-                })
-        
-        return {
-            "weaknesses": weaknesses,
-            "recommendations": recommendations,
-            "overall_assessment": self._get_overall_assessment(concept_mastery)
-        }
-    
-    def _get_overall_assessment(self, concept_mastery: Dict[str, Any]) -> str:
-        """獲取整體學習評估"""
-        if not concept_mastery:
-            return "資料不足"
-        
-        avg_mastery = sum(info["mastery_rate"] for info in concept_mastery.values()) / len(concept_mastery)
-        
-        if avg_mastery >= 80:
-            return "學習成效優秀，繼續保持！"
-        elif avg_mastery >= 60:
-            return "學習成效良好，有進步空間"
-        elif avg_mastery >= 40:
-            return "學習成效一般，需要加強練習"
-        else:
-            return "學習成效較差，建議重新學習基礎概念"
-    
-    def get_learning_analytics(self) -> Dict[str, Any]:
-        """獲取完整的學習分析數據"""
-        try:
-            # 獲取模擬數據
-            mock_data = self.get_mock_data()
-            
-            # 計算小知識點掌握率
-            concept_mastery = self.calculate_concept_mastery(mock_data)
-            
-            # 計算大知識點掌握率
-            topic_mastery = self.calculate_topic_mastery(concept_mastery)
-            
-            # 生成知識圖譜
-            knowledge_graph = self.generate_knowledge_graph(concept_mastery, topic_mastery)
-            
-            # 識別弱點和建議
-            weaknesses_analysis = self.identify_weaknesses(concept_mastery)
-            
-            # 計算整體統計
-            total_questions = len(mock_data["questions"])
-            total_correct = sum(1 for a in mock_data["student_answers"] if a["is_correct"])
-            avg_time = sum(a["answer_time"] for a in mock_data["student_answers"]) / len(mock_data["student_answers"])
-            
-            return {
-                "success": True,
-                "data": {
-                    "overview": {
-                        "total_questions": total_questions,
-                        "correct_answers": total_correct,
-                        "accuracy_rate": round(total_correct / total_questions * 100, 2),
-                        "avg_answer_time": round(avg_time, 2),
-                        "overall_assessment": weaknesses_analysis["overall_assessment"]
-                    },
-                    "concept_mastery": concept_mastery,
-                    "topic_mastery": topic_mastery,
-                    "knowledge_graph": knowledge_graph,
-                    "weaknesses_analysis": weaknesses_analysis,
-                    "questions_data": mock_data["questions"],
-                    "student_answers": mock_data["student_answers"]
-                }
-            }
-            
-        except Exception as e:
-            logger.error(f"學習分析失敗: {e}")
-            return {
-                "success": False,
-                "error": str(e)
-            }
-    
-    def get_knowledge_relationship_graph(self) -> Dict[str, Any]:
-        """獲取知識關係圖數據"""
-        try:
-            knowledge_data = self.get_mock_knowledge_graph()
-            return {
-                "success": True,
-                "data": knowledge_data
-            }
-        except Exception as e:
-            logger.error(f"知識關係圖獲取失敗: {e}")
-            return {
-                "success": False,
-                "error": str(e)
-            }
-
-# 創建分析器實例
-learning_analytics = LearningAnalytics()
+    except Exception as e:
+        logger.error(f"生成知識圖譜數據失敗: {e}")
+        return {"error": str(e)}
 
 # ==================== Flask API 端點 ====================
 
 # 創建藍圖
 analytics_bp = Blueprint('analytics', __name__)
 
-@analytics_bp.route('/learning-analytics', methods=['GET'])
-def get_learning_analytics():
-    """獲取學習成效分析數據"""
+@analytics_bp.route('/student-mastery/<student_email>', methods=['GET'])
+def get_student_mastery(student_email: str):
+    """獲取學生整體掌握度分析"""
     try:
-        # 獲取學習分析數據
-        analytics_data = learning_analytics.get_learning_analytics()
+        # 1. 獲取知識結構
+        knowledge_structure = get_knowledge_structure()
         
-        if analytics_data["success"]:
-            return jsonify(analytics_data), 200
-        else:
-            return jsonify({
-                "success": False,
-                "error": analytics_data.get("error", "分析失敗")
-            }), 500
+        # 2. 計算各層級掌握度
+        domain_analyses = []
+        for domain in knowledge_structure["domains"]:
+            domain_mastery = calculate_domain_mastery(student_email, domain["_id"])
+            if "error" not in domain_mastery:
+                domain_analyses.append({
+                    "domain_id": domain["_id"],
+                    "domain_name": domain["name"],
+                    "mastery_score": domain_mastery["mastery_score"],
+                    "blocks": domain_mastery["blocks"]
+                })
+        
+        # 3. 生成弱點報告
+        weakness_report = generate_weakness_report(student_email)
+        
+        # 4. 生成知識圖譜數據
+        knowledge_graph = generate_knowledge_graph_data(student_email)
+        
+        return jsonify({
+            "success": True,
+            "data": {
+                "student_email": student_email,
+                "domain_analyses": domain_analyses,
+                "weakness_report": weakness_report,
+                "knowledge_graph": knowledge_graph
+            }
+        })
             
     except Exception as e:
-        logger.error(f"學習分析API錯誤: {e}")
+        logger.error(f"獲取學生掌握度分析失敗: {e}")
         return jsonify({
             "success": False,
-            "error": f"系統錯誤: {str(e)}"
+            "error": str(e)
         }), 500
 
-@analytics_bp.route('/concept-mastery', methods=['GET'])
-def get_concept_mastery():
-    """獲取小知識點掌握率"""
+@analytics_bp.route('/weakness-report/<student_email>', methods=['GET'])
+def get_weakness_report(student_email: str):
+    """獲取學生弱點分析報告"""
     try:
-        analytics_data = learning_analytics.get_learning_analytics()
+        report = generate_weakness_report(student_email)
         
-        if analytics_data["success"]:
-            return jsonify({
-                "success": True,
-                "data": analytics_data["data"]["concept_mastery"]
-            }), 200
-        else:
+        if "error" in report:
             return jsonify({
                 "success": False,
-                "error": analytics_data.get("error", "分析失敗")
+                "error": report["error"]
             }), 500
+
+        return jsonify({
+            "success": True,
+            "data": report
+        })
             
     except Exception as e:
-        logger.error(f"概念掌握率API錯誤: {e}")
+        logger.error(f"獲取弱點報告失敗: {e}")
         return jsonify({
             "success": False,
-            "error": f"系統錯誤: {str(e)}"
+            "error": str(e)
         }), 500
 
-@analytics_bp.route('/topic-mastery', methods=['GET'])
-def get_topic_mastery():
-    """獲取大知識點掌握率"""
+@analytics_bp.route('/knowledge-graph/<student_email>', methods=['GET'])
+def get_knowledge_graph(student_email: str):
+    """獲取學生知識圖譜數據"""
     try:
-        analytics_data = learning_analytics.get_learning_analytics()
+        graph_data = generate_knowledge_graph_data(student_email)
         
-        if analytics_data["success"]:
-            return jsonify({
-                "success": True,
-                "data": analytics_data["data"]["topic_mastery"]
-            }), 200
-        else:
+        if "error" in graph_data:
             return jsonify({
                 "success": False,
-                "error": analytics_data.get("error", "分析失敗")
+                "error": graph_data["error"]
             }), 500
+
+        return jsonify({
+            "success": True,
+            "data": graph_data
+        })
             
     except Exception as e:
-        logger.error(f"主題掌握率API錯誤: {e}")
+        logger.error(f"獲取知識圖譜失敗: {e}")
         return jsonify({
             "success": False,
-            "error": f"系統錯誤: {str(e)}"
+            "error": str(e)
         }), 500
 
-@analytics_bp.route('/knowledge-graph', methods=['GET'])
-def get_knowledge_graph():
-    """獲取知識圖譜數據"""
+@analytics_bp.route('/micro-concept-mastery/<student_email>/<micro_concept_id>', methods=['GET'])
+def get_micro_concept_mastery(student_email: str, micro_concept_id: str):
+    """獲取學生對特定小知識點的掌握度"""
     try:
-        analytics_data = learning_analytics.get_learning_analytics()
+        mastery = calculate_micro_concept_mastery(student_email, micro_concept_id)
         
-        if analytics_data["success"]:
-            return jsonify({
-                "success": True,
-                "data": analytics_data["data"]["knowledge_graph"]
-            }), 200
-        else:
+        if "error" in mastery:
             return jsonify({
                 "success": False,
-                "error": analytics_data.get("error", "分析失敗")
+                "error": mastery["error"]
             }), 500
-            
+
+        return jsonify({
+            "success": True,
+            "data": mastery
+        })
+        
     except Exception as e:
-        logger.error(f"知識圖譜API錯誤: {e}")
+        logger.error(f"獲取小知識點掌握度失敗: {e}")
         return jsonify({
             "success": False,
-            "error": f"系統錯誤: {str(e)}"
+            "error": str(e)
         }), 500
 
-@analytics_bp.route('/weaknesses-analysis', methods=['GET'])
-def get_weaknesses_analysis():
-    """獲取學習弱點分析"""
+@analytics_bp.route('/dependency-issues/<student_email>', methods=['GET'])
+def get_dependency_issues(student_email: str):
+    """獲取學生知識依存關係問題"""
     try:
-        analytics_data = learning_analytics.get_learning_analytics()
+        issues = check_dependency_issues(student_email)
         
-        if analytics_data["success"]:
-            return jsonify({
-                "success": True,
-                "data": analytics_data["data"]["weaknesses_analysis"]
-            }), 200
-        else:
-            return jsonify({
-                "success": False,
-                "error": analytics_data.get("error", "分析失敗")
-            }), 500
-            
+        return jsonify({
+            "success": True,
+            "data": {
+                "student_email": student_email,
+                "dependency_issues": issues,
+                "total_issues": len(issues)
+            }
+        })
+        
     except Exception as e:
-        logger.error(f"弱點分析API錯誤: {e}")
+        logger.error(f"獲取依存關係問題失敗: {e}")
         return jsonify({
             "success": False,
-            "error": f"系統錯誤: {str(e)}"
-        }), 500
-
-@analytics_bp.route('/overview', methods=['GET'])
-def get_overview():
-    """獲取學習概覽數據"""
-    try:
-        analytics_data = learning_analytics.get_learning_analytics()
-        
-        if analytics_data["success"]:
-            return jsonify({
-                "success": True,
-                "data": analytics_data["data"]["overview"]
-            }), 200
-        else:
-            return jsonify({
-                "success": False,
-                "error": analytics_data.get("error", "分析失敗")
-            }), 500
-            
-    except Exception as e:
-        logger.error(f"概覽API錯誤: {e}")
-        return jsonify({
-            "success": False,
-            "error": f"系統錯誤: {str(e)}"
-        }), 500
-
-@analytics_bp.route('/knowledge-relationship', methods=['GET'])
-def get_knowledge_relationship():
-    """獲取知識關係圖數據"""
-    try:
-        relationship_data = learning_analytics.get_knowledge_relationship_graph()
-        
-        if relationship_data["success"]:
-            return jsonify(relationship_data), 200
-        else:
-            return jsonify({
-                "success": False,
-                "error": relationship_data.get("error", "知識關係圖獲取失敗")
-            }), 500
-            
-    except Exception as e:
-        logger.error(f"知識關係圖API錯誤: {e}")
-        return jsonify({
-            "success": False,
-            "error": f"系統錯誤: {str(e)}"
+            "error": str(e)
         }), 500
