@@ -5,7 +5,7 @@ from accessories import mongo
 # 建立 Blueprint
 materials_bp = Blueprint("materials", __name__)
 
-# 假設教材存放目錄在 backend/materials/
+# 教材存放目錄在 backend/materials/
 BASE_DIR = os.path.dirname(os.path.dirname(__file__))  # backend/
 MATERIALS_DIR = os.path.join(BASE_DIR, "data", "materials")
 
@@ -42,7 +42,7 @@ def get_material(filename):
 @materials_bp.route("/key_points", methods=["GET"])
 def get_key_points():
     """
-    從 exam 集合中抓取所有 key_points，去重後回傳
+    從 mongodb exam 集合中抓取所有 key_points，去重後回傳
     """
     exams = mongo.db.exam.find({}, {"key_points": 1})
     key_points_set = set()
@@ -54,3 +54,39 @@ def get_key_points():
         elif isinstance(key_points, str):
             key_points_set.add(key_points)
     return jsonify({"key_points": list(key_points_set)})
+
+@materials_bp.route('/domain', methods=['GET'])
+def get_domains():
+    try:
+        domain = list(mongo.db.domain.find())
+        if not domain:
+            return jsonify({"error": "No domain collection or data found"}), 404
+        for d in domain:
+            d['_id'] = str(d['_id'])  # ObjectId 轉字串
+        return jsonify(domain)
+    except Exception as e:
+        return jsonify({"error": f"Exception: {str(e)}"}), 500
+
+@materials_bp.route('/block', methods=['GET'])
+def get_blocks():
+    try:
+        block = list(mongo.db.block.find())
+        if not block:
+            return jsonify({"error": "No block collection or data found"}), 404
+        for b in block:
+            b['_id'] = str(b['_id'])
+        return jsonify(block)
+    except Exception as e:
+        return jsonify({"error": f"Exception: {str(e)}"}), 500
+
+@materials_bp.route('/micro_concept', methods=['GET'])
+def get_micro_concepts():
+    try:
+        micro_concept = list(mongo.db.micro_concept.find())
+        if not micro_concept:
+            return jsonify({"error": "No micro_concept collection or data found"}), 404
+        for m in micro_concept:
+            m['_id'] = str(m['_id'])
+        return jsonify(micro_concept)
+    except Exception as e:
+        return jsonify({"error": f"Exception: {str(e)}"}), 500
