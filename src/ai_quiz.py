@@ -1505,13 +1505,458 @@ def get_quiz_from_database_endpoint():
             }), 400
         
         # 調用獲取考卷數據函數
-        result = get_quiz_from_database(quiz_ids)
+        #result = get_quiz_from_database(quiz_ids)
         
-        return jsonify(result)
+        #return jsonify(result)
         
     except Exception as e:
         logger.error(f"❌ 獲取考卷數據失敗: {e}")
         return jsonify({
             'success': False,
             'message': f'獲取考卷數據失敗：{str(e)}'
+        }), 500
+        
+
+@ai_quiz_bp.route('/get-user-submissions-analysis', methods=['POST', 'OPTIONS'])
+def get_user_submissions_analysis():
+    """獲取用戶提交分析數據 - 使用SQL表結構"""
+    try:
+        if request.method == 'OPTIONS':
+            return jsonify({'success': True})
+        
+        # 驗證用戶身份
+        token = request.headers.get('Authorization')
+        if not token:
+            return jsonify({'error': '缺少授權token'}), 401
+        
+        user_email = verify_token(token.split(" ")[1])
+        if not user_email:
+            return jsonify({'error': '無效的token'}), 401
+        
+        print(f"🔍 開始獲取用戶 {user_email} 的提交分析數據")
+        
+        # 從SQL資料庫獲取用戶的測驗歷史記錄
+        with sqldb.engine.connect() as conn:
+            # 獲取用戶的所有測驗記錄
+            history_results = conn.execute(text("""
+                SELECT id, quiz_template_id, quiz_type, total_questions, answered_questions,
+                       correct_count, wrong_count, accuracy_rate, average_score, 
+                       total_time_taken, submit_time, status, created_at
+                FROM quiz_history 
+                WHERE user_email = :user_email
+                ORDER BY created_at DESC
+            """), {
+                'user_email': user_email
+            }).fetchall()
+            
+            print(f"🔍 從SQL找到 {len(history_results)} 條測驗記錄")
+            
+            # 處理每條測驗記錄
+            processed_submissions = []
+            for history_record in history_results:
+                quiz_history_id = history_record[0]
+                quiz_template_id = history_record[1]
+                quiz_type = history_record[2]
+                total_questions = history_record[3]
+                answered_questions = history_record[4]
+                correct_count = history_record[5]
+                wrong_count = history_record[6]
+                accuracy_rate = float(history_record[7]) if history_record[7] else 0
+                average_score = float(history_record[8]) if history_record[8] else 0
+                total_time_taken = history_record[9] if history_record[9] else 0
+                submit_time = history_record[10]
+                status = history_record[11]
+                created_at = history_record[12]
+                
+                # 獲取該測驗的詳細答案信息
+                answers_result = conn.execute(text("""
+                    SELECT mongodb_question_id, user_answer, is_correct, score, 
+                           feedback, answer_time_seconds, created_at
+                    FROM quiz_answers 
+                    WHERE quiz_history_id = :quiz_history_id
+                    ORDER BY created_at
+                """), {
+                    'quiz_history_id': quiz_history_id
+                }).fetchall()
+                
+                # 處理答案數據
+                answers = []
+                for answer_record in answers_result:
+                    mongodb_question_id = answer_record[0]
+                    user_answer = answer_record[1]
+                    is_correct = answer_record[2]
+                    score = float(answer_record[3]) if answer_record[3] else 0
+                    feedback = json.loads(answer_record[4]) if answer_record[4] else {}
+                    answer_time_seconds = answer_record[5] if answer_record[5] else 0
+                    answer_created_at = answer_record[6]
+                    
+                    # 嘗試從MongoDB獲取題目詳情
+                    question_detail = {}
+                    try:
+                        if mongodb_question_id and len(mongodb_question_id) == 24:
+                            exam_question = mongo.db.exam.find_one({"_id": ObjectId(mongodb_question_id)})
+                        else:
+                            exam_question = mongo.db.exam.find_one({"_id": mongodb_question_id})
+                        
+                        if exam_question:
+                            question_detail = {
+                                'question_text': exam_question.get('question_text', ''),
+                                'topic': exam_question.get('主要學科', 'unknown'),
+                                'chapter': exam_question.get('章節', 'unknown'),
+                                'options': exam_question.get('options', []),
+                                'correct_answer': exam_question.get('answer', ''),
+                                'image_file': exam_question.get('image_file', '')
+                            }
+                    except Exception as e:
+                        print(f"⚠️ 獲取題目詳情失敗: {e}")
+                        question_detail = {
+                            'question_text': f'題目 {mongodb_question_id}',
+                            'topic': 'unknown',
+                            'chapter': 'unknown',
+                            'options': [],
+                            'correct_answer': '',
+                            'image_file': ''
+                        }
+                    
+                    # 構建答案對象
+                    answer_obj = {
+                        'question_id': mongodb_question_id,
+                        'question_text': question_detail.get('question_text', ''),
+                        'topic': question_detail.get('topic', 'unknown'),
+                        'chapter': question_detail.get('chapter', 'unknown'),
+                        'user_answer': user_answer,
+                        'is_correct': is_correct,
+                        'score': score,
+                        'feedback': feedback,
+                        'answer_time_seconds': answer_time_seconds,
+                        'answer_time': answer_created_at.isoformat() if answer_created_at else None,
+                        'options': question_detail.get('options', []),
+                        'correct_answer': question_detail.get('correct_answer', ''),
+                        'image_file': question_detail.get('image_file', '')
+                    }
+                    answers.append(answer_obj)
+                
+                # 構建提交記錄對象
+                processed_submission = {
+                    'submission_id': f"quiz_{quiz_history_id}",
+                    'quiz_history_id': quiz_history_id,
+                    'quiz_template_id': quiz_template_id,
+                    'quiz_type': quiz_type,
+                    'submit_time': submit_time.isoformat() if submit_time else None,
+                    'created_at': created_at.isoformat() if created_at else None,
+                    'total_questions': total_questions,
+                    'answered_questions': answered_questions,
+                    'unanswered_questions': total_questions - answered_questions,
+                    'correct_count': correct_count,
+                    'wrong_count': wrong_count,
+                    'accuracy_rate': accuracy_rate,
+                    'average_score': average_score,
+                    'total_time_taken': total_time_taken,
+                    'status': status,
+                    'answers': answers
+                }
+                
+                processed_submissions.append(processed_submission)
+                
+                print(f"🔍 處理測驗記錄 {quiz_history_id}: {quiz_type}, 正確率: {accuracy_rate:.1f}%")
+        
+        print(f"✅ 成功處理 {len(processed_submissions)} 條提交記錄")
+        
+        return jsonify({
+            'success': True,
+            'submissions': processed_submissions,
+            'total_submissions': len(processed_submissions)
+        })
+        
+    except Exception as e:
+        print(f"❌ 獲取用戶提交分析失敗: {e}")
+        return jsonify({
+            'success': False,
+            'error': f'獲取用戶提交分析失敗：{str(e)}'
+        }), 500
+
+
+@ai_quiz_bp.route('/generate-guided-learning-session', methods=['POST', 'OPTIONS'])
+def generate_guided_learning_session():
+    """生成AI引導學習會話 API"""
+    print(f"🚀 進入 generate-guided-learning-session 函數")
+    print(f"🔍 請求方法: {request.method}")
+    
+    if request.method == 'OPTIONS':
+        print(f"✅ 處理 OPTIONS 請求，返回 CORS 預檢響應")
+        return jsonify({'message': 'CORS preflight'}), 200
+    
+    try:
+        print(f"🔍 開始處理 POST 請求")
+        
+        # 驗證用戶身份
+        token = request.headers.get('Authorization')
+        print(f"🔍 Authorization header: {token}")
+        
+        if not token:
+            print(f"❌ 缺少授權token")
+            return jsonify({'error': '缺少授權token'}), 401
+        
+        user_email = verify_token(token.split(" ")[1])
+        print(f"🔍 驗證後的 user_email: {user_email}")
+        
+        if not user_email:
+            print(f"❌ 無效的token")
+            return jsonify({'error': '無效的token'}), 401
+        
+        # 獲取請求數據
+        data = request.get_json()
+        print(f"🔍 請求數據: {data}")
+        
+        submission_id = data.get('question_id')  # 實際上是 submission_id
+        session_type = data.get('session_type', 'general')  # general, mistake_review, concept_explanation
+        
+        print(f"🔍 提取的 submission_id: {submission_id}")
+        print(f"🔍 提取的 session_type: {session_type}")
+        
+        if not submission_id:
+            print(f"❌ 缺少提交記錄ID")
+            return jsonify({
+                'success': False,
+                'message': '缺少提交記錄ID'
+            }), 400
+        
+        print(f"🔍 開始查找 submission_id: {submission_id}")
+        
+        # 檢查 submission_id 格式
+        if submission_id.startswith('quiz_'):
+            # 如果是 quiz_ 格式，提取 quiz_history_id
+            try:
+                quiz_history_id = int(submission_id.replace('quiz_', ''))
+                print(f"🔍 提取的 quiz_history_id: {quiz_history_id}")
+            except ValueError:
+                print(f"❌ 無效的 quiz_history_id 格式: {submission_id}")
+                return jsonify({
+                    'success': False,
+                    'message': f'無效的提交記錄ID格式: {submission_id}'
+                }), 400
+        else:
+            # 如果不是 quiz_ 格式，嘗試直接作為 quiz_history_id 使用
+            try:
+                quiz_history_id = int(submission_id)
+                print(f"🔍 直接使用 quiz_history_id: {quiz_history_id}")
+            except ValueError:
+                print(f"❌ 無效的提交記錄ID格式: {submission_id}")
+                return jsonify({
+                    'success': False,
+                    'message': f'無效的提交記錄ID格式: {submission_id}'
+                }), 400
+        
+        # 從SQL資料庫獲取測驗記錄
+        print(f"🔍 從SQL資料庫查詢 quiz_history_id: {quiz_history_id}")
+        
+        with sqldb.engine.connect() as conn:
+            # 獲取測驗歷史記錄
+            history_result = conn.execute(text("""
+                SELECT id, quiz_template_id, quiz_type, total_questions, answered_questions,
+                       correct_count, wrong_count, accuracy_rate, average_score, 
+                       total_time_taken, submit_time, status, created_at
+                FROM quiz_history 
+                WHERE id = :quiz_history_id AND user_email = :user_email
+            """), {
+                'quiz_history_id': quiz_history_id,
+                'user_email': user_email
+            }).fetchone()
+            
+            if not history_result:
+                print(f"⚠️ 找不到測驗記錄，quiz_history_id: {quiz_history_id}, user_email: {user_email}")
+                return jsonify({
+                    'success': False,
+                    'message': f'測驗記錄不存在，ID: {submission_id}'
+                }), 404
+            
+            print(f"✅ 找到測驗記錄: {history_result[2]} (類型: {history_result[2]})")
+            
+            # 獲取該測驗的詳細答案信息
+            answers_result = conn.execute(text("""
+                SELECT mongodb_question_id, user_answer, is_correct, score, 
+                       feedback, answer_time_seconds, created_at
+                FROM quiz_answers 
+                WHERE quiz_history_id = :quiz_history_id
+                ORDER BY created_at
+            """), {
+                'quiz_history_id': quiz_history_id
+            }).fetchall()
+            
+            print(f"🔍 找到 {len(answers_result)} 個答案記錄")
+            
+            if not answers_result:
+                print(f"❌ 測驗記錄中沒有答案數據")
+                return jsonify({
+                    'success': False,
+                    'message': '測驗記錄中沒有答案數據'
+                }), 400
+            
+            # 處理答案數據，獲取題目詳情
+            answers = []
+            for answer_record in answers_result:
+                mongodb_question_id = answer_record[0]
+                user_answer = answer_record[1]
+                is_correct = answer_record[2]
+                score = float(answer_record[3]) if answer_record[3] else 0
+                feedback = json.loads(answer_record[4]) if answer_record[4] else {}
+                answer_time_seconds = answer_record[5] if answer_record[5] else 0
+                answer_created_at = answer_record[6]
+                
+                # 從MongoDB獲取題目詳情
+                question_detail = {}
+                try:
+                    if mongodb_question_id and len(mongodb_question_id) == 24:
+                        exam_question = mongo.db.exam.find_one({"_id": ObjectId(mongodb_question_id)})
+                    else:
+                        exam_question = mongo.db.exam.find_one({"_id": mongodb_question_id})
+                    
+                    if exam_question:
+                        question_detail = {
+                            'question_text': exam_question.get('question_text', ''),
+                            'topic': exam_question.get('主要學科', 'unknown'),
+                            'chapter': exam_question.get('章節', 'unknown'),
+                            'options': exam_question.get('options', []),
+                            'correct_answer': exam_question.get('answer', ''),
+                            'image_file': exam_question.get('image_file', '')
+                        }
+                except Exception as e:
+                    print(f"⚠️ 獲取題目詳情失敗: {e}")
+                    question_detail = {
+                        'question_text': f'題目 {mongodb_question_id}',
+                        'topic': 'unknown',
+                        'chapter': 'unknown',
+                        'options': [],
+                        'correct_answer': '',
+                        'image_file': ''
+                    }
+                
+                # 構建答案對象
+                answer_obj = {
+                    'question_id': mongodb_question_id,
+                    'question_text': question_detail.get('question_text', ''),
+                    'topic': question_detail.get('topic', 'unknown'),
+                    'chapter': question_detail.get('chapter', 'unknown'),
+                    'user_answer': user_answer,
+                    'is_correct': is_correct,
+                    'score': score,
+                    'feedback': feedback,
+                    'answer_time_seconds': answer_time_seconds,
+                    'answer_time': answer_created_at.isoformat() if answer_created_at else None,
+                    'options': question_detail.get('options', []),
+                    'correct_answer': question_detail.get('correct_answer', ''),
+                    'image_file': question_detail.get('image_file', '')
+                }
+                answers.append(answer_obj)
+            
+            print(f"✅ 成功處理 {len(answers)} 個答案")
+        
+        # 使用第一個題目作為學習會話的基礎
+        if answers:
+            first_answer = answers[0]
+            print(f"🔍 第一個答案的結構: {first_answer}")
+            
+            question_text = first_answer.get('question_text', '')
+            question_topic = first_answer.get('topic', 'unknown')
+            question_chapter = first_answer.get('chapter', 'unknown')
+            
+            print(f"🔍 提取的題目信息:")
+            print(f"  - question_text: {question_text}")
+            print(f"  - question_topic: {question_topic}")
+            print(f"  - question_chapter: {question_chapter}")
+        else:
+            print(f"❌ 沒有可用的答案數據")
+            return jsonify({
+                'success': False,
+                'message': '沒有可用的答案數據'
+            }), 400
+        
+        # 生成學習會話ID
+        session_id = f"session_{user_email}_{int(time.time())}"
+        
+        # 根據會話類型生成不同的學習內容
+        if session_type == 'mistake_review':
+            # 錯題複習模式
+            session_data = {
+                'session_id': session_id,
+                'user_email': user_email,
+                'submission_id': submission_id,
+                'session_type': session_type,
+                'title': f'錯題複習：{question_text[:50] if question_text else "題目"}...',
+                'description': f'針對您的{question_topic}科目{question_chapter}章節的錯題進行深入分析和學習',
+                'learning_objectives': [
+                    '理解題目核心概念',
+                    '掌握正確解題思路',
+                    '避免常見錯誤'
+                ],
+                'topic': question_topic,
+                'chapter': question_chapter,
+                'created_at': datetime.now().isoformat(),
+                'status': 'active'
+            }
+        else:
+            # 一般學習模式
+            session_data = {
+                'session_id': session_id,
+                'user_email': user_email,
+                'submission_id': submission_id,
+                'session_type': session_type,
+                'title': f'概念學習：{question_text[:50] if question_text else "題目"}...',
+                'description': f'深入學習{question_topic}科目{question_chapter}章節的相關知識點',
+                'learning_objectives': [
+                    '掌握核心概念',
+                    '理解解題方法',
+                    '擴展相關知識'
+                ],
+                'topic': question_topic,
+                'chapter': question_chapter,
+                'created_at': datetime.now().isoformat(),
+                'status': 'active'
+            }
+        
+        return jsonify({
+            'success': True,
+            'session_data': session_data
+        }), 200
+        
+    except Exception as e:
+        print(f"❌ 生成學習會話失敗: {e}")
+        return jsonify({
+            'success': False,
+            'error': f'生成學習會話失敗：{str(e)}'
+        }), 500
+
+@ai_quiz_bp.route('/get-user-errors-mongo', methods=['POST', 'OPTIONS'])
+def get_user_errors_mongo():
+    """從 MongoDB error_questions 集合獲取用戶錯題"""
+    try:
+        if request.method == 'OPTIONS':
+            return jsonify({'success': True})
+        
+        # 驗證用戶身份
+        token = request.headers.get('Authorization')
+        if not token:
+            return jsonify({'error': '缺少授權token'}), 401
+        
+        user_email = verify_token(token.split(" ")[1])
+        if not user_email:
+            return jsonify({'error': '無效的token'}), 401
+        
+        # 從 MongoDB error_questions 集合獲取用戶錯題
+        error_questions = list(mongo.db.error_questions.find(
+            {'user_email': user_email},
+            {'_id': 0}  # 排除 _id 字段
+        ).sort('timestamp', -1))  # 按時間倒序排列
+        
+        return jsonify({
+            'success': True,
+            'error_questions': error_questions,
+            'total_errors': len(error_questions)
+        })
+        
+    except Exception as e:
+        print(f"❌ 獲取用戶錯題失敗: {e}")
+        return jsonify({
+            'success': False,
+            'error': f'獲取用戶錯題失敗：{str(e)}'
         }), 500
