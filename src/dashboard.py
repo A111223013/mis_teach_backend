@@ -77,7 +77,7 @@ def init_gemini():
 
 
 
-@dashboard_bp.route('/  ', methods=['POST', 'OPTIONS'])
+@dashboard_bp.route('/get-user-name  ', methods=['POST', 'OPTIONS'])
 def get_user_name():
     if request.method == 'OPTIONS':
         return '', 204
@@ -104,62 +104,3 @@ def get_user_name():
         print(f"獲取用戶名稱時發生錯誤: {str(e)}")
         return jsonify({'message': '服務器內部錯誤', 'code': 'SERVER_ERROR'}), 500
 
-r = redis.Redis(host='localhost', port=3306, db=0)
-with sqldb.engine.connect() as conn:
-    conn.execute(sqldb.text("""
-        CREATE TABLE Calendar_records (
-            id INT AUTO_INCREMENT PRIMARY KEY,
-            user_id INT NOT NULL,
-            title VARCHAR(255) NOT NULL,
-            start DATETIME NOT NULL,
-            end DATETIME NOT NULL,
-            notify BOOLEAN DEFAULT FALSE,
-            notify_time DATETIME NULL,
-            status ENUM('pending', 'done', 'cancelled') DEFAULT 'pending',
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-            INDEX idx_user_id (user_id),
-            INDEX idx_start (start),
-            INDEX idx_end (end),
-            INDEX idx_notify_time (notify_time),
-            INDEX idx_status (status)
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
-    """))
-    conn.commit()
-@dashboard_bp.route('/date/events',  methods=['GET', 'POST'])
-def create_event():
-    data = request.json
-    with sqldb.engine.connect() as conn:
-        result = conn.execute(sqldb.text("""
-            INSERT INTO Calendar_records (user_id, title, start, end, notify, notify_time, status)
-            VALUES (:user_id, :title, :start, :end, :notify, :notify_time, :status)
-        """), {
-            "user_id": data['user_id'],
-            "title": data['title'],
-            "start": data['start'],
-            "end": data['end'],
-            "notify": data['notify'],
-            "notify_time": data['notify_time'],
-            "status": data.get('status', 'pending')
-        })
-
-        new_id = result.lastrowid
-
-        # 如果要通知，存進 Redis
-        if data['notify'] and data['notify_time']:
-            r.set(f"notify:{new_id}", json.dumps({
-                'id': new_id,
-                'title': data['title'],
-                'user_id': data['user_id'],
-                'notify_time': data['notify_time']
-            }))
-
-    return jsonify({'id': new_id}), 201
-
-
-@dashboard_bp.route('/date/events/<int:event_id>', methods=['DELETE'])
-def delete_event(event_id):
-    with sqldb.engine.connect() as conn:
-        conn.execute(sqldb.text("DELETE FROM Calendar_records WHERE id=:id"), {"id": event_id})
-        r.delete(f"notify:{event_id}")
-    return '', 204

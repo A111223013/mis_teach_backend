@@ -103,24 +103,5 @@ with app.app_context():
 
 
 
-r = redis.Redis(host='localhost', port=6379, decode_responses=True)
-@app.route('notify_time')
-def check_notifications():
-    while True:
-        keys = r.keys("notify:*")
-        for k in keys:
-            data = json.loads(r.get(k))
-            notify_time = datetime.fromisoformat(data['notify_time'])
-            if datetime.now() >= notify_time:
-                msg = Message(data['email'], f"提醒您：{data['title']}", {data['event']})
-                msg.body = f"記得您今天的任務喔"
-                mail.send(msg)
-           
-                # 這裡你可以呼叫發信函數 send_email(...)
-            r.delete(k)
-        time.sleep(60)  # 每 60 秒檢查一次
-
-
-
 if __name__ == '__main__':
     app.run(debug=True)
