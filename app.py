@@ -10,6 +10,10 @@ from src.quiz import quiz_bp, init_quiz_tables
 from src.ai_quiz import ai_quiz_bp
 from src.materials_api import materials_bp
 import os
+import redis, json ,time
+from datetime import datetime
+from flask_mail import Mail, Message
+from accessories import mail, redis_client
 
 # Temporarily removed langchain imports until dependencies are installed
 # from langchain_google_genai import ChatGoogleGenerativeAI, GoogleGenerativeAIEmbeddings
@@ -96,6 +100,27 @@ with app.app_context():
     sqldb.create_all()
     # 移除自動初始化，改為按需初始化
     init_quiz_tables()  # 初始化測驗相關表格
+
+
+
+r = redis.Redis(host='localhost', port=6379, decode_responses=True)
+@app.route('notify_time')
+def check_notifications():
+    while True:
+        keys = r.keys("notify:*")
+        for k in keys:
+            data = json.loads(r.get(k))
+            notify_time = datetime.fromisoformat(data['notify_time'])
+            if datetime.now() >= notify_time:
+                msg = Message(data['email'], f"提醒您：{data['title']}", {data['event']})
+                msg.body = f"記得您今天的任務喔"
+                mail.send(msg)
+           
+                # 這裡你可以呼叫發信函數 send_email(...)
+            r.delete(k)
+        time.sleep(60)  # 每 60 秒檢查一次
+
+
 
 if __name__ == '__main__':
     app.run(debug=True)
