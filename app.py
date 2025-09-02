@@ -102,6 +102,5 @@ with app.app_context():
     init_quiz_tables()  # 初始化測驗相關表格
 
 
-
 if __name__ == '__main__':
     app.run(debug=True)
