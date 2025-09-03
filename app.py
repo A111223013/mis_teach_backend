@@ -100,6 +100,8 @@ with app.app_context():
     sqldb.create_all()
     # 移除自動初始化，改為按需初始化
     init_quiz_tables()  # 初始化測驗相關表格
+    from src.dashboard import init_calendar_tables
+    init_calendar_tables()  # 初始化行事曆表格
 
 
 if __name__ == '__main__':
