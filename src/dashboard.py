@@ -11,7 +11,7 @@ from tool.api_keys import get_api_key
 import json
 import re
 from datetime import datetime, timedelta
-from accessories import mongo
+from accessories import mongo, sqldb
 from bson import ObjectId
 import jwt
 from flask import current_app
@@ -22,6 +22,11 @@ import threading
 import concurrent.futures
 from concurrent.futures import ThreadPoolExecutor
 import random
+from flask_sqlalchemy import SQLAlchemy
+import redis, json ,time
+from flask_mail import Mail, Message
+from accessories import mail, redis_client
+from sqlalchemy import text
 
 dashboard_bp = Blueprint('dashboard', __name__)
 
@@ -72,7 +77,7 @@ def init_gemini():
 
 
 
-@dashboard_bp.route('/get-user-name', methods=['POST', 'OPTIONS'])
+@dashboard_bp.route('/get-user-name  ', methods=['POST', 'OPTIONS'])
 def get_user_name():
     if request.method == 'OPTIONS':
         return '', 204

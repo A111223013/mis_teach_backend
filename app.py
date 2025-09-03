@@ -10,6 +10,10 @@ from src.quiz import quiz_bp, init_quiz_tables
 from src.ai_quiz import ai_quiz_bp
 from src.materials_api import materials_bp
 import os
+import redis, json ,time
+from datetime import datetime
+from flask_mail import Mail, Message
+from accessories import mail, redis_client
 
 # Temporarily removed langchain imports until dependencies are installed
 # from langchain_google_genai import ChatGoogleGenerativeAI, GoogleGenerativeAIEmbeddings
@@ -96,6 +100,7 @@ with app.app_context():
     sqldb.create_all()
     # 移除自動初始化，改為按需初始化
     init_quiz_tables()  # 初始化測驗相關表格
+
 
 if __name__ == '__main__':
     app.run(debug=True)
