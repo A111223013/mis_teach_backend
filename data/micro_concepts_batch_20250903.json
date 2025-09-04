@@ -1,0 +1,280 @@
+{
+  "micro_concepts": [
+    {
+      "_id": "micro_1",
+      "block_id": "block_1",
+      "name": "數量表示法",
+      "dependencies": []
+    },
+    {
+      "_id": "micro_2",
+      "block_id": "block_1",
+      "name": "數位系統與類比系統",
+      "dependencies": []
+    },
+    {
+      "_id": "micro_3",
+      "block_id": "block_1",
+      "name": "邏輯準位與二進位表示法",
+      "dependencies": ["micro_1"]
+    },
+    {
+      "_id": "micro_4",
+      "block_id": "block_1",
+      "name": "數位積體電路與PLD簡介",
+      "dependencies": ["micro_2"]
+    },
+    {
+      "_id": "micro_5",
+      "block_id": "block_2",
+      "name": "基本邏輯關係與布林代數",
+      "dependencies": ["micro_3"]
+    },
+    {
+      "_id": "micro_6",
+      "block_id": "block_2",
+      "name": "或閘、及閘與反閘",
+      "dependencies": ["micro_5"]
+    },
+    {
+      "_id": "micro_7",
+      "block_id": "block_2",
+      "name": "反或閘與反及閘",
+      "dependencies": ["micro_6"]
+    },
+    {
+      "_id": "micro_8",
+      "block_id": "block_2",
+      "name": "互斥或閘與互斥反或閘",
+      "dependencies": ["micro_7"]
+    },
+    {
+      "_id": "micro_9",
+      "block_id": "block_3",
+      "name": "布林代數特質",
+      "dependencies": ["micro_5"]
+    },
+    {
+      "_id": "micro_10",
+      "block_id": "block_3",
+      "name": "單變數定理",
+      "dependencies": ["micro_9"]
+    },
+    {
+      "_id": "micro_11",
+      "block_id": "block_3",
+      "name": "多變數定理與第摩根定理",
+      "dependencies": ["micro_10"]
+    },
+    {
+      "_id": "micro_12",
+      "block_id": "block_4",
+      "name": "布林代數式簡化法",
+      "dependencies": ["micro_11"]
+    },
+    {
+      "_id": "micro_13",
+      "block_id": "block_4",
+      "name": "卡諾圖與組合邏輯設計步驟",
+      "dependencies": ["micro_12"]
+    },
+    {
+      "_id": "micro_14",
+      "block_id": "block_5",
+      "name": "作業系統概說",
+      "dependencies": []
+    },
+    {
+      "_id": "micro_15",
+      "block_id": "block_5",
+      "name": "作業系統結構",
+      "dependencies": ["micro_14"]
+    },
+    {
+      "_id": "micro_16",
+      "block_id": "block_6",
+      "name": "行程觀念",
+      "dependencies": ["micro_15"]
+    },
+    {
+      "_id": "micro_17",
+      "block_id": "block_6",
+      "name": "執行緒與並行性",
+      "dependencies": ["micro_16"]
+    },
+    {
+      "_id": "micro_18",
+      "block_id": "block_6",
+      "name": "CPU排班",
+      "dependencies": ["micro_17"]
+    },
+    {
+      "_id": "micro_19",
+      "block_id": "block_7",
+      "name": "同步工具",
+      "dependencies": ["micro_18"]
+    },
+    {
+      "_id": "micro_20",
+      "block_id": "block_7",
+      "name": "同步範例",
+      "dependencies": ["micro_19"]
+    },
+    {
+      "_id": "micro_21",
+      "block_id": "block_7",
+      "name": "死結處理",
+      "dependencies": ["micro_20"]
+    },
+    {
+      "_id": "micro_22",
+      "block_id": "block_8",
+      "name": "主記憶體管理",
+      "dependencies": ["micro_15"]
+    },
+    {
+      "_id": "micro_23",
+      "block_id": "block_8",
+      "name": "虛擬記憶體",
+      "dependencies": ["micro_22"]
+    },
+    {
+      "_id": "micro_24",
+      "block_id": "block_9",
+      "name": "大量儲存結構",
+      "dependencies": ["micro_15"]
+    },
+    {
+      "_id": "micro_25",
+      "block_id": "block_9",
+      "name": "輸入/輸出系統",
+      "dependencies": ["micro_24"]
+    },
+    {
+      "_id": "micro_26",
+      "block_id": "block_10",
+      "name": "資料結構定義",
+      "dependencies": []
+    },
+    {
+      "_id": "micro_27",
+      "block_id": "block_10",
+      "name": "資料結構對程式效率影響",
+      "dependencies": ["micro_26"]
+    },
+    {
+      "_id": "micro_28",
+      "block_id": "block_10",
+      "name": "演算法定義",
+      "dependencies": ["micro_26"]
+    },
+    {
+      "_id": "micro_29",
+      "block_id": "block_10",
+      "name": "程式效率分析",
+      "dependencies": ["micro_27", "micro_28"]
+    },
+    {
+      "_id": "micro_30",
+      "block_id": "block_11",
+      "name": "一維陣列",
+      "dependencies": ["micro_26"]
+    },
+    {
+      "_id": "micro_31",
+      "block_id": "block_11",
+      "name": "二維陣列",
+      "dependencies": ["micro_30"]
+    },
+    {
+      "_id": "micro_32",
+      "block_id": "block_12",
+      "name": "單向鏈結串列",
+      "dependencies": ["micro_26"]
+    },
+    {
+      "_id": "micro_33",
+      "block_id": "block_12",
+      "name": "雙向與環狀鏈結串列",
+      "dependencies": ["micro_32"]
+    },
+    {
+      "_id": "micro_34",
+      "block_id": "block_13",
+      "name": "佇列結構",
+      "dependencies": ["micro_26"]
+    },
+    {
+      "_id": "micro_35",
+      "block_id": "block_13",
+      "name": "堆疊結構",
+      "dependencies": ["micro_26"]
+    },
+    {
+      "_id": "micro_36",
+      "block_id": "block_14",
+      "name": "二元樹與二元搜尋樹",
+      "dependencies": ["micro_26"]
+    },
+    {
+      "_id": "micro_37",
+      "block_id": "block_15",
+      "name": "電腦網路簡介",
+      "dependencies": []
+    },
+    {
+      "_id": "micro_38",
+      "block_id": "block_15",
+      "name": "訊號基礎",
+      "dependencies": ["micro_37"]
+    },
+    {
+      "_id": "micro_39",
+      "block_id": "block_15",
+      "name": "訊號傳輸原理",
+      "dependencies": ["micro_38"]
+    },
+    {
+      "_id": "micro_40",
+      "block_id": "block_16",
+      "name": "訊號調變技術",
+      "dependencies": ["micro_39"]
+    },
+    {
+      "_id": "micro_41",
+      "block_id": "block_16",
+      "name": "類比傳輸與數位傳輸",
+      "dependencies": ["micro_40"]
+    },
+    {
+      "_id": "micro_42",
+      "block_id": "block_17",
+      "name": "區域網路拓樸方式",
+      "dependencies": ["micro_37"]
+    },
+    {
+      "_id": "micro_43",
+      "block_id": "block_17",
+      "name": "區域網路開放架構",
+      "dependencies": ["micro_42"]
+    },
+    {
+      "_id": "micro_44",
+      "block_id": "block_18",
+      "name": "區域網路元件",
+      "dependencies": ["micro_42"]
+    },
+    {
+      "_id": "micro_45",
+      "block_id": "block_18",
+      "name": "區域網路連線實作",
+      "dependencies": ["micro_44"]
+    },
+    {
+      "_id": "micro_46",
+      "block_id": "block_19",
+      "name": "TCP/IP通訊協定",
+      "dependencies": ["micro_37"]
+    }
+  ]
+}

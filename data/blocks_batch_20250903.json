@@ -1,0 +1,334 @@
+{
+  "blocks": [
+    {
+      "_id": "block_1",
+      "domain_id": "domain_1",
+      "title": "數位邏輯基本概念",
+      "subtopics": ["micro_1", "micro_2", "micro_3", "micro_4"]
+    },
+    {
+      "_id": "block_2",
+      "domain_id": "domain_1",
+      "title": "基本邏輯閘",
+      "subtopics": ["micro_5", "micro_6", "micro_7", "micro_8"]
+    },
+    {
+      "_id": "block_3",
+      "domain_id": "domain_1",
+      "title": "布林代數與第摩根定理",
+      "subtopics": ["micro_9", "micro_10", "micro_11"]
+    },
+    {
+      "_id": "block_4",
+      "domain_id": "domain_1",
+      "title": "布林代數化簡",
+      "subtopics": ["micro_12", "micro_13"]
+    },
+    {
+      "_id": "block_5",
+      "domain_id": "domain_2",
+      "title": "作業系統總論",
+      "subtopics": ["micro_14", "micro_15"]
+    },
+    {
+      "_id": "block_6",
+      "domain_id": "domain_2",
+      "title": "行程管理",
+      "subtopics": ["micro_16", "micro_17", "micro_18"]
+    },
+    {
+      "_id": "block_7",
+      "domain_id": "domain_2",
+      "title": "行程同步",
+      "subtopics": ["micro_19", "micro_20", "micro_21"]
+    },
+    {
+      "_id": "block_8",
+      "domain_id": "domain_2",
+      "title": "記憶體管理",
+      "subtopics": ["micro_22", "micro_23"]
+    },
+    {
+      "_id": "block_9",
+      "domain_id": "domain_2",
+      "title": "儲存管理",
+      "subtopics": ["micro_24", "micro_25"]
+    },
+    {
+      "_id": "block_10",
+      "domain_id": "domain_3",
+      "title": "資料結構簡介",
+      "subtopics": ["micro_26", "micro_27", "micro_28", "micro_29"]
+    },
+    {
+      "_id": "block_11",
+      "domain_id": "domain_3",
+      "title": "陣列結構",
+      "subtopics": ["micro_30", "micro_31"]
+    },
+    {
+      "_id": "block_12",
+      "domain_id": "domain_3",
+      "title": "鏈結串列",
+      "subtopics": ["micro_32", "micro_33"]
+    },
+    {
+      "_id": "block_13",
+      "domain_id": "domain_3",
+      "title": "佇列與堆疊",
+      "subtopics": ["micro_34", "micro_35"]
+    },
+    {
+      "_id": "block_14",
+      "domain_id": "domain_3",
+      "title": "樹狀結構",
+      "subtopics": ["micro_36"]
+    },
+    {
+      "_id": "block_15",
+      "domain_id": "domain_4",
+      "title": "網路概論",
+      "subtopics": ["micro_37", "micro_38", "micro_39"]
+    },
+    {
+      "_id": "block_16",
+      "domain_id": "domain_4",
+      "title": "訊號調變與編碼",
+      "subtopics": ["micro_40", "micro_41"]
+    },
+    {
+      "_id": "block_17",
+      "domain_id": "domain_4",
+      "title": "區域網路",
+      "subtopics": ["micro_42", "micro_43"]
+    },
+    {
+      "_id": "block_18",
+      "domain_id": "domain_4",
+      "title": "網路元件與連線",
+      "subtopics": ["micro_44", "micro_45"]
+    },
+    {
+      "_id": "block_19",
+      "domain_id": "domain_4",
+      "title": "網際網路應用",
+      "subtopics": ["micro_46"]
+    },
+    {
+      "_id": "block_20",
+      "domain_id": "domain_5",
+      "title": "資料庫概念",
+      "subtopics": ["micro_47", "micro_48", "micro_49", "micro_50"]
+    },
+    {
+      "_id": "block_21",
+      "domain_id": "domain_5",
+      "title": "資料庫設計",
+      "subtopics": ["micro_51", "micro_52", "micro_53", "micro_54"]
+    },
+    {
+      "_id": "block_22",
+      "domain_id": "domain_5",
+      "title": "SQL Server使用",
+      "subtopics": ["micro_55", "micro_56"]
+    },
+    {
+      "_id": "block_23",
+      "domain_id": "domain_5",
+      "title": "建立資料表",
+      "subtopics": ["micro_57", "micro_58"]
+    },
+    {
+      "_id": "block_24",
+      "domain_id": "domain_6",
+      "title": "AI應用導論",
+      "subtopics": ["micro_59", "micro_60", "micro_61"]
+    },
+    {
+      "_id": "block_25",
+      "domain_id": "domain_6",
+      "title": "基礎模型理解",
+      "subtopics": ["micro_62", "micro_63"]
+    },
+    {
+      "_id": "block_26",
+      "domain_id": "domain_6",
+      "title": "評估方法",
+      "subtopics": ["micro_64"]
+    },
+    {
+      "_id": "block_27",
+      "domain_id": "domain_6",
+      "title": "AI系統評估",
+      "subtopics": ["micro_65"]
+    },
+    {
+      "_id": "block_28",
+      "domain_id": "domain_6",
+      "title": "提示工程",
+      "subtopics": ["micro_66"]
+    },
+    {
+      "_id": "block_29",
+      "domain_id": "domain_6",
+      "title": "RAG與代理",
+      "subtopics": ["micro_67", "micro_68"]
+    },
+    {
+      "_id": "block_30",
+      "domain_id": "domain_6",
+      "title": "微調技術",
+      "subtopics": ["micro_69"]
+    },
+    {
+      "_id": "block_31",
+      "domain_id": "domain_6",
+      "title": "數據集工程",
+      "subtopics": ["micro_70", "micro_71"]
+    },
+    {
+      "_id": "block_32",
+      "domain_id": "domain_7",
+      "title": "資訊安全認知與風險識別",
+      "subtopics": ["micro_72", "micro_73", "micro_74"]
+    },
+    {
+      "_id": "block_33",
+      "domain_id": "domain_7",
+      "title": "信任與安全架構",
+      "subtopics": ["micro_75", "micro_76", "micro_77", "micro_78"]
+    },
+    {
+      "_id": "block_34",
+      "domain_id": "domain_7",
+      "title": "數位邊界與防禦部署",
+      "subtopics": ["micro_79", "micro_80", "micro_81", "micro_82"]
+    },
+    {
+      "_id": "block_35",
+      "domain_id": "domain_7",
+      "title": "資訊安全管理與未來挑戰",
+      "subtopics": ["micro_83", "micro_84"]
+    },
+    {
+      "_id": "block_36",
+      "domain_id": "domain_8",
+      "title": "虛擬化技術",
+      "subtopics": ["micro_85", "micro_86", "micro_87"]
+    },
+    {
+      "_id": "block_37",
+      "domain_id": "domain_8",
+      "title": "Qemu-KVM",
+      "subtopics": ["micro_88", "micro_89", "micro_90"]
+    },
+    {
+      "_id": "block_38",
+      "domain_id": "domain_8",
+      "title": "Libvirt",
+      "subtopics": ["micro_91", "micro_92"]
+    },
+    {
+      "_id": "block_39",
+      "domain_id": "domain_8",
+      "title": "Virt-Manager",
+      "subtopics": ["micro_93", "micro_94"]
+    },
+    {
+      "_id": "block_40",
+      "domain_id": "domain_8",
+      "title": "網路虛擬化",
+      "subtopics": ["micro_95", "micro_96"]
+    },
+    {
+      "_id": "block_41",
+      "domain_id": "domain_8",
+      "title": "傳統存儲技術",
+      "subtopics": ["micro_97", "micro_98"]
+    },
+    {
+      "_id": "block_42",
+      "domain_id": "domain_9",
+      "title": "組織管理與連網企業",
+      "subtopics": ["micro_99", "micro_100", "micro_101", "micro_102"]
+    },
+    {
+      "_id": "block_43",
+      "domain_id": "domain_9",
+      "title": "資訊科技基礎建設",
+      "subtopics": ["micro_103", "micro_104", "micro_105", "micro_106"]
+    },
+    {
+      "_id": "block_44",
+      "domain_id": "domain_9",
+      "title": "數位時代關鍵系統應用",
+      "subtopics": ["micro_107", "micro_108", "micro_109"]
+    },
+    {
+      "_id": "block_45",
+      "domain_id": "domain_9",
+      "title": "建立與維護系統",
+      "subtopics": ["micro_110", "micro_111"]
+    },
+    {
+      "_id": "block_46",
+      "domain_id": "domain_10",
+      "title": "軟體工程簡介",
+      "subtopics": ["micro_112", "micro_113"]
+    },
+    {
+      "_id": "block_47",
+      "domain_id": "domain_10",
+      "title": "需求工程",
+      "subtopics": ["micro_114", "micro_115"]
+    },
+    {
+      "_id": "block_48",
+      "domain_id": "domain_10",
+      "title": "系統架構設計",
+      "subtopics": ["micro_116"]
+    },
+    {
+      "_id": "block_49",
+      "domain_id": "domain_10",
+      "title": "物件導向軟體工程",
+      "subtopics": ["micro_117", "micro_118"]
+    },
+    {
+      "_id": "block_50",
+      "domain_id": "domain_10",
+      "title": "系統測試與部署",
+      "subtopics": ["micro_119"]
+    },
+    {
+      "_id": "block_51",
+      "domain_id": "domain_10",
+      "title": "系統管理與維護",
+      "subtopics": ["micro_120", "micro_121"]
+    },
+    {
+      "_id": "block_52",
+      "domain_id": "domain_10",
+      "title": "品質管理",
+      "subtopics": ["micro_122"]
+    },
+    {
+      "_id": "block_53",
+      "domain_id": "domain_10",
+      "title": "設計模式與重構",
+      "subtopics": ["micro_123", "micro_124"]
+    },
+    {
+      "_id": "block_54",
+      "domain_id": "domain_10",
+      "title": "資料庫系統開發",
+      "subtopics": ["micro_125"]
+    },
+    {
+      "_id": "block_55",
+      "domain_id": "domain_10",
+      "title": "跨平台開發",
+      "subtopics": ["micro_126"]
+    }
+  ]
+}

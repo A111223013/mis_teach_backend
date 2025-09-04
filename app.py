@@ -7,8 +7,13 @@ from src.login import login_bp
 from src.register import register_bp
 from src.dashboard import dashboard_bp
 from src.quiz import quiz_bp, init_quiz_tables
+from src.ai_quiz import ai_quiz_bp
 from src.materials_api import materials_bp
 import os
+import redis, json ,time
+from datetime import datetime
+from flask_mail import Mail, Message
+from accessories import mail, redis_client
 
 # Temporarily removed langchain imports until dependencies are installed
 # from langchain_google_genai import ChatGoogleGenerativeAI, GoogleGenerativeAIEmbeddings
@@ -21,6 +26,7 @@ from src.ai_teacher import ai_teacher_bp
 from src.user_guide_api import user_guide_bp
 from src.web_ai_assistant import web_ai_bp
 from src.linebot import linebot_bp  # 新增 LINE Bot Blueprint
+from src.learning_analytics import analytics_bp  # 從統一模組導入學習分析 API Blueprint
 
 # Initialize Flask app
 app = Flask(__name__)
@@ -61,11 +67,13 @@ app.register_blueprint(login_bp, url_prefix='/login')
 app.register_blueprint(register_bp, url_prefix='/register')
 app.register_blueprint(dashboard_bp, url_prefix='/dashboard')
 app.register_blueprint(quiz_bp, url_prefix='/quiz')
+app.register_blueprint(ai_quiz_bp, url_prefix='/ai_quiz')
 app.register_blueprint(ai_teacher_bp, url_prefix='/ai_teacher')
 app.register_blueprint(user_guide_bp, url_prefix='/user-guide')
 app.register_blueprint(web_ai_bp, url_prefix='/web-ai')
 app.register_blueprint(linebot_bp, url_prefix='/linebot') # 註冊 LINE Bot Blueprint
 app.register_blueprint(materials_bp, url_prefix="/materials")
+app.register_blueprint(analytics_bp, url_prefix="/analytics")  # 註冊學習分析 API Blueprint
 
 # 創建靜態文件服務路由 (用於圖片)
 @app.route('/static/images/<path:filename>')
@@ -92,6 +100,9 @@ with app.app_context():
     sqldb.create_all()
     # 移除自動初始化，改為按需初始化
     init_quiz_tables()  # 初始化測驗相關表格
+    from src.dashboard import init_calendar_tables
+    init_calendar_tables()  # 初始化行事曆表格
+
 
 if __name__ == '__main__':
     app.run(debug=True)

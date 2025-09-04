@@ -1,0 +1,44 @@
+{
+  "domains": [
+    {
+      "_id": "domain_1",
+      "name": "數位邏輯"
+    },
+    {
+      "_id": "domain_2",
+      "name": "作業系統"
+    },
+    {
+      "_id": "domain_3",
+      "name": "資料結構"
+    },
+    {
+      "_id": "domain_4",
+      "name": "電腦網路"
+    },
+    {
+      "_id": "domain_5",
+      "name": "資料庫"
+    },
+    {
+      "_id": "domain_6",
+      "name": "AI與機器學習"
+    },
+    {
+      "_id": "domain_7",
+      "name": "資訊安全"
+    },
+    {
+      "_id": "domain_8",
+      "name": "雲端與虛擬化"
+    },
+    {
+      "_id": "domain_9",
+      "name": "管理資訊系統"
+    },
+    {
+      "_id": "domain_10",
+      "name": "軟體工程與系統開發"
+    }
+  ]
+}
