@@ -3,6 +3,7 @@ from flask_cors import CORS
 import sys
 from accessories import sqldb, mail, redis_client, token_store, mongo, login_manager, init_mongo_data
 from config import Config, ProductionConfig, DevelopmentConfig
+from tool.insert_mongodb import initialize_mis_teach_db
 from src.login import login_bp
 from src.register import register_bp
 from src.dashboard import dashboard_bp
@@ -61,6 +62,7 @@ mongo.init_app(app)
 login_manager.init_app(app)
 login_manager.login_view = '/login'
 init_mongo_data()
+initialize_mis_teach_db()
 
 # Register blueprints
 app.register_blueprint(login_bp, url_prefix='/login')
