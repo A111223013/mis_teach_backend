@@ -1,9 +1,9 @@
-from flask import Blueprint, jsonify
+from flask import Blueprint, jsonify, Response
 import os
 from accessories import mongo
 import markdown
-from flask import Response
-from bs4 import BeautifulSoup
+from bson.json_util import dumps
+import traceback
 
 # 建立 Blueprint
 materials_bp = Blueprint("materials", __name__)
@@ -122,6 +122,7 @@ def get_material(filename):
     return Response(full_page, mimetype="text/html")
 
 
+
 @materials_bp.route("/key_points", methods=["GET"])
 def get_key_points():
     """
@@ -138,6 +139,7 @@ def get_key_points():
             key_points_set.add(key_points)
     return jsonify({"key_points": list(key_points_set)})
 
+
 @materials_bp.route('/domain', methods=['GET'])
 def get_domains():
     try:
@@ -149,12 +151,15 @@ def get_domains():
             d['_id'] = str(d['_id'])
             # 將 blocks 內的 ObjectId 都轉成字串
             if 'blocks' in d and d['blocks']:
-                d['blocks'] = [str(b) for b in d['blocks']]
+                # ✅ 安全轉換 ObjectId（避免 BSON 格式錯誤）
+                d['blocks'] = [str(b['$oid']) if isinstance(b, dict) and '$oid' in b else str(b) for b in d.get('blocks', [])]
             else:
                 d['blocks'] = []
 
         return jsonify(domains)
     except Exception as e:
+        print("❌ domain 發生例外:", str(e))
+        traceback.print_exc()
         return jsonify({"error": f"Exception: {str(e)}"}), 500
 
 
@@ -166,41 +171,38 @@ def get_blocks():
             return jsonify({"error": "No block collection or data found"}), 404
 
         for b in blocks:
-            b['_id'] = str(b['_id'])
-            # 將 domain_id 轉成字串
-            if 'domain_id' in b:
-                b['domain_id'] = str(b['domain_id'])
-            else:
-                b['domain_id'] = None
+            b['_id'] = str(b['_id'])  # ✅ ObjectId 轉字串
+            b['domain_id'] = str(b['domain_id']) if b.get('domain_id') else None
 
-        return jsonify(blocks)
+        return jsonify(blocks)  # ✅ 改用 jsonify，與其他路由一致
     except Exception as e:
+        print("❌ block 發生例外:", str(e))
+        traceback.print_exc()
         return jsonify({"error": f"Exception: {str(e)}"}), 500
+
+
+# 使用 safe_oid() 統一處理 ObjectId 或 BSON 格式，避免序列化錯誤
+def safe_oid(val):
+    if isinstance(val, dict) and '$oid' in val:
+        return val['$oid']
+    return str(val)
 
 
 @materials_bp.route('/micro_concept', methods=['GET'])
 def get_micro_concepts():
     try:
         micro_concepts = list(mongo.db.micro_concept.find())
+
         if not micro_concepts:
             return jsonify({"error": "No micro_concept collection or data found"}), 404
 
-        # 將 _id、block_id、dependencies 都轉成字串
         for m in micro_concepts:
-            m['_id'] = str(m['_id'])
-            # 如果 block_id 是 ObjectId，轉成字串
-            if isinstance(m.get('block_id'), dict) and '$oid' in m['block_id']:
-                m['block_id'] = m['block_id']['$oid']
-            else:
-                m['block_id'] = str(m.get('block_id'))
-
-            # dependencies 陣列也轉成字串
-            if 'dependencies' in m and m['dependencies']:
-                m['dependencies'] = [str(d) if isinstance(d, dict) and '$oid' in d else str(d) for d in m['dependencies']]
-            else:
-                m['dependencies'] = []
-
+            m['_id'] = safe_oid(m['_id'])
+            m['block_id'] = safe_oid(m.get('block_id'))
+            m['dependencies'] = [safe_oid(d) for d in m.get('dependencies', [])]
         return jsonify(micro_concepts)
-    except Exception as e:
-        return jsonify({"error": f"Exception: {str(e)}"}), 500
 
+    except Exception as e:
+        print("❌ micro_concepts 發生例外:", str(e))
+        traceback.print_exc()
+        return jsonify({"error": f"Exception: {str(e)}"}), 500
