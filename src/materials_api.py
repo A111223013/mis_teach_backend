@@ -4,6 +4,7 @@ from accessories import mongo
 import markdown
 from bson.json_util import dumps
 import traceback
+from bson import ObjectId
 
 # 建立 Blueprint
 materials_bp = Blueprint("materials", __name__)
@@ -122,6 +123,22 @@ def get_material(filename):
     return Response(full_page, mimetype="text/html")
 
 
+def convert_objectid(data):
+    """
+    遞迴處理 dict / list / ObjectId
+    - 如果是 ObjectId，轉成字串
+    - 如果是 list，遞迴處理每個元素
+    - 如果是 dict，遞迴處理每個鍵值
+    - 其他型別則直接回傳
+    """
+    if isinstance(data, ObjectId):
+        return str(data)
+    elif isinstance(data, list):
+        return [convert_objectid(item) for item in data]
+    elif isinstance(data, dict):
+        return {k: convert_objectid(v) for k, v in data.items()}
+    return data
+
 
 @materials_bp.route("/key_points", methods=["GET"])
 def get_key_points():
@@ -142,19 +159,17 @@ def get_key_points():
 
 @materials_bp.route('/domain', methods=['GET'])
 def get_domains():
+    """
+    GET /materials/domain
+    從 MongoDB 抓取 domain 資料，並將所有 ObjectId 轉為字串
+    """
     try:
         domains = list(mongo.db.domain.find())
         if not domains:
             return jsonify({"error": "No domain collection or data found"}), 404
 
-        for d in domains:
-            d['_id'] = str(d['_id'])
-            # 將 blocks 內的 ObjectId 都轉成字串
-            if 'blocks' in d and d['blocks']:
-                # ✅ 安全轉換 ObjectId（避免 BSON 格式錯誤）
-                d['blocks'] = [str(b['$oid']) if isinstance(b, dict) and '$oid' in b else str(b) for b in d.get('blocks', [])]
-            else:
-                d['blocks'] = []
+        # 遞迴轉換 ObjectId
+        domains = [convert_objectid(d) for d in domains]
 
         return jsonify(domains)
     except Exception as e:
@@ -165,43 +180,40 @@ def get_domains():
 
 @materials_bp.route('/block', methods=['GET'])
 def get_blocks():
+    """
+    GET /materials/block
+    從 MongoDB 抓取 block 資料，並將所有 ObjectId 轉為字串
+    """
     try:
         blocks = list(mongo.db.block.find())
         if not blocks:
             return jsonify({"error": "No block collection or data found"}), 404
 
-        for b in blocks:
-            b['_id'] = str(b['_id'])  # ✅ ObjectId 轉字串
-            b['domain_id'] = str(b['domain_id']) if b.get('domain_id') else None
+        # 遞迴轉換 ObjectId
+        blocks = [convert_objectid(b) for b in blocks]
 
-        return jsonify(blocks)  # ✅ 改用 jsonify，與其他路由一致
+        return jsonify(blocks)
     except Exception as e:
         print("❌ block 發生例外:", str(e))
         traceback.print_exc()
         return jsonify({"error": f"Exception: {str(e)}"}), 500
 
 
-# 使用 safe_oid() 統一處理 ObjectId 或 BSON 格式，避免序列化錯誤
-def safe_oid(val):
-    if isinstance(val, dict) and '$oid' in val:
-        return val['$oid']
-    return str(val)
-
-
 @materials_bp.route('/micro_concept', methods=['GET'])
 def get_micro_concepts():
+    """
+    GET /materials/micro_concept
+    從 MongoDB 抓取 micro_concept 資料，並將所有 ObjectId 轉為字串
+    """
     try:
         micro_concepts = list(mongo.db.micro_concept.find())
-
         if not micro_concepts:
             return jsonify({"error": "No micro_concept collection or data found"}), 404
 
-        for m in micro_concepts:
-            m['_id'] = safe_oid(m['_id'])
-            m['block_id'] = safe_oid(m.get('block_id'))
-            m['dependencies'] = [safe_oid(d) for d in m.get('dependencies', [])]
-        return jsonify(micro_concepts)
+        # 遞迴轉換 ObjectId
+        micro_concepts = [convert_objectid(m) for m in micro_concepts]
 
+        return jsonify(micro_concepts)
     except Exception as e:
         print("❌ micro_concepts 發生例外:", str(e))
         traceback.print_exc()
