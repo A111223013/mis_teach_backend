@@ -78,32 +78,16 @@ def init_gemini():
 
 
 
-@dashboard_bp.route('/get-user-name  ', methods=['POST', 'OPTIONS'])
+@dashboard_bp.route('/get-user-name', methods=['POST', 'OPTIONS'])
 def get_user_name():
     if request.method == 'OPTIONS':
         return '', 204
     auth_header = request.headers.get('Authorization')
     if not auth_header:
         return jsonify({'message': '未提供token'}), 401
-    # 檢查Authorization header格式
-    if not auth_header.startswith('Bearer '):
-        return jsonify({'message': 'Token格式錯誤'}), 401
     token = auth_header.split(" ")[1]
-    
-    try:
-        user_name = get_user_info(token, 'name')
-        return jsonify({'name': user_name}), 200
-    except ValueError as e:
-        error_msg = str(e)
-        if "expired" in error_msg.lower():
-            return jsonify({'message': 'Token已過期，請重新登錄', 'code': 'TOKEN_EXPIRED'}), 401
-        elif "invalid" in error_msg.lower():
-            return jsonify({'message': '無效的token', 'code': 'TOKEN_INVALID'}), 401
-        else:
-            return jsonify({'message': '認證失敗', 'code': 'AUTH_FAILED'}), 401
-    except Exception as e:
-        print(f"獲取用戶名稱時發生錯誤: {str(e)}")
-        return jsonify({'message': '服務器內部錯誤', 'code': 'SERVER_ERROR'}), 500
+    user_name = get_user_info(token, 'name')
+    return jsonify({'token': token, 'name': user_name}), 200
 
 
 def init_calendar_tables():

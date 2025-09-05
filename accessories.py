@@ -50,10 +50,6 @@ class User(UserMixin):
     def get_id(self):
         return self.id
     
-def get_user_info(token, key):
-    decoded_token = jwt.decode(token, current_app.config['SECRET_KEY'], algorithms=["HS256"])
-    user = mongo.db.students.find_one({"email": decoded_token['user']})
-    return user[key]
 
 def update_json_in_mongo(data, collection_name, doc_name, save_history=True):
     current_time = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
