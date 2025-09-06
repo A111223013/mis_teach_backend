@@ -4,12 +4,11 @@
 多代理問題處理模組
 """
 
-import google.generativeai as genai
 from tool.api_keys import get_api_key
 import json
 import re
 from typing import Dict, Any, List, Optional
-
+from accessories import init_gemini
 
 
 # ========== Gemini API Key ==========
@@ -117,20 +116,9 @@ arbiter_agent_prompt_template = """
 
 
 
-# ========== 模型初始化 ==========
-# 設定金鑰
-def init_gemini():
-    """初始化Gemini API"""
-    try:
-        api_key = get_api_key()
-        genai.configure(api_key=api_key)
-        print("✅ Gemini API 配置成功")
-    except Exception as e:
-        print(f"❌ Gemini API 配置失敗: {e}")
-        raise
 
 # 初始化API
-init_gemini()
+init_gemini(model_name = 'gemini-1.5-flash')
 
 def read_image_base64(image_path):
     if not os.path.exists(image_path):
@@ -142,7 +130,7 @@ def read_image_base64(image_path):
 def call_gemini_model(prompt, image_base64=None):
     """調用主代理人模型"""
     try:
-        model = genai.GenerativeModel("gemini-2.0-flash")
+        model = init_gemini("gemini-2.0-flash")
         
         if image_base64:
             import base64
@@ -189,7 +177,7 @@ def call_llama_model(prompt):
     """調用次代理人模型（改為使用 Gemini）"""
     try:
         # 使用 Gemini 作為次代理人，而不是本地 Ollama
-        model = genai.GenerativeModel("gemini-2.0-flash")
+        model = init_gemini("gemini-2.0-flash")
         response = model.generate_content(prompt)
         
         # 檢查回應是否有效

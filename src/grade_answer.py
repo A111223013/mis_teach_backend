@@ -2,22 +2,15 @@ import json
 import re
 import concurrent.futures
 from typing import List, Dict, Any, Tuple
-import google.generativeai as genai
 from tool.api_keys import get_api_key, get_api_keys_count
+from accessories import init_gemini
 
 class AnswerGrader:
     """答案批改器 - 簡化版本"""
     
     def __init__(self):
         # 初始化Gemini API
-        try:
-            api_key = get_api_key()
-            genai.configure(api_key=api_key)
-            # 使用正確的模型名稱
-            self.model = genai.GenerativeModel('gemini-2.0-flash')
-        except Exception as e:
-            print(f"❌ Gemini API 初始化失敗: {e}")
-            self.model = None
+        self.model = init_gemini('gemini-2.0-flash')
     
     def batch_grade_ai_questions(self, questions_data: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """批量評分AI題目 - 並行處理版本"""
@@ -129,8 +122,8 @@ class AnswerGrader:
         try:
             # 使用指定的API金鑰索引
             api_key = self._get_api_key_by_index(api_key_index)
-            genai.configure(api_key=api_key)
-            model = genai.GenerativeModel('gemini-2.0-flash')
+            # 使用 accessories 中的 init_gemini 函數
+            model = init_gemini('gemini-2.0-flash')
             return model
         except Exception as e:
             print(f"❌ 創建批次模型失敗: {e}")

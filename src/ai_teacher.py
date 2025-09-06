@@ -9,7 +9,7 @@ from datetime import datetime
 from flask import Blueprint, request, jsonify
 from typing import Dict, Any, List, Optional
 
-from accessories import mongo
+from accessories import mongo, refresh_token
 from bson.objectid import ObjectId
 
 # 導入 RAG 系統模組
@@ -364,7 +364,13 @@ def ai_tutoring():
     """AI 教學對話端點"""
     try:
         if request.method == 'OPTIONS':
-            return jsonify({'success': True})
+            return jsonify({'token': None, 'success': True}), 204
+    
+        auth_header = request.headers.get('Authorization')
+        if not auth_header:
+            return jsonify({'token': None, 'message': '未提供token'}), 401
+        
+        token = auth_header.split(" ")[1]
         
         data = request.get_json()
         user_input = data.get('user_input', '')
@@ -375,7 +381,7 @@ def ai_tutoring():
         # 調用 AI 對話處理
         result = chat_with_ai(user_input or "初始化會話", conversation_type, session_id)
         
-        return jsonify(result)
+        return jsonify({'token': refresh_token(token), 'data': result})
         
     except Exception as e:
         logger.error(f"❌ AI教學對話端點錯誤: {e}")
@@ -388,37 +394,46 @@ def ai_tutoring():
 @ai_teacher_bp.route('/get-quiz-result/<result_id>', methods=['GET', 'OPTIONS'])
 def get_quiz_result(result_id):
     """獲取測驗結果"""
-    try:
-        if request.method == 'OPTIONS':
-            return jsonify({'success': True})
-        
-        # 獲取測驗結果數據
-        result_data = get_quiz_result_data(result_id)
-        
-        if result_data:
-            return jsonify({
-                'success': True,
-                'data': result_data
-            })
-        else:
-            return jsonify({
-                'success': False,
-                'error': '未找到測驗結果'
-            }), 404
-        
-    except Exception as e:
-        logger.error(f"❌ 獲取測驗結果失敗: {e}")
+    if request.method == 'OPTIONS':
+        return jsonify({'token': None, 'success': True}), 204
+    
+    auth_header = request.headers.get('Authorization')
+    if not auth_header:
+        return jsonify({'token': None, 'message': '未提供token'}), 401
+    
+    token = auth_header.split(" ")[1]
+    user_email = get_user_info(token, 'email')
+    if not user_email:
+        return jsonify({'token': None, 'message': '無效的token'}), 401
+    
+    # 獲取測驗結果數據
+    result_data = get_quiz_result_data(result_id)
+    
+    if result_data:
         return jsonify({
+            'token': refresh_token(token),
+            'success': True,
+            'data': result_data
+        })
+    else:
+        return jsonify({
+            'token': refresh_token(token),
             'success': False,
-            'error': f'獲取測驗結果失敗：{str(e)}'
-        }), 500
+            'message': '未找到測驗結果'
+        }), 404
 
 @ai_teacher_bp.route('/get-quiz-from-database', methods=['POST', 'OPTIONS'])
 def get_quiz_from_database_endpoint():
     """從資料庫獲取考卷數據"""
     try:
         if request.method == 'OPTIONS':
-            return jsonify({'success': True})
+            return jsonify({'token': None, 'success': True}), 204
+    
+        auth_header = request.headers.get('Authorization')
+        if not auth_header:
+            return jsonify({'token': None, 'message': '未提供token'}), 401
+        
+        token = auth_header.split(" ")[1]
         
         data = request.get_json()
         quiz_ids = data.get('quiz_ids', [])
@@ -432,7 +447,7 @@ def get_quiz_from_database_endpoint():
         # 調用獲取考卷數據函數
         result = get_quiz_from_database(quiz_ids)
         
-        return jsonify(result)
+        return jsonify({'token': refresh_token(token), 'data': result})
         
     except Exception as e:
         logger.error(f"❌ 獲取考卷數據失敗: {e}")

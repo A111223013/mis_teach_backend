@@ -22,6 +22,7 @@ from langchain.agents import create_tool_calling_agent, AgentExecutor
 # 本地模組導入
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 from tool.api_keys import get_api_key
+from accessories import refresh_token
 
 # LINE Bot 工具導入
 from src.linebot import (
@@ -549,10 +550,18 @@ def _fix_incomplete_json(json_str: str) -> str:
 
 # ==================== API路由 ====================
 
-@web_ai_bp.route('/chat', methods=['POST'])
+@web_ai_bp.route('/chat', methods=['POST', 'OPTIONS'])
 def chat():
     """聊天API - 接收用戶訊息並返回AI回應，支援平台區分"""
     try:
+        if request.method == 'OPTIONS':
+            return jsonify({'token': None, 'success': True}), 204
+    
+        auth_header = request.headers.get('Authorization')
+        if not auth_header:
+            return jsonify({'token': None, 'message': '未提供token'}), 401
+        
+        token = auth_header.split(" ")[1]
         data = request.get_json()
         if not data or 'message' not in data:
             return jsonify({'success': False, 'error': '缺少必要參數'}), 400
@@ -564,7 +573,7 @@ def chat():
         # 處理訊息
         result = process_message(message, user_id, platform)
         
-        return jsonify(result)
+        return jsonify({'token': refresh_token(token), 'data': result})
         
     except Exception as e:
         logger.error(f"❌ 聊天API錯誤: {e}")
@@ -573,10 +582,18 @@ def chat():
             'error': f'聊天API錯誤：{str(e)}'
         }), 500
 
-@web_ai_bp.route('/quick-action', methods=['POST'])
+@web_ai_bp.route('/quick-action', methods=['POST', 'OPTIONS'])
 def quick_action():
     """快速動作API - 處理預定義的快速動作"""
     try:
+        if request.method == 'OPTIONS':
+            return jsonify({'token': None, 'success': True}), 204
+    
+        auth_header = request.headers.get('Authorization')
+        if not auth_header:
+            return jsonify({'token': None, 'message': '未提供token'}), 401
+        
+        token = auth_header.split(" ")[1]
         data = request.get_json()
         if not data or 'action' not in data:
             return jsonify({'success': False, 'error': '缺少必要參數'}), 400
@@ -595,6 +612,7 @@ def quick_action():
             response = "抱歉，我不認識這個動作。"
         
         return jsonify({
+            'token': refresh_token(token),
             'success': True,
             'message': response,
             'timestamp': datetime.now().isoformat()
@@ -615,7 +633,13 @@ def web_get_quiz_from_database():
     
     try:
         if request.method == 'OPTIONS':
-            return jsonify({'success': True})
+            return jsonify({'token': None, 'success': True}), 204
+    
+        auth_header = request.headers.get('Authorization')
+        if not auth_header:
+            return jsonify({'token': None, 'message': '未提供token'}), 401
+        
+        token = auth_header.split(" ")[1]
 
         data = request.get_json(silent=True) or {}
         quiz_ids = data.get('quiz_ids', [])
@@ -626,7 +650,7 @@ def web_get_quiz_from_database():
         # 從 ai_teacher 匯入核心實作並呼叫
         from .ai_teacher import get_quiz_from_database
         result = get_quiz_from_database(quiz_ids)
-        return jsonify(result)
+        return jsonify({'token': refresh_token(token), 'data': result})
 
     except Exception as e:
         logger.error(f"❌ web-ai/get-quiz-from-database 錯誤: {e}")

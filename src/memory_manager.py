@@ -14,28 +14,21 @@ _user_memories = {}
 
 def manage_user_memory(action: str, user_id: str = "default") -> str:
     """管理用戶記憶"""
-    try:
-        if action == 'view':
-            return _get_memory_summary(user_id)
-        elif action == 'clear':
-            return _clear_user_memory(user_id)
-        elif action == 'stats':
-            return _get_memory_stats()
-        else:
-            return f"❓ **未知操作**\n\n支持的操作: view(查看), clear(清除), stats(統計)"
-            
-    except Exception as e:
-        logger.error(f"記憶管理失敗: {e}")
-        return f"記憶管理失敗：{str(e)}"
+    if action == 'view':
+        return _get_memory_summary(user_id)
+    elif action == 'clear':
+        return _clear_user_memory(user_id)
+    elif action == 'stats':
+        return _get_memory_stats()
+    else:
+        return f"❓ **未知操作**\n\n支持的操作: view(查看), clear(清除), stats(統計)"
 
 def _get_memory_summary(user_id: str) -> str:
     """獲取用戶記憶摘要"""
-    if user_id not in _user_memories:
+    if user_id not in _user_memories or not _user_memories[user_id]:
         return "📚 **對話記憶摘要**\n\n無對話記憶\n\n💡 我們可以開始新的對話！"
     
     memory = _user_memories[user_id]
-    if not memory:
-        return "📚 **對話記憶摘要**\n\n無對話記憶\n\n💡 我們可以開始新的對話！"
     
     # 返回最近的幾條記憶
     recent_messages = memory[-min(3, len(memory)):]

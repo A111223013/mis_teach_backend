@@ -3,6 +3,7 @@
 """
 
 from flask import Blueprint, request, jsonify, session
+from accessories import refresh_token
 import logging
 from datetime import datetime
 from typing import Dict, Any
@@ -127,23 +128,16 @@ user_guide_service = UserGuideService()
 
 @user_guide_bp.route('/check-new-user', methods=['GET'])
 def check_new_user():
-    """檢查用戶是否為新用戶"""
-    try:
-        user_id = user_guide_service.get_user_id()
-        is_new = user_guide_service.is_new_user(user_id)
-        
-        return jsonify({
-            'success': True,
-            'is_new_user': is_new,
-            'user_id': user_id
-        })
-        
-    except Exception as e:
-        logger.error(f"檢查新用戶狀態時發生錯誤: {e}")
-        return jsonify({
-            'success': False,
-            'error': str(e)
-        }), 500
+
+    user_id = user_guide_service.get_user_id()
+    is_new = user_guide_service.is_new_user(user_id)
+    
+    return jsonify({
+        'success': True,
+        'is_new_user': is_new,
+        'user_id': user_id
+    })
+
 
 @user_guide_bp.route('/trigger-guide', methods=['POST'])
 def trigger_guide():
@@ -166,11 +160,12 @@ def trigger_guide():
         # 調用 n8n 工作流
         result = user_guide_service.trigger_n8n_workflow(user_data)
         
-        return jsonify(result)
+        return jsonify({'token': refresh_token(token), 'data': result})
         
     except Exception as e:
         logger.error(f"觸發導覽時發生錯誤: {e}")
         return jsonify({
+            'token': None,
             'success': False,
             'error': str(e)
         }), 500
@@ -190,36 +185,9 @@ def mark_guided():
     except Exception as e:
         logger.error(f"更新用戶導覽狀態時發生錯誤: {e}")
         return jsonify({
+            'token': None,
             'success': False,
             'error': str(e)
         }), 500
 
-@user_guide_bp.route('/reset-user', methods=['POST'])
-def reset_user():
-    """重置用戶狀態（用於測試）"""
-    try:
-        user_id = user_guide_service.get_user_id()
-        if user_id in USER_DATABASE:
-            USER_DATABASE[user_id]['new_user'] = True
-            
-        return jsonify({
-            'success': True,
-            'message': '用戶狀態已重置為新用戶'
-        })
-        
-    except Exception as e:
-        logger.error(f"重置用戶狀態時發生錯誤: {e}")
-        return jsonify({
-            'success': False,
-            'error': str(e)
-        }), 500
 
-@user_guide_bp.route('/health', methods=['GET'])
-def health_check():
-    """健康檢查"""
-    return jsonify({
-        'success': True,
-        'service': 'User Guide API',
-        'status': 'running',
-        'timestamp': datetime.now().isoformat()
-    })

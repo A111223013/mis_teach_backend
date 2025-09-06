@@ -11,6 +11,7 @@ from typing import Dict, List, Any, Optional
 from datetime import datetime
 from collections import defaultdict
 from flask import Blueprint, jsonify, request
+from accessories import refresh_token
 import sqlite3  # 實際使用時改為 MySQL 連接器
 
 # 設置日誌
@@ -545,6 +546,7 @@ def get_student_mastery(student_email: str):
         knowledge_graph = generate_knowledge_graph_data(student_email)
         
         return jsonify({
+            "token": refresh_token(token),
             "success": True,
             "data": {
                 "student_email": student_email,
@@ -574,6 +576,7 @@ def get_weakness_report(student_email: str):
             }), 500
 
         return jsonify({
+            "token": refresh_token(token),
             "success": True,
             "data": report
         })
@@ -598,6 +601,7 @@ def get_knowledge_graph(student_email: str):
             }), 500
 
         return jsonify({
+            "token": refresh_token(token),
             "success": True,
             "data": graph_data
         })
@@ -622,6 +626,7 @@ def get_micro_concept_mastery(student_email: str, micro_concept_id: str):
             }), 500
 
         return jsonify({
+            "token": refresh_token(token),
             "success": True,
             "data": mastery
         })
@@ -640,6 +645,7 @@ def get_dependency_issues(student_email: str):
         issues = check_dependency_issues(student_email)
         
         return jsonify({
+            "token": refresh_token(token),
             "success": True,
             "data": {
                 "student_email": student_email,

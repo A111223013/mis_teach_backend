@@ -57,45 +57,36 @@ class SmartQuizGenerator:
         Returns:
             生成的考卷數據
         """
-        try:
-            logger.info(f"🚀 開始智能生成考卷，需求: {requirements}")
-            
-            # 驗證需求
-            validated_req = self._validate_requirements(requirements)
-            
-            # 根據考卷類型生成題目
-            if validated_req['exam_type'] == 'pastexam':
-                questions = self._generate_pastexam_questions(validated_req)
-            else:
-                questions = self._generate_knowledge_questions(validated_req)
-            
-            # 檢查是否成功生成足夠的題目
-            if len(questions) < validated_req['question_count']:
-                logger.warning(f"⚠️ 只成功生成 {len(questions)} 題，少於要求的 {validated_req['question_count']} 題")
-                if len(questions) == 0:
-                    return {
-                        'success': False,
-                        'error': f"無法生成任何題目，請檢查AI服務是否正常"
-                    }
-            
-            # 生成考卷信息
-            quiz_info = self._generate_quiz_info(validated_req, questions)
-            
-            logger.info(f"✅ 考卷生成完成，成功生成 {len(questions)} 題")
-            
-            return {
-                'success': True,
-                'quiz_info': quiz_info,
-                'questions': questions,
-                'generated_at': datetime.now().isoformat()
-            }
-            
-        except Exception as e:
-            logger.error(f"❌ 生成考卷失敗: {e}")
-            return {
-                'success': False,
-                'error': f"生成考卷失敗: {str(e)}"
-            }
+        logger.info(f"🚀 開始智能生成考卷，需求: {requirements}")
+        
+        # 驗證需求
+        validated_req = self._validate_requirements(requirements)
+        
+        # 根據考卷類型生成題目
+        questions = (self._generate_pastexam_questions(validated_req) 
+                    if validated_req['exam_type'] == 'pastexam' 
+                    else self._generate_knowledge_questions(validated_req))
+        
+        # 檢查是否成功生成足夠的題目
+        if len(questions) < validated_req['question_count']:
+            logger.warning(f"⚠️ 只成功生成 {len(questions)} 題，少於要求的 {validated_req['question_count']} 題")
+            if len(questions) == 0:
+                return {
+                    'success': False,
+                    'error': f"無法生成任何題目，請檢查AI服務是否正常"
+                }
+        
+        # 生成考卷信息
+        quiz_info = self._generate_quiz_info(validated_req, questions)
+        
+        logger.info(f"✅ 考卷生成完成，成功生成 {len(questions)} 題")
+        
+        return {
+            'success': True,
+            'quiz_info': quiz_info,
+            'questions': questions,
+            'generated_at': datetime.now().isoformat()
+        }
     
     def generate_and_save_quiz(self, requirements: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -107,28 +98,20 @@ class SmartQuizGenerator:
         Returns:
             包含數據庫ID的考卷數據
         """
-        try:
-            # 生成考卷
-            quiz_result = self.generate_quiz(requirements)
-            
-            if not quiz_result['success']:
-                return quiz_result
-            
-            # 保存到數據庫
-            saved_questions = self._save_questions_to_database(quiz_result['questions'], requirements)
-            
-            if saved_questions:
-                quiz_result['database_ids'] = saved_questions
-                quiz_result['message'] = "考卷已成功生成並保存到數據庫"
-            
+        # 生成考卷
+        quiz_result = self.generate_quiz(requirements)
+        
+        if not quiz_result['success']:
             return quiz_result
-            
-        except Exception as e:
-            logger.error(f"❌ 生成並保存考卷失敗: {e}")
-            return {
-                'success': False,
-                'error': f"生成並保存考卷失敗: {str(e)}"
-            }
+        
+        # 保存到數據庫
+        saved_questions = self._save_questions_to_database(quiz_result['questions'], requirements)
+        
+        if saved_questions:
+            quiz_result['database_ids'] = saved_questions
+            quiz_result['message'] = "考卷已成功生成並保存到數據庫"
+        
+        return quiz_result
     
     def _save_questions_to_database(self, questions: List[Dict], requirements: Dict) -> List[str]:
         """

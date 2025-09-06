@@ -16,6 +16,8 @@ from sqlalchemy.exc import OperationalError
 import time
 import json
 import os
+import google.generativeai as genai
+from tool.api_keys import get_api_key
 
 sqldb = SQLAlchemy()
 mail = Mail()
@@ -132,6 +134,20 @@ def verify_token(token, expiration=3600):
         return None
     return user_id
 
+def init_gemini(model_name = 'gemini-2.5-flash'):
+    """初始化主要的Gemini API（向後兼容）"""
+    try:
+        api_key = get_api_key()  # 使用tool/api_keys.py
+        genai.configure(api_key=api_key)
+        # 使用正確的模型名稱
+        model = genai.GenerativeModel(model_name)
+        print("✅ Gemini API 初始化成功")
+        return model
+    except Exception as e:
+        print(f"❌ Gemini API 初始化失敗: {e}")
+        return None
+
+
 def init_mongo_data():
     try:
         exam_count = mongo.db.exam.count_documents({})
@@ -193,4 +209,148 @@ def init_mongo_data():
         return False
 
 
+def send_mail(sender, receiver, subject,content):
+    if not sender or not receiver:
+        raise ValueError("Sender email or receiver is missing!")
+    mail_id = None
+    taipei_tz = timezone(timedelta(hours=8))  
+    created_at = datetime.now(taipei_tz)  
+    content = content.replace("\n", "<br>")
+    subject = subject.replace("\n", " ")
+    create_mail_info= text("""
+        CREATE TABLE IF NOT EXISTS mail_info (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            sender VARCHAR(255) NOT NULL,
+            receiver VARCHAR(255) NOT NULL,
+            subject VARCHAR(255) NOT NULL,
+            argument TEXT NULL,
+            content TEXT NOT NULL,
+            time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            due_time INT NOT NULL,
+            mail_type INT NOT NULL
+        );
+    """)
+    insert_mail = text("""
+        INSERT INTO mail_info (sender, receiver, subject, content, time)
+        VALUES (:sender, :receiver, :subject, :content, :time)
+    """)
+    delay = 1
+    max_retries = 3
+    for attempt in range(max_retries):
+        try:
+            sqldb.session.execute(create_mail_info)
+            result = sqldb.session.execute(insert_mail, {
+                "sender": sender,
+                "receiver": receiver,
+                "subject": subject,
+                "content": content,
+                "time": created_at.strftime('%Y-%m-%d %H:%M:%S'),  
+            })
+            mail_id = result.lastrowid
+            sqldb.session.commit()
+            break  
+        except OperationalError:
+            if attempt < max_retries - 1:
+                time.sleep(delay)
+                delay *= 2  
+            else:
+                print(f"資料庫操作失敗，已重試 {max_retries} 次")
+                return {"error": "Database operation failed"}
+    
+    receiver_data = mongo.db.user.find_one({"email": receiver})
+    notification_method = receiver_data.get("notification_method", {}) if isinstance(receiver_data, dict) and isinstance(receiver_data.get("notification_method", {}), dict) else {}
+    mail_notification = notification_method.get("mail", True)
+    if mail_notification:
+        body = f"""
+        <strong>{subject}</strong>
+        {content}
+        """
+        msg = Message(
+            subject=f"訊息通知 - {subject}",
+            recipients=[receiver],
+            html=body,
+            sender="misteacher011@gmail.com"
+        )
+        mail.send(msg)
+    return {"mail_id": mail_id}
+
+def send_calendar_notification(student_email: str, event_title: str, event_content: str, event_date: str):
+    """發送行事曆事件通知郵件"""
+    try:
+        # 從 MongoDB 獲取學生資料
+        student_data = mongo.db.students.find_one({"email": student_email})
+        if not student_data:
+            print(f"❌ 找不到學生資料: {student_email}")
+            return False
+        
+        student_name = student_data.get('name', '同學')
+        
+        # 格式化事件日期
+        try:
+            event_datetime = datetime.fromisoformat(event_date.replace('Z', '+00:00'))
+            formatted_date = event_datetime.strftime('%Y年%m月%d日 %H:%M')
+        except:
+            formatted_date = event_date
+        
+        # 創建郵件內容
+        subject = f"📅 行事曆提醒 - {event_title}"
+        content = f"""
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+            <h2 style="color: #2c3e50;">📅 行事曆提醒</h2>
+            <div style="background-color: #f8f9fa; padding: 20px; border-radius: 8px; margin: 20px 0;">
+                <h3 style="color: #e74c3c; margin-top: 0;">{event_title}</h3>
+                <p style="color: #7f8c8d; font-size: 14px;">⏰ 事件時間: {formatted_date}</p>
+                {f'<p style="color: #34495e;">{event_content}</p>' if event_content else ''}
+            </div>
+            <p style="color: #95a5a6; font-size: 12px;">
+                此為系統自動發送的通知郵件，請勿回覆。
+            </p>
+        </div>
+        """
+        
+        # 發送郵件
+        msg = Message(
+            subject=subject,
+            recipients=[student_email],
+            html=content,
+            sender="misteacher011@gmail.com"
+        )
+        mail.send(msg)
+        
+        print(f"✅ 行事曆通知郵件已發送給 {student_name} ({student_email})")
+        return True
+        
+    except Exception as e:
+        print(f"❌ 發送行事曆通知郵件失敗: {e}")
+        return False
+
+def refresh_token(old_token):
+    """刷新 token 並返回新的 access token"""
+    try:
+        # 驗證舊 token
+        decoded_token = jwt.decode(old_token, current_app.config['SECRET_KEY'], algorithms=["HS256"])
+        
+        # 檢查 token 類型
+        if decoded_token.get('type') != 'access':
+            return None
+        
+        # 生成新的 access token
+        access_exp_time = datetime.now() + timedelta(hours=3)
+        new_access_token = jwt.encode({
+            'user': decoded_token['user'],
+            'type': 'access',
+            'exp': int(access_exp_time.timestamp())
+        }, current_app.config['SECRET_KEY'], algorithm='HS256')
+        
+        return new_access_token
+        
+    except jwt.ExpiredSignatureError:
+        print("❌ Token 已過期")
+        return None
+    except jwt.InvalidTokenError:
+        print("❌ 無效的 token")
+        return None
+    except Exception as e:
+        print(f"❌ Token 刷新失敗: {e}")
+        return None
 

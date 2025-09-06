@@ -6,7 +6,7 @@ from datetime import datetime
 from bson.objectid import ObjectId
 from flask import jsonify, request, Blueprint, current_app, Response
 import uuid
-from accessories import mongo, sqldb
+from accessories import mongo, sqldb, refresh_token
 from src.api import get_user_info, verify_token
 import jwt
 from datetime import datetime
@@ -34,13 +34,13 @@ logger = logging.getLogger(__name__)
 def submit_quiz():
     """提交測驗 API - 全AI評分版本"""
     if request.method == 'OPTIONS':
-        return jsonify({'message': 'CORS preflight'}), 200
+        return jsonify({'token': None, 'message': 'CORS preflight'}), 200
     
     # 驗證用戶身份
     token = request.headers.get('Authorization').split(" ")[1]
     user_email = verify_token(token)
     if not user_email:
-        return jsonify({'message': '無效的token'}), 401
+        return jsonify({'token': None, 'message': '無效的token'}), 401
     
     # 獲取請求數據
     data = request.get_json()
@@ -49,35 +49,12 @@ def submit_quiz():
     time_taken = data.get('time_taken', 0)
     question_answer_times = data.get('question_answer_times', {})  # 新增：提取每題作答時間
     frontend_questions = data.get('questions', [])  # 新增：提取前端發送的題目數據
-    
-    # 調試日誌
-    print(f"🔍 Debug: 接收到的數據 - template_id: {template_id}")
-    print(f"🔍 Debug: 接收到的數據 - answers keys: {list(answers.keys())}")
-    print(f"🔍 Debug: 接收到的數據 - time_taken: {time_taken}")
-    print(f"🔍 Debug: 接收到的數據 - question_answer_times: {question_answer_times}")
-    print(f"🔍 Debug: 接收到的數據 - frontend_questions length: {len(frontend_questions) if frontend_questions else 0}")
-    
     if not template_id:
-        return jsonify({
-            'success': False,
-            'message': '缺少考卷模板ID'
-        }), 400
-    
-
-    
-    # 生成唯一的進度追蹤ID
+        return jsonify({'success': False, 'message': '缺少考卷模板ID'}), 400
     progress_id = f"progress_{user_email}_{int(time.time())}"
-    
     # 階段1: 試卷批改 - 獲取題目數據
-
-    
     # 更新進度狀態為第1階段
     update_progress_status(progress_id, False, 1, "正在獲取題目數據...")
-    
-    # 這裡可以發送進度更新到前端（如果使用WebSocket或Server-Sent Events）
-    # 目前先打印進度，後續可以實現即時通訊
-    
-    # 從SQL獲取模板信息
     with sqldb.engine.connect() as conn:
         # 檢查是否為AI模板ID格式
         if isinstance(template_id, str) and template_id.startswith('ai_template_'):
@@ -481,6 +458,7 @@ def submit_quiz():
     update_progress_status(progress_id, True, 4, "AI批改完成！")
     
     return jsonify({
+        'token': refresh_token(token),
         'success': True,
         'message': '測驗提交成功',
         'data': {
@@ -639,17 +617,20 @@ def _store_long_answer(user_answer: any, question_type: str, quiz_history_id: in
 def get_quiz_result(result_id):
     """根據結果ID獲取測驗結果 API - 優化版本"""
     if request.method == 'OPTIONS':
-        return jsonify({'message': 'CORS preflight'}), 200
+        return jsonify({'token': None, 'success': True}), 204
     
-    # 從result_id中提取quiz_history_id
-    # result_id格式: result_123
+    auth_header = request.headers.get('Authorization')
+    if not auth_header:
+        return jsonify({'token': None, 'message': '未提供token'}), 401
+    
+    token = auth_header.split(" ")[1]
     if not result_id.startswith('result_'):
-        return jsonify({'message': '無效的結果ID格式'}), 400
+        return jsonify({'token': None, 'message': '無效的結果ID格式'}), 400
     
     try:
         quiz_history_id = int(result_id.split('_')[1])
     except (ValueError, IndexError):
-        return jsonify({'message': '無效的結果ID格式'}), 400
+        return jsonify({'token': None, 'message': '無效的結果ID格式'}), 400
     
     # 從SQL獲取測驗結果
     with sqldb.engine.connect() as conn:
@@ -668,7 +649,7 @@ def get_quiz_result(result_id):
         }).fetchone()
         
         if not history_result:
-            return jsonify({'message': '測驗結果不存在'}), 404
+            return jsonify({'token': None, 'message': '測驗結果不存在'}), 404
         
 
         # 獲取所有題目的用戶答案（從quiz_answers表）
@@ -740,6 +721,7 @@ def get_quiz_result(result_id):
             }
             
             return jsonify({
+                'token': refresh_token(token),
                 'success': True,
                 'message': '獲取測驗結果成功（僅基本統計）',
                 'data': result_data
@@ -844,6 +826,7 @@ def get_quiz_result(result_id):
         }
 
         return jsonify({
+            'token': refresh_token(token),
             'success': True,
             'message': '獲取測驗結果成功',
             'data': result_data
@@ -856,7 +839,7 @@ def get_quiz_result(result_id):
 def create_quiz():
     """創建測驗 API - 支持用戶填寫學校、科系、年份"""
     if request.method == 'OPTIONS':
-        return jsonify({'message': 'CORS preflight'}), 200
+        return jsonify({'token': None, 'message': 'CORS preflight'}), 200
     token = request.headers.get('Authorization')
     token = token.split(" ")[1]
     try:
@@ -1223,12 +1206,16 @@ def get_exam():
 def get_grading_progress(template_id):
     """獲取測驗批改進度 API"""
     if request.method == 'OPTIONS':
-        return jsonify({'message': 'CORS preflight'}), 200
+        return jsonify({'token': None, 'success': True}), 204
+    
+    auth_header = request.headers.get('Authorization')
+    if not auth_header:
+        return jsonify({'token': None, 'message': '未提供token'}), 401
+    
+    token = auth_header.split(" ")[1]
     
     try:
-        # 驗證用戶身份
-        token = request.headers.get('Authorization').split(" ")[1]
-        user_email = verify_token(token)
+        user_email = get_user_info(token, 'email')
         if not user_email:
             return jsonify({'message': '無效的token'}), 401
         
@@ -1237,6 +1224,7 @@ def get_grading_progress(template_id):
         if isinstance(template_id, str) and template_id.startswith('ai_template_'):
             # AI模板無法從SQL資料庫查詢，返回進行中狀態
             return jsonify({
+                'token': refresh_token(token),
                 'success': True,
                 'status': 'in_progress',
                 'data': {
@@ -1472,6 +1460,7 @@ def get_long_answer(answer_id: str):
                 return jsonify({'error': '無權限查看此答案'}), 403
             
             return jsonify({
+                'token': refresh_token(token),
                 'success': True,
                 'data': {
                     'full_answer': result.full_answer,
@@ -1493,8 +1482,14 @@ def get_quiz_from_database_endpoint():
     """從資料庫獲取考卷數據"""
     try:
         if request.method == 'OPTIONS':
-            return jsonify({'success': True})
+            return jsonify({'token': None, 'success': True}), 204
+    
+        auth_header = request.headers.get('Authorization')
+        if not auth_header:
+            return jsonify({'token': None, 'message': '未提供token'}), 401
         
+        token = auth_header.split(" ")[1]
+            
         data = request.get_json()
         quiz_ids = data.get('quiz_ids', [])
         
@@ -1505,9 +1500,9 @@ def get_quiz_from_database_endpoint():
             }), 400
         
         # 調用獲取考卷數據函數
-        #result = get_quiz_from_database(quiz_ids)
+        result = get_quiz_from_database(quiz_ids)
         
-        #return jsonify(result)
+        return jsonify({'token': refresh_token(token), 'data': result})
         
     except Exception as e:
         logger.error(f"❌ 獲取考卷數據失敗: {e}")
@@ -1522,7 +1517,7 @@ def get_user_submissions_analysis():
     """獲取用戶提交分析數據 - 使用SQL表結構"""
     try:
         if request.method == 'OPTIONS':
-            return jsonify({'success': True})
+            return jsonify({'token': None, 'success': True})
         
         # 驗證用戶身份
         token = request.headers.get('Authorization')
@@ -1663,6 +1658,7 @@ def get_user_submissions_analysis():
         print(f"✅ 成功處理 {len(processed_submissions)} 條提交記錄")
         
         return jsonify({
+            'token': refresh_token(token),
             'success': True,
             'submissions': processed_submissions,
             'total_submissions': len(processed_submissions)
@@ -1684,7 +1680,7 @@ def generate_guided_learning_session():
     
     if request.method == 'OPTIONS':
         print(f"✅ 處理 OPTIONS 請求，返回 CORS 預檢響應")
-        return jsonify({'message': 'CORS preflight'}), 200
+        return jsonify({'token': None, 'message': 'CORS preflight'}), 200
     
     try:
         print(f"🔍 開始處理 POST 請求")
@@ -1915,6 +1911,7 @@ def generate_guided_learning_session():
             }
         
         return jsonify({
+            'token': refresh_token(token),
             'success': True,
             'session_data': session_data
         }), 200
@@ -1931,7 +1928,7 @@ def get_user_errors_mongo():
     """從 MongoDB error_questions 集合獲取用戶錯題"""
     try:
         if request.method == 'OPTIONS':
-            return jsonify({'success': True})
+            return jsonify({'token': None, 'success': True})
         
         # 驗證用戶身份
         token = request.headers.get('Authorization')
@@ -1949,6 +1946,7 @@ def get_user_errors_mongo():
         ).sort('timestamp', -1))  # 按時間倒序排列
         
         return jsonify({
+            'token': refresh_token(token),
             'success': True,
             'error_questions': error_questions,
             'total_errors': len(error_questions)

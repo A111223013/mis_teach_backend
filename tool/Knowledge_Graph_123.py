@@ -5,9 +5,9 @@ import os
 import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from bson import ObjectId
-import google.generativeai as genai
 from tqdm import tqdm
 import time
+from accessories import init_gemini
 
 # ====== API 密钥 ======
 API_KEYS = [
@@ -27,7 +27,8 @@ def set_api_key():
     with key_lock:
         api_key = API_KEYS[key_index]
         key_index = (key_index + 1) % len(API_KEYS)
-    genai.configure(api_key=api_key)
+    # 使用 accessories 中的 init_gemini 函數
+    return init_gemini('gemini-1.5-flash')
 
 def extract_json_from_text(text):
     if not text:
@@ -388,7 +389,7 @@ def classify_question(q, max_retries=2):
 返回格式: {{"domain": "名称", "block": "名称", "micro_concepts": ["名称1", "名称2"]}}
 """
 
-            model = genai.GenerativeModel("gemini-1.5-flash")
+            model = init_gemini("gemini-1.5-flash")
             response = model.generate_content(prompt)
             parsed = safe_json_parse(response.text)
             

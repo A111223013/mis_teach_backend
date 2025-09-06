@@ -38,7 +38,9 @@ class APIKeyManager:
     def _load_api_keys(self) -> List[str]:
         """載入API密鑰"""
         # 從api.env讀取AI_API_KEYS
-        env_vars = load_env_file('api.env')
+        # 確保從正確的路徑讀取 api.env
+        api_env_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'api.env')
+        env_vars = load_env_file(api_env_path)
         env_keys = env_vars.get('AI_API_KEYS')
         
         if env_keys:

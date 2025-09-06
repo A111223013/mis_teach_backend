@@ -2,6 +2,7 @@ from flask import Flask, jsonify, request, Blueprint, send_from_directory
 from flask_cors import CORS
 import sys
 from accessories import sqldb, mail, redis_client, token_store, mongo, login_manager, init_mongo_data
+from sqlalchemy import text
 from config import Config, ProductionConfig, DevelopmentConfig
 from tool.insert_mongodb import initialize_mis_teach_db
 from src.login import login_bp
@@ -14,7 +15,9 @@ import os
 import redis, json ,time
 from datetime import datetime
 from flask_mail import Mail, Message
-from accessories import mail, redis_client
+from accessories import mail, redis_client, send_calendar_notification
+import threading
+import schedule
 
 # Temporarily removed langchain imports until dependencies are installed
 # from langchain_google_genai import ChatGoogleGenerativeAI, GoogleGenerativeAIEmbeddings
@@ -97,6 +100,85 @@ def serve_static_image(filename):
         print(f"靜態圖片服務錯誤: {e}")
         return jsonify({'error': 'Image service error'}), 500
 
+def check_calendar_notifications():
+    """檢查 Redis 中的行事曆通知並發送郵件"""
+    try:
+        # 獲取當前時間
+        current_time = datetime.now()
+        current_time_str = current_time.strftime('%Y-%m-%d %H:%M')
+        
+        # 搜尋需要發送的通知（時間範圍：當前時間前後 5 分鐘）
+        pattern = "notification:*"
+        keys = redis_client.keys(pattern)
+        
+        notifications_to_send = []
+        for key in keys:
+            try:
+                # 解析 key 格式：notification:{notify_time}:{event_id}
+                key_parts = key.decode('utf-8').split(':')
+                if len(key_parts) >= 3:
+                    notify_time_str = key_parts[1]
+                    event_id = key_parts[2]
+                    
+                    # 檢查是否到了通知時間（允許 5 分鐘誤差）
+                    notify_time = datetime.strptime(notify_time_str, '%Y-%m-%d %H:%M')
+                    time_diff = abs((notify_time - current_time).total_seconds())
+                    
+                    if time_diff <= 300:  # 5 分鐘內
+                        # 獲取通知資料
+                        notification_data = redis_client.get(key)
+                        if notification_data:
+                            notification = json.loads(notification_data)
+                            notifications_to_send.append({
+                                'key': key,
+                                'event_id': event_id,
+                                'notification': notification
+                            })
+            except Exception as e:
+                print(f"處理通知 key {key} 時發生錯誤: {e}")
+                continue
+        
+        # 發送通知
+        for item in notifications_to_send:
+            try:
+                notification = item['notification']
+                student_email = notification.get('student_email')
+                event_title = notification.get('title')
+                event_content = notification.get('content', '')
+                event_date = notification.get('event_date', '')
+                
+                if student_email and event_title:
+                    # 直接從 Redis 資料發送郵件
+                    success = send_calendar_notification(
+                        student_email=student_email,
+                        event_title=event_title,
+                        event_content=event_content,
+                        event_date=event_date
+                    )
+                    
+                    if success:
+                        # 發送成功後從 Redis 移除
+                        redis_client.delete(item['key'])
+                        print(f"✅ 通知已發送並從 Redis 移除: {item['key']}")
+                    else:
+                        print(f"❌ 通知發送失敗: {item['key']}")
+                            
+            except Exception as e:
+                print(f"發送通知時發生錯誤: {e}")
+                continue
+                
+    except Exception as e:
+        print(f"檢查行事曆通知時發生錯誤: {e}")
+
+def run_scheduler():
+    """運行背景排程器"""
+    # 每分鐘檢查一次通知
+    schedule.every(1).minutes.do(check_calendar_notifications)
+    
+    while True:
+        schedule.run_pending()
+        time.sleep(60)  # 每分鐘檢查一次
+
 # 初始化數據庫表格
 with app.app_context():
     sqldb.create_all()
@@ -104,6 +186,11 @@ with app.app_context():
     init_quiz_tables()  # 初始化測驗相關表格
     from src.dashboard import init_calendar_tables
     init_calendar_tables()  # 初始化行事曆表格
+
+    # 啟動背景排程器
+    scheduler_thread = threading.Thread(target=run_scheduler, daemon=True)
+    scheduler_thread.start()
+    print("✅ 行事曆通知排程器已啟動")
 
 
 if __name__ == '__main__':

@@ -163,19 +163,13 @@ def get_domains():
     GET /materials/domain
     從 MongoDB 抓取 domain 資料，並將所有 ObjectId 轉為字串
     """
-    try:
-        domains = list(mongo.db.domain.find())
-        if not domains:
-            return jsonify({"error": "No domain collection or data found"}), 404
+    domains = list(mongo.db.domain.find())
+    if not domains:
+        return jsonify({"error": "No domain collection or data found"}), 404
 
-        # 遞迴轉換 ObjectId
-        domains = [convert_objectid(d) for d in domains]
-
-        return jsonify(domains)
-    except Exception as e:
-        print("❌ domain 發生例外:", str(e))
-        traceback.print_exc()
-        return jsonify({"error": f"Exception: {str(e)}"}), 500
+    # 遞迴轉換 ObjectId
+    domains = [convert_objectid(d) for d in domains]
+    return jsonify(domains)
 
 
 @materials_bp.route('/block', methods=['GET'])
@@ -184,19 +178,13 @@ def get_blocks():
     GET /materials/block
     從 MongoDB 抓取 block 資料，並將所有 ObjectId 轉為字串
     """
-    try:
-        blocks = list(mongo.db.block.find())
-        if not blocks:
-            return jsonify({"error": "No block collection or data found"}), 404
+    blocks = list(mongo.db.block.find())
+    if not blocks:
+        return jsonify({"error": "No block collection or data found"}), 404
 
-        # 遞迴轉換 ObjectId
-        blocks = [convert_objectid(b) for b in blocks]
-
-        return jsonify(blocks)
-    except Exception as e:
-        print("❌ block 發生例外:", str(e))
-        traceback.print_exc()
-        return jsonify({"error": f"Exception: {str(e)}"}), 500
+    # 遞迴轉換 ObjectId
+    blocks = [convert_objectid(b) for b in blocks]
+    return jsonify(blocks)
 
 
 @materials_bp.route('/micro_concept', methods=['GET'])
@@ -205,16 +193,10 @@ def get_micro_concepts():
     GET /materials/micro_concept
     從 MongoDB 抓取 micro_concept 資料，並將所有 ObjectId 轉為字串
     """
-    try:
-        micro_concepts = list(mongo.db.micro_concept.find())
-        if not micro_concepts:
-            return jsonify({"error": "No micro_concept collection or data found"}), 404
+    micro_concepts = list(mongo.db.micro_concept.find())
+    if not micro_concepts:
+        return jsonify({"error": "No micro_concept collection or data found"}), 404
 
-        # 遞迴轉換 ObjectId
-        micro_concepts = [convert_objectid(m) for m in micro_concepts]
-
-        return jsonify(micro_concepts)
-    except Exception as e:
-        print("❌ micro_concepts 發生例外:", str(e))
-        traceback.print_exc()
-        return jsonify({"error": f"Exception: {str(e)}"}), 500
+    # 遞迴轉換 ObjectId
+    micro_concepts = [convert_objectid(m) for m in micro_concepts]
+    return jsonify(micro_concepts)

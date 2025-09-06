@@ -11,19 +11,18 @@ def register():
     if request.method == 'OPTIONS':
         return '', 204
     def send_verification_email(email, verification_link):
-      try:
         msg = Message("Please verify your email", recipients=[email])
         msg.body = f"Click the link to verify your email: {verification_link}"
         mail.send(msg)
-      except Exception:
-          return jsonify({"error": "Email sending failed."}), 409
     data = request.get_json()
     name = data.get("name")
     email = data.get("email")
     password = data.get("password")
 
-    existing_user = mongo.db.students.find_one({"email": email})
-    if existing_user or name == '' or password == '' or email == '':
+    if not all([name, email, password]):
+        return jsonify({"error": "Missing required fields."}), 400
+    
+    if mongo.db.students.find_one({"email": email}):
         return jsonify({"error": "Email already exists."}), 409
     token = str(uuid.uuid4())
     redis_client.hset(token, mapping={
