@@ -8,7 +8,7 @@ import json
 from datetime import datetime
 from flask import Blueprint, request, jsonify
 from typing import Dict, Any, List, Optional
-
+from src.api import get_user_info
 from accessories import mongo, refresh_token
 from bson.objectid import ObjectId
 
