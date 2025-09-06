@@ -106,8 +106,6 @@ def get_calendar_events():
     } for row in result]
     
     refreshed_token = refresh_token(token)
-    print(f"原始 token: {token}")
-    print(f"刷新後 token: {refreshed_token}")
     
     return jsonify({'token': refreshed_token, 'events': events})
 
@@ -128,6 +126,20 @@ def create_calendar_event():
     if not data.get('title') or not data.get('start'):
         return jsonify({'token': None, 'message': '標題和日期為必填欄位'}), 400
     
+    # 處理日期格式轉換
+    from datetime import datetime
+    event_date = data.get('start')
+    if event_date:
+        # 將 ISO 8601 格式轉換為 MySQL 日期格式
+        if 'T' in event_date:
+            event_date = event_date.replace('T', ' ').replace('Z', '').split('.')[0]
+    
+    notify_time = data.get('notifyTime')
+    if notify_time:
+        # 將 ISO 8601 格式轉換為 MySQL 日期格式
+        if 'T' in notify_time:
+            notify_time = notify_time.replace('T', ' ').replace('Z', '').split('.')[0]
+    
     with sqldb.engine.connect() as conn:
         result = conn.execute(text('''
             INSERT INTO schedule (student_email, title, content, event_date, notify_enabled, notify_time)
@@ -136,9 +148,9 @@ def create_calendar_event():
             'student_email': student_email,
             'title': data.get('title'),
             'content': data.get('content', ''),
-            'event_date': data.get('start'),
+            'event_date': event_date,
             'notify_enabled': data.get('notifyEnabled', False),
-            'notify_time': data.get('notifyTime')
+            'notify_time': notify_time
         })
         
         event_id = result.lastrowid
@@ -177,6 +189,20 @@ def update_calendar_event():
     if not data.get('title') or not data.get('start'):
         return jsonify({'token': None, 'message': '標題和日期為必填欄位'}), 400
     
+    # 處理日期格式轉換
+    from datetime import datetime
+    event_date = data.get('start')
+    if event_date:
+        # 將 ISO 8601 格式轉換為 MySQL 日期格式
+        if 'T' in event_date:
+            event_date = event_date.replace('T', ' ').replace('Z', '').split('.')[0]
+    
+    notify_time = data.get('notifyTime')
+    if notify_time:
+        # 將 ISO 8601 格式轉換為 MySQL 日期格式
+        if 'T' in notify_time:
+            notify_time = notify_time.replace('T', ' ').replace('Z', '').split('.')[0]
+    
     with sqldb.engine.connect() as conn:
         result = conn.execute(text('''
             UPDATE schedule 
@@ -187,9 +213,9 @@ def update_calendar_event():
         '''), {
             'title': data.get('title'),
             'content': data.get('content', ''),
-            'event_date': data.get('start'),
+            'event_date': event_date,
             'notify_enabled': data.get('notifyEnabled', False),
-            'notify_time': data.get('notifyTime'),
+            'notify_time': notify_time,
             'event_id': event_id,
             'student_email': student_email
         })

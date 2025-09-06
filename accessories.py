@@ -120,23 +120,18 @@ def remove_json_in_mongo(collection_name, doc_name, save_history=True):
 
 
 
-def verify_token(token, expiration=3600):
-    serializer = URLSafeTimedSerializer(current_app.config['SECRET_KEY'])()
-    user_id = serializer.loads(
-        token,
-        salt=current_app.config['SECURITY_PASSWORD_SALT'],
-        max_age=expiration
-    )
-    return user_id
 def refresh_token(old_token):   
-    decoded_token = jwt.decode(old_token, current_app.config['SECRET_KEY'], algorithms=["HS256"])
-    access_exp_time = datetime.now() + timedelta(hours=3)
-    new_access_token = jwt.encode({
-        'user': decoded_token['user'],
-        'type': 'access',
-        'exp': int(access_exp_time.timestamp())
-    }, current_app.config['SECRET_KEY'], algorithm='HS256')
-    return new_access_token
+    try:
+        decoded_token = jwt.decode(old_token, current_app.config['SECRET_KEY'], algorithms=["HS256"])
+        access_exp_time = datetime.now() + timedelta(hours=3)
+        new_access_token = jwt.encode({
+            'user': decoded_token['user'],
+            'exp': int(access_exp_time.timestamp())
+        }, current_app.config['SECRET_KEY'], algorithm='HS256')
+        return new_access_token
+    except Exception as e:
+        print(f"❌ Token 刷新失敗: {e}")
+        return None
     
 def init_gemini(model_name = 'gemini-2.5-flash'):
     """初始化主要的Gemini API（向後兼容）"""
