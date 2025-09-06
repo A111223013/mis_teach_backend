@@ -117,23 +117,27 @@ def remove_json_in_mongo(collection_name, doc_name, save_history=True):
         collection.delete_one({"_id": doc_name})
 
 
-def get_serializer():
-    return URLSafeTimedSerializer(current_app.config['SECRET_KEY'])
 
 
 
 def verify_token(token, expiration=3600):
-    serializer = get_serializer()
-    try:
-        user_id = serializer.loads(
-            token,
-            salt=current_app.config['SECURITY_PASSWORD_SALT'],
-            max_age=expiration
-        )
-    except Exception as e:
-        return None
+    serializer = URLSafeTimedSerializer(current_app.config['SECRET_KEY'])()
+    user_id = serializer.loads(
+        token,
+        salt=current_app.config['SECURITY_PASSWORD_SALT'],
+        max_age=expiration
+    )
     return user_id
-
+def refresh_token(old_token):   
+    decoded_token = jwt.decode(old_token, current_app.config['SECRET_KEY'], algorithms=["HS256"])
+    access_exp_time = datetime.now() + timedelta(hours=3)
+    new_access_token = jwt.encode({
+        'user': decoded_token['user'],
+        'type': 'access',
+        'exp': int(access_exp_time.timestamp())
+    }, current_app.config['SECRET_KEY'], algorithm='HS256')
+    return new_access_token
+    
 def init_gemini(model_name = 'gemini-2.5-flash'):
     """初始化主要的Gemini API（向後兼容）"""
     try:
@@ -323,34 +327,4 @@ def send_calendar_notification(student_email: str, event_title: str, event_conte
     except Exception as e:
         print(f"❌ 發送行事曆通知郵件失敗: {e}")
         return False
-
-def refresh_token(old_token):
-    """刷新 token 並返回新的 access token"""
-    try:
-        # 驗證舊 token
-        decoded_token = jwt.decode(old_token, current_app.config['SECRET_KEY'], algorithms=["HS256"])
-        
-        # 檢查 token 類型
-        if decoded_token.get('type') != 'access':
-            return None
-        
-        # 生成新的 access token
-        access_exp_time = datetime.now() + timedelta(hours=3)
-        new_access_token = jwt.encode({
-            'user': decoded_token['user'],
-            'type': 'access',
-            'exp': int(access_exp_time.timestamp())
-        }, current_app.config['SECRET_KEY'], algorithm='HS256')
-        
-        return new_access_token
-        
-    except jwt.ExpiredSignatureError:
-        print("❌ Token 已過期")
-        return None
-    except jwt.InvalidTokenError:
-        print("❌ 無效的 token")
-        return None
-    except Exception as e:
-        print(f"❌ Token 刷新失敗: {e}")
-        return None
 

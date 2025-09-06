@@ -70,21 +70,24 @@ def get_user_name():
     token = auth_header.split(" ")[1]
     user_name = get_user_info(token, 'name')
     
-    return jsonify({'token': refresh_token(token), 'name': user_name}), 200
+    refreshed_token = refresh_token(token)
+    return jsonify({'token': refreshed_token, 'name': user_name}), 200
 
 
 
 
-@dashboard_bp.route('/calendar/events', methods=['GET'])
+@dashboard_bp.route('/events', methods=['POST', 'OPTIONS'])
 def get_calendar_events():
-    """取得用戶的行事曆事件"""
+    """取得行事曆事件"""
+    if request.method == 'OPTIONS':
+        return '', 204
+    
     auth_header = request.headers.get('Authorization')
     if not auth_header:
         return jsonify({'token': None, 'events': []}), 401
     
     token = auth_header.split(" ")[1]
     student_email = get_user_info(token, 'email')
-    
     with sqldb.engine.connect() as conn:
         result = conn.execute(text('''
             SELECT id, title, content, event_date, notify_enabled, notify_time
@@ -98,16 +101,17 @@ def get_calendar_events():
         'title': row[1],
         'content': row[2] or '',
         'start': row[3].isoformat() if row[3] else None,
-        'meta': {
-            'id': row[0],
-            'notifyEnabled': bool(row[4]),
-            'notifyTime': row[5].isoformat() if row[5] else None
-        }
+        'notifyEnabled': bool(row[4]),
+        'notifyTime': row[5].isoformat() if row[5] else None
     } for row in result]
     
-    return jsonify({'token': refresh_token(token), 'events': events})
+    refreshed_token = refresh_token(token)
+    print(f"原始 token: {token}")
+    print(f"刷新後 token: {refreshed_token}")
+    
+    return jsonify({'token': refreshed_token, 'events': events})
 
-@dashboard_bp.route('/calendar/events', methods=['POST', 'OPTIONS'])
+@dashboard_bp.route('/events/create', methods=['POST', 'OPTIONS'])
 def create_calendar_event():
     """新增行事曆事件"""
     if request.method == 'OPTIONS':
@@ -121,34 +125,43 @@ def create_calendar_event():
     student_email = get_user_info(token, 'email')
     data = request.get_json()
     
+    if not data.get('title') or not data.get('start'):
+        return jsonify({'token': None, 'message': '標題和日期為必填欄位'}), 400
+    
     with sqldb.engine.connect() as conn:
         result = conn.execute(text('''
-            INSERT INTO schedule 
-            (student_email, title, content, event_date, notify_enabled, notify_time)
+            INSERT INTO schedule (student_email, title, content, event_date, notify_enabled, notify_time)
             VALUES (:student_email, :title, :content, :event_date, :notify_enabled, :notify_time)
         '''), {
             'student_email': student_email,
             'title': data.get('title'),
             'content': data.get('content', ''),
             'event_date': data.get('start'),
-            'notify_enabled': data.get('meta', {}).get('notifyEnabled', False),
-            'notify_time': data.get('meta', {}).get('notifyTime')
+            'notify_enabled': data.get('notifyEnabled', False),
+            'notify_time': data.get('notifyTime')
         })
         
         event_id = result.lastrowid
         conn.commit()
     
-    # 如果有設定通知，加入 Redis 佇列
-    notify_enabled = data.get('meta', {}).get('notifyEnabled', False)
-    notify_time = data.get('meta', {}).get('notifyTime')
+    # 如果啟用通知，添加到 Redis
+    notify_enabled = data.get('notifyEnabled', False)
+    notify_time = data.get('notifyTime')
     if notify_enabled and notify_time:
         add_notification_to_redis(student_email, event_id, data.get('title'), data.get('content', ''), data.get('start'), notify_time)
     
-    return jsonify({'token': refresh_token(token), 'id': event_id})
+    refreshed_token = refresh_token(token)
+    return jsonify({'token': refreshed_token, 'id': event_id})
 
-@dashboard_bp.route('/calendar/events/<int:event_id>', methods=['PUT'])
-def update_calendar_event(event_id):
+
+
+
+@dashboard_bp.route('/events/update', methods=['POST', 'OPTIONS'])
+def update_calendar_event():
     """更新行事曆事件"""
+    if request.method == 'OPTIONS':
+        return '', 204
+    
     auth_header = request.headers.get('Authorization')
     if not auth_header:
         return jsonify({'token': None, 'message': '未提供認證 token'}), 401
@@ -156,6 +169,10 @@ def update_calendar_event(event_id):
     token = auth_header.split(" ")[1]
     student_email = get_user_info(token, 'email')
     data = request.get_json()
+    event_id = data.get('event_id')
+    
+    if not event_id:
+        return jsonify({'token': None, 'message': '缺少事件ID'}), 400
     
     if not data.get('title') or not data.get('start'):
         return jsonify({'token': None, 'message': '標題和日期為必填欄位'}), 400
@@ -171,8 +188,8 @@ def update_calendar_event(event_id):
             'title': data.get('title'),
             'content': data.get('content', ''),
             'event_date': data.get('start'),
-            'notify_enabled': data.get('meta', {}).get('notifyEnabled', False),
-            'notify_time': data.get('meta', {}).get('notifyTime'),
+            'notify_enabled': data.get('notifyEnabled', False),
+            'notify_time': data.get('notifyTime'),
             'event_id': event_id,
             'student_email': student_email
         })
@@ -183,22 +200,31 @@ def update_calendar_event(event_id):
         conn.commit()
     
     # 更新 Redis 通知佇列
-    notify_enabled = data.get('meta', {}).get('notifyEnabled', False)
-    notify_time = data.get('meta', {}).get('notifyTime')
+    notify_enabled = data.get('notifyEnabled', False)
+    notify_time = data.get('notifyTime')
     if notify_enabled and notify_time:
         add_notification_to_redis(student_email, event_id, data.get('title'), data.get('content', ''), data.get('start'), notify_time)
     
-    return jsonify({'token': refresh_token(token), 'message': '事件更新成功'})
+    refreshed_token = refresh_token(token)
+    return jsonify({'token': refreshed_token, 'message': '事件更新成功'})
 
-@dashboard_bp.route('/calendar/events/<int:event_id>', methods=['DELETE'])
-def delete_calendar_event(event_id):
+@dashboard_bp.route('/events/delete', methods=['POST', 'OPTIONS'])
+def delete_calendar_event():
     """刪除行事曆事件"""
+    if request.method == 'OPTIONS':
+        return '', 204
+    
     auth_header = request.headers.get('Authorization')
     if not auth_header:
         return jsonify({'token': None, 'message': '未提供認證 token'}), 401
     
     token = auth_header.split(" ")[1]
     student_email = get_user_info(token, 'email')
+    data = request.get_json()
+    event_id = data.get('event_id')
+    
+    if not event_id:
+        return jsonify({'token': None, 'message': '缺少事件ID'}), 400
     
     with sqldb.engine.connect() as conn:
         result = conn.execute(text('''
@@ -214,7 +240,10 @@ def delete_calendar_event(event_id):
     # 從 Redis 移除通知
     remove_notification_from_redis(event_id)
     
-    return jsonify({'token': refresh_token(token), 'message': '事件刪除成功'})
+    refreshed_token = refresh_token(token)
+    return jsonify({'token': refreshed_token, 'message': '事件刪除成功'})
+
+
 
 def add_notification_to_redis(student_email: str, event_id: int, title: str, content: str, event_date: str, notify_time: str):
     """將通知加入 Redis 佇列"""
