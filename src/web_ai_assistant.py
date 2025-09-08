@@ -179,7 +179,52 @@ def create_quiz_generator_tool():
     def quiz_generator_tool(requirements: str) -> str:
         """考卷生成工具，根據用戶需求自動創建考卷並保存到數據庫"""
         try:
-            # 導入quiz_generator.py中的主要函數
+            # 檢查生成方式
+            import re
+            
+            # 檢查是否為基於選中文字的生成請求
+            if "請根據以下內容生成一道題目：" in requirements:
+                # 提取選中的文字
+                match = re.search(r'請根據以下內容生成一道題目：(.+)', requirements)
+                if match:
+                    selected_text = match.group(1).strip()
+                    logger.info(f"🎯 檢測到基於選中文字的題目生成請求: {selected_text[:50]}...")
+                    
+                    # 使用新的SimilarQuizGenerator來生成基於選中文字的題目
+                    from src.quiz_generator import SimilarQuizGenerator
+                    similar_generator = SimilarQuizGenerator()
+                    result = similar_generator.generate_similar_quiz(selected_text)
+                    
+                    if result['success']:
+                        questions = result['questions']
+                        quiz_info = result['quiz_info']
+                        database_ids = result.get('database_ids', [])
+                        
+                        # 構建回應
+                        response = f"✅ 基於選中內容的題目生成成功！\n\n"
+                        response += f"📝 **{quiz_info['title']}**\n"
+                        response += f"📚 基於內容: {selected_text[:50]}...\n"
+                        response += f"🎯 主題: {quiz_info['topic']}\n"
+                        response += f"🔢 題目數量: {quiz_info['question_count']} 題\n"
+                        response += f"⏱️ 時間限制: {quiz_info['time_limit']} 分鐘\n\n"
+                        
+                        # 顯示第一題預覽
+                        if questions:
+                            first_question = questions[0]
+                            response += "📋 題目預覽:\n"
+                            response += f"1. {first_question['question_text'][:80]}...\n\n"
+                        
+                        # 使用第一個數據庫 ID 作為考卷 ID
+                        quiz_id = database_ids[0] if database_ids else f"similar_quiz_{int(time.time())}"
+                        
+                        response += "🚀 **開始測驗**\n\n"
+                        response += f"📋 考卷ID: `{quiz_id}`"
+                        
+                        return response
+                    else:
+                        return f"❌ 基於選中內容的題目生成失敗: {result.get('error', '未知錯誤')}"
+            
+            # 導入quiz_generator.py中的主要函數（原本的生成方式）
             from src.quiz_generator import execute_quiz_generation
             
             # 直接調用quiz_generator.py中的函數
@@ -573,7 +618,20 @@ def chat():
         # 處理訊息
         result = process_message(message, user_id, platform)
         
-        return jsonify({'token': refresh_token(token), 'data': result})
+        # 返回前端期待的格式
+        if result['success']:
+            return jsonify({
+                'token': refresh_token(token),
+                'success': True,
+                'content': result['message'],
+                'timestamp': result['timestamp']
+            })
+        else:
+            return jsonify({
+                'token': refresh_token(token),
+                'success': False,
+                'error': result.get('error', '處理失敗')
+            }), 500
         
     except Exception as e:
         logger.error(f"❌ 聊天API錯誤: {e}")
@@ -627,6 +685,75 @@ def quick_action():
 
 
 # =============== 轉發/對齊前端期待的資料端點 ===============
+
+@web_ai_bp.route('/status', methods=['GET', 'OPTIONS'])
+def get_status():
+    """獲取助手狀態"""
+    try:
+        if request.method == 'OPTIONS':
+            return jsonify({'success': True}), 204
+    
+        auth_header = request.headers.get('Authorization')
+        if not auth_header:
+            return jsonify({'message': '未提供token'}), 401
+        
+        token = auth_header.split(" ")[1]
+        
+        return jsonify({
+            'token': refresh_token(token),
+            'success': True,
+            'status': 'active',
+            'message': 'Web AI 助手運行正常',
+            'timestamp': datetime.now().isoformat()
+        })
+        
+    except Exception as e:
+        logger.error(f"❌ 狀態檢查錯誤: {e}")
+        return jsonify({
+            'success': False,
+            'error': f'狀態檢查失敗：{str(e)}'
+        }), 500
+
+@web_ai_bp.route('/health', methods=['GET', 'OPTIONS'])
+def health_check():
+    """健康檢查"""
+    try:
+        if request.method == 'OPTIONS':
+            return jsonify({'success': True}), 204
+    
+        auth_header = request.headers.get('Authorization')
+        if not auth_header:
+            return jsonify({'message': '未提供token'}), 401
+        
+        token = auth_header.split(" ")[1]
+        
+        # 檢查 AI 服務是否可用
+        try:
+            # 嘗試初始化 LLM 來檢查服務狀態
+            test_llm = init_llm()
+            ai_status = 'healthy'
+            ai_message = 'AI 服務正常'
+        except Exception as e:
+            ai_status = 'unhealthy'
+            ai_message = f'AI 服務異常: {str(e)}'
+        
+        return jsonify({
+            'token': refresh_token(token),
+            'success': True,
+            'health': {
+                'overall': 'healthy',
+                'ai_service': ai_status,
+                'message': ai_message
+            },
+            'timestamp': datetime.now().isoformat()
+        })
+        
+    except Exception as e:
+        logger.error(f"❌ 健康檢查錯誤: {e}")
+        return jsonify({
+            'success': False,
+            'error': f'健康檢查失敗：{str(e)}'
+        }), 500
 
 @web_ai_bp.route('/get-quiz-from-database', methods=['POST', 'OPTIONS'])
 def web_get_quiz_from_database():
