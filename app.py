@@ -107,35 +107,28 @@ def check_calendar_notifications():
         current_time = datetime.now()
         current_time_str = current_time.strftime('%Y-%m-%d %H:%M')
         
-        # 搜尋需要發送的通知（時間範圍：當前時間前後 5 分鐘）
-        pattern = "notification:*"
-        keys = redis_client.keys(pattern)
-        
+        # 從 Redis List 獲取所有通知
+        notifications = redis_client.lrange('event_notification', 0, -1)
         notifications_to_send = []
-        for key in keys:
+        
+        for notification_data in notifications:
             try:
-                # 解析 key 格式：notification:{notify_time}:{event_id}
-                key_parts = key.decode('utf-8').split(':')
-                if len(key_parts) >= 3:
-                    notify_time_str = key_parts[1]
-                    event_id = key_parts[2]
-                    
+                notification = json.loads(notification_data)
+                notify_time_str = notification.get('notify_time')
+                
+                if notify_time_str:
                     # 檢查是否到了通知時間（允許 5 分鐘誤差）
                     notify_time = datetime.strptime(notify_time_str, '%Y-%m-%d %H:%M')
                     time_diff = abs((notify_time - current_time).total_seconds())
                     
                     if time_diff <= 300:  # 5 分鐘內
-                        # 獲取通知資料
-                        notification_data = redis_client.get(key)
-                        if notification_data:
-                            notification = json.loads(notification_data)
-                            notifications_to_send.append({
-                                'key': key,
-                                'event_id': event_id,
-                                'notification': notification
-                            })
+                        notifications_to_send.append({
+                            'notification_data': notification_data,
+                            'event_id': notification.get('event_id'),
+                            'notification': notification
+                        })
             except Exception as e:
-                print(f"處理通知 key {key} 時發生錯誤: {e}")
+                print(f"處理通知時發生錯誤: {e}")
                 continue
         
         # 發送通知
@@ -148,20 +141,21 @@ def check_calendar_notifications():
                 event_date = notification.get('event_date', '')
                 
                 if student_email and event_title:
-                    # 直接從 Redis 資料發送郵件
-                    success = send_calendar_notification(
-                        student_email=student_email,
-                        event_title=event_title,
-                        event_content=event_content,
-                        event_date=event_date
-                    )
+                    # 在應用程式上下文中發送郵件
+                    with app.app_context():
+                        success = send_calendar_notification(
+                            student_email=student_email,
+                            event_title=event_title,
+                            event_content=event_content,
+                            event_date=event_date
+                        )
                     
                     if success:
-                        # 發送成功後從 Redis 移除
-                        redis_client.delete(item['key'])
-                        print(f"✅ 通知已發送並從 Redis 移除: {item['key']}")
+                        # 發送成功後從 Redis List 移除
+                        redis_client.lrem('event_notification', 1, item['notification_data'])
+                        print(f"✅ 通知已發送並從 Redis List 移除: event_id {item['event_id']}")
                     else:
-                        print(f"❌ 通知發送失敗: {item['key']}")
+                        print(f"❌ 通知發送失敗: event_id {item['event_id']}")
                             
             except Exception as e:
                 print(f"發送通知時發生錯誤: {e}")

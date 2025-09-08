@@ -126,13 +126,11 @@ def create_calendar_event():
     if not data.get('title') or not data.get('start'):
         return jsonify({'token': None, 'message': '標題和日期為必填欄位'}), 400
     
-    # 處理日期格式轉換
-    from datetime import datetime
+    # 直接使用前端傳來的時間格式
     event_date = data.get('start')
     if event_date:
-        # 將 ISO 8601 格式轉換為 MySQL 日期格式
-        if 'T' in event_date:
-            event_date = event_date.replace('T', ' ').replace('Z', '').split('.')[0]
+        # 簡單轉換為 MySQL 格式
+        event_date = event_date.replace('T', ' ').replace('Z', '').split('.')[0]
     
     notify_time = data.get('notifyTime')
     if notify_time:
@@ -189,13 +187,14 @@ def update_calendar_event():
     if not data.get('title') or not data.get('start'):
         return jsonify({'token': None, 'message': '標題和日期為必填欄位'}), 400
     
-    # 處理日期格式轉換
-    from datetime import datetime
+    # 直接使用前端傳來的時間格式
     event_date = data.get('start')
     if event_date:
-        # 將 ISO 8601 格式轉換為 MySQL 日期格式
-        if 'T' in event_date:
-            event_date = event_date.replace('T', ' ').replace('Z', '').split('.')[0]
+        # 簡單轉換為 MySQL 格式
+        event_date = event_date.replace('T', ' ').replace('Z', '').split('.')[0]
+        # 如果只有日期，補上時間
+        if len(event_date) == 10:
+            event_date = event_date + ' 00:00:00'
     
     notify_time = data.get('notifyTime')
     if notify_time:
@@ -272,9 +271,10 @@ def delete_calendar_event():
 
 
 def add_notification_to_redis(student_email: str, event_id: int, title: str, content: str, event_date: str, notify_time: str):
-    """將通知加入 Redis 佇列"""
+    """將通知加入 Redis 列表"""
     from datetime import datetime
-    notify_datetime = datetime.fromisoformat(notify_time.replace('Z', '+00:00'))
+    # 直接使用前端傳來的時間格式，確保只取到分鐘
+    notify_datetime = datetime.fromisoformat(notify_time.replace('Z', ''))
     notify_time_str = notify_datetime.strftime('%Y-%m-%d %H:%M')
     
     notification_data = {
@@ -286,18 +286,24 @@ def add_notification_to_redis(student_email: str, event_id: int, title: str, con
         'notify_time': notify_time_str
     }
     
-    key = f"notification:{notify_time_str}:{event_id}"
-    redis_client.setex(key, 86400 * 7, json.dumps(notification_data))  # 7天過期
-    print(f"通知已加入 Redis: {key}")
+    # 使用 Redis List 儲存通知
+    redis_client.lpush('event_notification', json.dumps(notification_data))
+
 
 def remove_notification_from_redis(event_id: int):
-    """從 Redis 移除通知"""
-    pattern = f"notification:*:{event_id}"
-    keys = redis_client.keys(pattern)
-    
-    if keys:
-        redis_client.delete(*keys)
-        print(f"已從 Redis 移除 {len(keys)} 個通知")
+    """從 Redis 列表移除通知"""
+    # 獲取所有通知
+    notifications = redis_client.lrange('event_notification', 0, -1)
+    for notification in notifications:
+        try:
+            data = json.loads(notification)
+            if data.get('event_id') == event_id:
+                # 移除這個通知
+                redis_client.lrem('event_notification', 1, notification)
+                print(f"已從 Redis List 移除事件 {event_id} 的通知")
+                break
+        except json.JSONDecodeError:
+            continue
 
 # 移除自動初始化，改為在應用程式啟動時初始化
 
