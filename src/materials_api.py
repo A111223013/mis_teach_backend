@@ -20,7 +20,10 @@ os.makedirs(MATERIALS_DIR, exist_ok=True)
 
 @materials_bp.route("/<filename>", methods=["GET"])
 def get_material(filename):
-    # ✅ 自動補上 .md（如果沒有副檔名）
+    """
+    回傳教材的原始 Markdown 內容（給 Angular 渲染）
+    """
+    # ✅ 自動補上 .md 副檔名
     if not filename.lower().endswith(".md"):
         filename += ".md"
 
@@ -33,94 +36,11 @@ def get_material(filename):
     with open(filepath, "r", encoding="utf-8") as f:
         md_content = f.read()
 
-    # Markdown -> HTML
-    html_content = markdown.markdown(
-        md_content,
-        extensions=['fenced_code', 'tables', 'attr_list']
-    )
+    return jsonify({
+        "filename": filename,
+        "content": md_content
+    })
 
-    # 完整 HTML
-    full_page = f"""
-    <!DOCTYPE html>
-    <html lang="zh-TW">
-    <head>
-        <meta charset="utf-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1">
-        <title>{filename}</title>
-
-        <!-- Bootstrap -->
-        <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
-
-        <!-- KaTeX -->
-        <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.css">
-        <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.js"></script>
-        <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/contrib/auto-render.min.js"></script>
-
-        <!-- Highlight.js -->
-        <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/highlight.js@11.9.0/styles/github.min.css">
-        <script src="https://cdn.jsdelivr.net/npm/highlight.js@11.9.0/lib/highlight.min.js"></script>
-        <!-- 可選語言包，例如 Python、JavaScript -->
-        <script src="https://cdn.jsdelivr.net/npm/highlight.js@11.9.0/lib/languages/python.min.js"></script>
-        <script src="https://cdn.jsdelivr.net/npm/highlight.js@11.9.0/lib/languages/javascript.min.js"></script>
-
-        <style>
-            body {{ margin:0; padding:0; }}
-            .container {{ display:flex; height:100vh; }}
-            .toc {{ width:300px; overflow-y:auto; border-right:1px solid #ddd; padding:20px; background:#f8f9fa; }}
-            .content {{ flex:1; overflow-y:auto; padding:20px; }}
-            .toc a {{ display:block; margin-bottom:5px; text-decoration:none; color:#000; }}
-            .toc a:hover {{ text-decoration:underline; }}
-            h1,h2,h3,h4,h5,h6 {{ scroll-margin-top:80px; }}
-            pre {{ background-color:#e9ecef; padding:10px; border-radius:5px; }}
-        </style>
-    </head>
-    <body>
-        <div class="container">
-            <div class="toc">
-                <h5>目錄</h5>
-                <div id="toc-list"></div>
-            </div>
-            <div class="content" id="content">
-                {html_content}
-            </div>
-        </div>
-
-        <script>
-        document.addEventListener("DOMContentLoaded", function() {{
-            // 自動生成目錄
-            const content = document.getElementById("content");
-            const tocList = document.getElementById("toc-list");
-            const headers = content.querySelectorAll("h1,h2,h3,h4,h5,h6");
-
-            headers.forEach(header => {{
-                if (!header.id) {{
-                    header.id = header.textContent.replace(/\\s+/g,"_");
-                }}
-                const a = document.createElement("a");
-                a.href = "#" + header.id;
-                a.textContent = header.textContent;
-                tocList.appendChild(a);
-            }});
-
-            // KaTeX 自動渲染數學式
-            renderMathInElement(document.body, {{
-                delimiters: [
-                    {{left: "$$", right: "$$", display: true}},
-                    {{left: "$", right: "$", display: false}},
-                    {{left: "\\\\(", right: "\\\\)", display: false}},
-                    {{left: "\\\\[", right: "\\\\]", display: true}}
-                ],
-                throwOnError: false
-            }});
-
-            // Highlight.js 語法高亮
-            hljs.highlightAll();
-        }});
-        </script>
-    </body>
-    </html>
-    """
-    return Response(full_page, mimetype="text/html")
 
 
 def convert_objectid(data):
@@ -154,7 +74,7 @@ def get_key_points():
                 key_points_set.add(kp)
         elif isinstance(key_points, str):
             key_points_set.add(key_points)
-    return jsonify({"key_points": list(key_points_set)})
+    return jsonify({"key_points": sorted(list(key_points_set))})
 
 
 @materials_bp.route('/domain', methods=['GET'])
