@@ -44,6 +44,125 @@ line_bot_api = MessagingApi(ApiClient(configuration))
 # ===== 全局變數 =====
 # 移除 user_quiz_data，現在使用主代理人的記憶管理
 
+# ===== Line 綁定功能 =====
+import qrcode
+import io
+import base64
+import redis
+from accessories import redis_client
+
+@linebot_bp.route('/generate-qr', methods=['POST', 'OPTIONS'])
+def generate_line_qr():
+    """生成 Line Bot 綁定 QR Code"""
+    if request.method == 'OPTIONS':
+        return '', 204
+    
+    auth_header = request.headers.get('Authorization')
+    if not auth_header:
+        return jsonify({'token': None, 'message': '未提供認證 token'}), 401
+    
+    token = auth_header.split(" ")[1]
+    from src.api import get_user_info
+    student_email = get_user_info(token, 'email')
+    data = request.get_json()
+    binding_token = data.get('bindingToken')
+    
+    if not binding_token:
+        return jsonify({'token': None, 'message': '缺少綁定 token'}), 400
+    
+    try:
+        # Line Bot 加好友連結 - 使用正確的 Channel ID
+        # 格式：https://lin.ee/ChannelID 或 https://line.me/R/ti/p/@ChannelID
+        # 注意：Channel ID 可能需要加上 @ 前綴
+        line_bot_url = "https://line.me/R/ti/p/@2007980840"  # 使用 @ 前綴格式
+        
+        print(f"🔗 生成 QR Code 連結: {line_bot_url}")
+        
+        # 生成 QR Code
+        qr = qrcode.QRCode(version=1, box_size=10, border=5)
+        qr.add_data(line_bot_url)
+        qr.make(fit=True)
+        
+        # 創建 QR Code 圖片
+        img = qr.make_image(fill_color="black", back_color="white")
+        
+        # 轉換為 base64
+        buffer = io.BytesIO()
+        img.save(buffer, format='PNG')
+        img_str = base64.b64encode(buffer.getvalue()).decode()
+        
+        # 儲存綁定 token 到 Redis (5分鐘過期)
+        redis_client.setex(f"line_binding:{binding_token}", 300, student_email)
+        
+        print(f"✅ QR Code 生成成功，綁定 token: {binding_token}")
+        
+        from accessories import refresh_token
+        refreshed_token = refresh_token(token)
+        return jsonify({
+            'token': refreshed_token, 
+            'qrCodeUrl': f"data:image/png;base64,{img_str}",
+            'bindingToken': binding_token
+        })
+        
+    except Exception as e:
+        print(f"❌ 生成 QR Code 失敗: {e}")
+        return jsonify({'token': None, 'message': f'生成 QR Code 失敗: {str(e)}'}), 500
+
+@linebot_bp.route('/check-binding', methods=['POST', 'OPTIONS'])
+def check_line_binding():
+    """檢查 Line 綁定狀態"""
+    if request.method == 'OPTIONS':
+        return '', 204
+    
+    auth_header = request.headers.get('Authorization')
+    if not auth_header:
+        return jsonify({'token': None, 'message': '未提供認證 token'}), 401
+    
+    token = auth_header.split(" ")[1]
+    from src.api import get_user_info
+    student_email = get_user_info(token, 'email')
+    data = request.get_json()
+    binding_token = data.get('bindingToken')
+    
+    if not binding_token:
+        return jsonify({'token': None, 'message': '缺少綁定 token'}), 400
+    
+    # 檢查 Redis 中是否有綁定成功的記錄
+    binding_key = f"line_binding_success:{binding_token}"
+    line_user_id = redis_client.get(binding_key)
+    
+    if line_user_id:
+        # 綁定成功，更新用戶資料
+        line_user_id = line_user_id.decode('utf-8')
+        
+        from accessories import sqldb
+        from sqlalchemy import text
+        with sqldb.engine.connect() as conn:
+            conn.execute(text('''
+                UPDATE users 
+                SET line_id = :line_id 
+                WHERE email = :email
+            '''), {'line_id': line_user_id, 'email': student_email})
+        
+        # 清除綁定記錄
+        redis_client.delete(binding_key)
+        redis_client.delete(f"line_binding:{binding_token}")
+        
+        from accessories import refresh_token
+        refreshed_token = refresh_token(token)
+        return jsonify({
+            'token': refreshed_token,
+            'bound': True,
+            'lineId': line_user_id
+        })
+    else:
+        from accessories import refresh_token
+        refreshed_token = refresh_token(token)
+        return jsonify({
+            'token': refreshed_token,
+            'bound': False
+        })
+
 # ===== 主代理人調用 =====
 def call_main_agent(user_message: str, user_id: str) -> str:
     """調用現有的主代理人系統 (web_ai_assistant)"""
@@ -124,12 +243,45 @@ def reply_text(reply_token: str, text: str):
         except Exception as fallback_error:
             print(f"❌ 錯誤消息發送也失敗: {fallback_error}")
 
+def handle_binding_command(user_id: str, binding_token: str, reply_token: str):
+    """處理綁定指令"""
+    try:
+        # 檢查綁定 token 是否存在
+        binding_key = f"line_binding:{binding_token}"
+        user_email = redis_client.get(binding_key)
+        
+        if user_email:
+            user_email = user_email.decode('utf-8')
+            
+            # 記錄綁定成功
+            success_key = f"line_binding_success:{binding_token}"
+            redis_client.setex(success_key, 300, user_id)
+            
+            print(f"✅ 用戶 {user_id} 綁定成功，對應網站用戶 {user_email}")
+            
+            # 發送確認訊息給用戶
+            reply_text(reply_token, "🎉 綁定成功！您已成功綁定 Line Bot，現在可以使用所有功能了！")
+            
+        else:
+            print(f"❌ 無效的綁定 token: {binding_token}")
+            reply_text(reply_token, "❌ 綁定失敗，請重新生成 QR Code 或檢查綁定碼是否正確。")
+            
+    except Exception as e:
+        print(f"❌ 處理綁定指令失敗: {e}")
+        reply_text(reply_token, "❌ 綁定過程中發生錯誤，請稍後再試。")
+
 def handle_message(event: MessageEvent):
     """處理用戶文字消息"""
     user_message = event.message.text.strip()
     user_id = event.source.user_id
     
-    # 所有訊息都交給主代理人處理，包括測驗答案
+    # 檢查是否為綁定指令
+    if user_message.startswith('bind:'):
+        binding_token = user_message.replace('bind:', '').strip()
+        handle_binding_command(user_id, binding_token, event.reply_token)
+        return
+    
+    # 所有其他訊息都交給主代理人處理，包括測驗答案
     # 主代理人會自動維護對話上下文和記憶
     
     # 檢查是否為測驗答案（根據前一次對話判斷）
@@ -280,6 +432,43 @@ def handle_message_event(event):
 def handle_postback_event(event):
     """LINE Bot 按鈕點擊事件處理"""
     handle_postback(event)
+
+# 添加 Follow 事件處理器
+from linebot.v3.webhooks import FollowEvent
+
+@handler.add(FollowEvent)
+def handle_follow_event(event):
+    """處理用戶加好友事件"""
+    try:
+        user_id = event.source.user_id
+        print(f"🎉 用戶 {user_id} 加好友")
+        
+        # 檢查是否有待綁定的 token
+        # 這裡可以通過用戶發送的訊息來獲取綁定 token
+        # 暫時記錄用戶 ID，等待綁定
+        redis_client.setex(f"line_user:{user_id}", 3600, "pending_binding")
+        
+        # 發送歡迎訊息
+        reply_text(event.reply_token, "歡迎使用 MIS 教學助手！請發送 'bind:你的綁定碼' 來完成帳號綁定。")
+        
+    except Exception as e:
+        print(f"❌ 處理加好友事件失敗: {e}")
+
+# 添加 Unfollow 事件處理器
+from linebot.v3.webhooks import UnfollowEvent
+
+@handler.add(UnfollowEvent)
+def handle_unfollow_event(event):
+    """處理用戶取消好友事件"""
+    try:
+        user_id = event.source.user_id
+        print(f"👋 用戶 {user_id} 取消好友")
+        
+        # 清除相關記錄
+        redis_client.delete(f"line_user:{user_id}")
+        
+    except Exception as e:
+        print(f"❌ 處理取消好友事件失敗: {e}")
 
 # ===== Blueprint 路由 =====
 @linebot_bp.route("/webhook", methods=['POST'])
