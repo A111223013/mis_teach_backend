@@ -73,6 +73,96 @@ def get_user_name():
     refreshed_token = refresh_token(token)
     return jsonify({'token': refreshed_token, 'name': user_name}), 200
 
+@dashboard_bp.route('/get-user-info', methods=['POST', 'OPTIONS'])
+def get_user_info_api():
+    if request.method == 'OPTIONS':
+        return '', 204
+    
+    auth_header = request.headers.get('Authorization')
+    if not auth_header:
+        return jsonify({'message': '未提供token'}), 401
+    
+    try:
+        token = auth_header.split(" ")[1]
+        user_email = verify_token(token)
+        if not user_email:
+            return jsonify({'message': 'Token無效或已過期'}), 401
+        
+        # 從 MongoDB 獲取用戶資料
+        user = mongo.db.students.find_one({"email": user_email})
+        if not user:
+            return jsonify({'message': '找不到用戶資料'}), 404
+        
+        # 返回用戶資料
+        user_data = {
+            'name': user.get('name', ''),
+            'email': user.get('email', ''),
+            'birthday': user.get('birthday', ''),
+            'school': user.get('school', ''),
+            'lineId': user.get('lineId', ''),
+            'avatar': user.get('avatar', ''),
+            'learningGoals': user.get('learningGoals', [])
+        }
+        
+        refreshed_token = refresh_token(token)
+        return jsonify({
+            'token': refreshed_token, 
+            'user': user_data
+        }), 200
+        
+    except Exception as e:
+        print(f"獲取用戶資料錯誤: {e}")
+        return jsonify({'message': '伺服器錯誤'}), 500
+
+@dashboard_bp.route('/update-user-info', methods=['POST', 'OPTIONS'])
+def update_user_info():
+    if request.method == 'OPTIONS':
+        return '', 204
+    
+    auth_header = request.headers.get('Authorization')
+    if not auth_header:
+        return jsonify({'message': '未提供token'}), 401
+    
+    try:
+        token = auth_header.split(" ")[1]
+        user_email = verify_token(token)
+        if not user_email:
+            return jsonify({'message': 'Token無效或已過期'}), 401
+        
+        data = request.get_json()
+        if not data:
+            return jsonify({'message': '未提供資料'}), 400
+        
+       
+        update_data = {}
+        allowed_fields = ['name', 'birthday', 'school', 'lineId', 'avatar', 'learningGoals']
+        
+        for field in allowed_fields:
+            if field in data:
+                update_data[field] = data[field]
+        
+        if not update_data:
+            return jsonify({'message': '沒有可更新的資料'}), 400
+        
+        
+        result = mongo.db.students.update_one(
+            {"email": user_email},
+            {"$set": update_data}
+        )
+        
+        if result.matched_count == 0:
+            return jsonify({'message': '找不到用戶資料'}), 404
+        
+        refreshed_token = refresh_token(token)
+        return jsonify({
+            'token': refreshed_token,
+            'message': '用戶資料更新成功'
+        }), 200
+        
+    except Exception as e:
+        print(f"更新用戶資料錯誤: {e}")
+        return jsonify({'message': '伺服器錯誤'}), 500
+
 
 
 
