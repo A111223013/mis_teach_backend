@@ -63,9 +63,12 @@ class SmartQuizGenerator:
         validated_req = self._validate_requirements(requirements)
         
         # 根據考卷類型生成題目
-        questions = (self._generate_pastexam_questions(validated_req) 
-                    if validated_req['exam_type'] == 'pastexam' 
-                    else self._generate_knowledge_questions(validated_req))
+        if validated_req['exam_type'] == 'pastexam':
+            questions = self._generate_pastexam_questions(validated_req)
+        elif validated_req['exam_type'] == 'content-based':
+            questions = self._generate_content_based_questions(validated_req)
+        else:
+            questions = self._generate_knowledge_questions(validated_req)
         
         # 檢查是否成功生成足夠的題目
         if len(questions) < validated_req['question_count']:
@@ -135,11 +138,23 @@ class SmartQuizGenerator:
             
             # 創建完整的考卷文檔
             quiz_id = f"ai_generated_{int(time.time())}"
+            
+            # 根據考卷類型設置不同的標題和類型
+            if requirements.get('exam_type') == 'content-based':
+                title = f"基於內容的AI生成測驗"
+                quiz_type = "content-based"
+            elif requirements.get('exam_type') == 'pastexam':
+                title = f"{requirements.get('school', 'AI生成')}考古題測驗"
+                quiz_type = "pastexam"
+            else:
+                title = f"{requirements.get('topic', 'AI生成')}知識點測驗"
+                quiz_type = "knowledge"
+            
             quiz_doc = {
                 "_id": quiz_id,  # 直接使用quiz_id作為_id
                 "quiz_id": quiz_id,
-                "title": f"{requirements.get('topic', 'AI生成')}知識點測驗",
-                "type": "knowledge",
+                "title": title,
+                "type": quiz_type,
                 "creator_email": "ai_system@mis_teach.com",
                 "create_time": datetime.now().isoformat(),
                 "time_limit": requirements.get('time_limit', 60),
@@ -147,7 +162,9 @@ class SmartQuizGenerator:
                 "metadata": {
                     "topic": requirements.get('topic', 'AI生成'),
                     "difficulty": requirements.get('difficulty', 'medium'),
-                    "question_count": len(questions)
+                    "question_count": len(questions),
+                    "exam_type": requirements.get('exam_type', 'knowledge'),
+                    "selected_text": requirements.get('selected_text', '') if requirements.get('exam_type') == 'content-based' else None
                 }
             }
             
@@ -378,6 +395,150 @@ class SmartQuizGenerator:
         
         return None
     
+    def _smart_generate_content_based_question(self, question_number: int, selected_text: str, 
+                                             difficulty: str, question_type: str) -> Optional[Dict[str, Any]]:
+        """基於內容智能生成單一題目 - 帶重試機制"""
+        
+        for attempt in range(self.max_retries):
+            try:
+                logger.info(f"🔄 基於內容生成第 {question_number} 題，第 {attempt + 1} 次嘗試")
+                
+                # 直接初始化LLM，避免循環導入問題
+                from langchain_google_genai import ChatGoogleGenerativeAI
+                import sys
+                import os
+                
+                # 添加tool目錄到路徑
+                tool_path = os.path.join(os.path.dirname(__file__), '..', 'tool')
+                if tool_path not in sys.path:
+                    sys.path.append(tool_path)
+                
+                from api_keys import get_api_key
+                
+                # 初始化LLM
+                api_key = get_api_key()
+                llm = ChatGoogleGenerativeAI(
+                    model="gemini-2.5-flash",
+                    google_api_key=api_key,
+                    temperature=0.7,
+                    top_p=0.8,
+                    top_k=40,
+                    max_output_tokens=8192,
+                    convert_system_message_to_human=True
+                )
+                
+                # 構建基於內容的動態提示詞
+                prompt = self._build_content_based_prompt(selected_text, difficulty, question_type)
+                
+                # 調用AI生成
+                response = llm.invoke(prompt)
+                response_text = response.content if hasattr(response, 'content') else str(response)
+                
+                logger.info(f"📝 基於內容AI回應長度: {len(response_text)} 字符")
+                
+                if not response_text or len(response_text.strip()) == 0:
+                    logger.error("❌ 基於內容AI回應為空！")
+                    if attempt < self.max_retries - 1:
+                        logger.info(f"⏳ 等待 {self.retry_delay} 秒後重試...")
+                        time.sleep(self.retry_delay)
+                        continue
+                    else:
+                        return None
+                
+                # 提取和驗證JSON
+                logger.info(f"🔍 開始提取和驗證第 {question_number} 題的JSON")
+                question_data = self._extract_and_validate_single_question(response_text)
+                
+                if question_data:
+                    logger.info(f"✅ 第 {question_number} 題JSON提取成功")
+                    # 添加題目編號和類型
+                    question_data['id'] = question_number
+                    question_data['type'] = question_type
+                    question_data['topic'] = '基於內容生成'
+                    question_data['difficulty'] = difficulty
+                    question_data['image_file'] = []
+                    question_data['generation_type'] = 'content-based'
+                    
+                    return question_data
+                else:
+                    logger.warning(f"⚠️ 第 {question_number} 題JSON提取或驗證失敗")
+                    
+                    if attempt < self.max_retries - 1:
+                        logger.info(f"⏳ 等待 {self.retry_delay} 秒後重試...")
+                        time.sleep(self.retry_delay)
+                        continue
+                    else:
+                        return None
+                        
+            except Exception as e:
+                logger.error(f"❌ 基於內容生成第 {question_number} 題時發生錯誤: {e}")
+                
+                if attempt < self.max_retries - 1:
+                    logger.info(f"⏳ 等待 {self.retry_delay} 秒後重試...")
+                    time.sleep(self.retry_delay)
+                    continue
+                else:
+                    return None
+        
+        return None
+    
+    def _build_content_based_prompt(self, selected_text: str, difficulty: str, question_type: str) -> str:
+        """構建基於內容的AI提示詞"""
+        
+        # 根據題型調整提示詞
+        if question_type == 'single-choice':
+            option_instruction = "提供4個選項，只有1個正確答案"
+            answer_format = '"A"'
+        elif question_type == 'multiple-choice':
+            option_instruction = "提供4個選項，正確答案可以是1-3個，用逗號分隔（如：'A,C'）"
+            answer_format = '"A,C"'
+        else:
+            option_instruction = "提供4個選項"
+            answer_format = '"A"'
+        
+        prompt = f"""請基於以下提供的內容，創建一道{self.difficulty_levels[difficulty]}程度的{self.question_types[question_type]}。
+
+提供的內容：
+「{selected_text}」
+
+要求：
+1. 題目必須完全基於提供的內容，不能偏離主題
+2. 題目要測試對提供內容的理解和應用
+3. 題目要真實、有教育意義，符合大學課程標準
+4. 選項要合理且具有迷惑性，避免明顯錯誤的選項
+5. 答案要正確且有詳細解釋，解釋要清晰易懂
+6. 題目內容要符合{self.difficulty_levels[difficulty]}程度
+7. {option_instruction}
+8. 題目應該深入測試提供內容的核心概念
+
+請務必以以下 JSON Schema 格式回傳（只生成一題）：
+
+{{
+  "question_text": "基於提供內容的題目",
+  "options": [
+    "選項A: 選項內容",
+    "選項B: 選項內容", 
+    "選項C: 選項內容",
+    "選項D: 選項內容"
+  ],
+  "correct_answer": {answer_format},
+  "explanation": "詳細的解釋說明，包含與提供內容的關聯性",
+  "key_points": "關鍵知識點, 與提供內容的關聯, 核心概念"
+}}
+
+重要提醒：
+- 請確保JSON格式完整，不要中途截斷
+- 所有字符串都要用雙引號包圍，不要使用單引號
+- 選項數組必須包含4個元素，每個選項都要有標籤（A、B、C、D）
+- 題目內容要專業且準確，完全基於提供的內容
+- 請使用繁體中文撰寫所有內容
+- 請嚴格按照上述JSON Schema格式，不要添加任何其他文字或格式
+- 必須生成真實的題目內容，不要使用佔位符
+- 題目應該深入測試提供內容的核心概念和應用
+- 正確答案格式：{answer_format}"""
+        
+        return prompt
+    
     def _build_dynamic_prompt(self, topic: str, difficulty: str, question_type: str, selected_text: str = None) -> str:
         """構建動態AI提示詞"""
         
@@ -398,7 +559,7 @@ class SmartQuizGenerator:
 1. 題目要真實、有教育意義，符合大學課程標準
 2. 選項要合理且具有迷惑性，避免明顯錯誤的選項
 3. 答案要正確且有詳細解釋，解釋要清晰易懂
-4. 題目內容要符合{self.difficulty_levels[difficulty]}程度HttpErrorResponse {headers: _HttpHeaders, status: 404, statusText: 'NOT FOUND', url: 'http://127.0.0.1:5000/quiz/submit-quiz', ok: false, …}
+4. 題目內容要符合{self.difficulty_levels[difficulty]}程度
 5. {option_instruction}
 6. 如果提供了參考內容，題目應該與參考內容相關且具有相似性
 
@@ -717,10 +878,6 @@ class SmartQuizGenerator:
             return None
         
         except Exception as e:
-            logger.warning(f"❌ 激進JSON修復失敗: {e}")
-            return None
-            
-        except Exception as e:
             logger.error(f"❌ 激進JSON修復失敗: {e}")
             # 返回最基本的JSON結構
             return '{"question_text": "題目內容", "options": ["選項A: 選項內容", "選項B: 選項內容", "選項C: 選項內容", "選項D: 選項內容"], "correct_answer": "A", "explanation": "詳細解釋", "key_points": "關鍵知識點"}'
@@ -829,6 +986,42 @@ class SmartQuizGenerator:
             logger.error(f"❌ 題目數據驗證失敗: {e}")
             return False
     
+    def _generate_content_based_questions(self, requirements: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """基於內容生成題目"""
+        questions = []
+        selected_text = requirements.get('selected_text', '')
+        question_count = requirements['question_count']
+        difficulty = requirements['difficulty']
+        question_types = requirements['question_types']
+        
+        logger.info(f"🎯 開始基於內容生成題目，內容長度: {len(selected_text)} 字符")
+        
+        # 逐題生成，每題都有重試機制
+        for i in range(question_count):
+            question_type = random.choice(question_types)
+            logger.info(f"🔄 正在生成第 {i + 1}/{question_count} 題，題型: {question_type}")
+            
+            # 基於內容生成單題，帶重試機制
+            question = self._smart_generate_content_based_question(
+                question_number=i + 1,
+                selected_text=selected_text,
+                difficulty=difficulty,
+                question_type=question_type
+            )
+            
+            if question:
+                questions.append(question)
+                logger.info(f"✅ 第 {i + 1} 題生成成功")
+            else:
+                logger.warning(f"⚠️ 第 {i + 1} 題生成失敗，跳過此題")
+            
+            # 每題之間稍作延遲，避免API限制
+            if i < question_count - 1:
+                time.sleep(1)
+        
+        logger.info(f"🎯 基於內容的題目生成完成，成功生成 {len(questions)} 題")
+        return questions
+    
     def _generate_pastexam_questions(self, requirements: Dict[str, Any]) -> List[Dict[str, Any]]:
         """生成考古題目"""
         questions = []
@@ -874,18 +1067,21 @@ class SmartQuizGenerator:
         """生成考卷信息"""
         if requirements['exam_type'] == 'pastexam':
             title = f"{requirements['school']} {requirements['year']}年 {requirements['department']}考古題"
+        elif requirements['exam_type'] == 'content-based':
+            title = f"基於內容的AI生成測驗"
         else:
             title = f"{requirements['topic']}知識點測驗"
         
         return {
             'title': title,
             'exam_type': requirements['exam_type'],
-            'topic': requirements['topic'],
+            'topic': requirements.get('topic', '基於內容生成'),
             'difficulty': requirements['difficulty'],
             'question_count': len(questions),
             'time_limit': 60,  # 默認60分鐘
             'total_score': len(questions) * 5,  # 每題5分
-            'created_at': datetime.now().isoformat()
+            'created_at': datetime.now().isoformat(),
+            'selected_text': requirements.get('selected_text', '') if requirements['exam_type'] == 'content-based' else None
         }
 
 # 創建全局實例
@@ -938,6 +1134,40 @@ def _parse_quiz_requirements(text: str) -> dict:
     }
     
     text_lower = text.lower()
+    
+    # 檢測是否為基於內容的生成請求
+    content_keywords = ['根據以下內容', '基於以下內容', '根據內容', '基於內容', '以下內容', '內容如下']
+    
+    # 智能檢測：如果文本包含具體的技術內容且沒有明確的題目生成指令，則視為基於內容的請求
+    technical_content_indicators = [
+        '進位系統', '二進制', '八進制', '十六進制', '十進制',
+        '數字表示', '數值轉換', '位元', '位元組',
+        '演算法', '資料結構', '程式設計', '作業系統',
+        '記憶體', 'CPU', '硬體', '軟體'
+    ]
+    
+    # 明確的題目生成指令
+    quiz_generation_keywords = ['生成', '創建', '建立', '製作', '產生', '考卷', '測驗', '題目', '考試']
+    
+    # 檢查是否包含明確的題目生成指令
+    has_quiz_generation_keyword = any(keyword in text for keyword in quiz_generation_keywords)
+    
+    # 檢查是否包含技術內容
+    has_technical_content = any(indicator in text for indicator in technical_content_indicators)
+    
+    # 如果包含明確的內容關鍵詞，直接視為基於內容的請求
+    if any(keyword in text for keyword in content_keywords):
+        requirements['exam_type'] = 'content-based'
+        requirements['selected_text'] = text
+        logger.info(f"🎯 檢測到基於內容的生成請求（明確關鍵詞）")
+        return requirements
+    
+    # 如果包含技術內容但沒有明確的題目生成指令，視為基於內容的請求
+    elif has_technical_content and not has_quiz_generation_keyword:
+        requirements['exam_type'] = 'content-based'
+        requirements['selected_text'] = text
+        logger.info(f"🎯 檢測到基於內容的生成請求（技術內容檢測）")
+        return requirements
     
     # 檢測知識點
     topics = ['計算機概論', '程式設計', '資料結構', '演算法', '作業系統', '資料庫', '網路', '軟體工程', '人工智慧', '機器學習']
@@ -1136,6 +1366,66 @@ def execute_quiz_generation(requirements: str) -> str:
     except Exception as e:
         logger.error(f"❌ 考卷生成執行失敗: {e}")
         return f"❌ 考卷生成失敗，請稍後再試。錯誤: {str(e)}"
+
+def execute_content_based_quiz_generation(content: str) -> str:
+    """
+    執行基於內容的考卷生成 - 供外部調用
+    
+    Args:
+        content: 用戶提供的內容字符串
+        
+    Returns:
+        格式化的回應字符串
+    """
+    try:
+        logger.info(f"🎯 開始基於內容的考卷生成，內容長度: {len(content)} 字符")
+        
+        # 構建基於內容的需求
+        requirements = {
+            'exam_type': 'content-based',
+            'selected_text': content,
+            'topic': '基於內容生成',
+            'difficulty': 'medium',
+            'question_count': 1,
+            'question_types': ['single-choice', 'multiple-choice']
+        }
+        
+        # 生成考卷並保存到數據庫
+        result = generate_and_save_quiz_by_ai(requirements)
+        
+        if result['success']:
+            quiz_info = result['quiz_info']
+            questions = result['questions']
+            database_ids = result.get('database_ids', [])
+            
+            # 簡化回應格式，只返回考卷 ID
+            response = f"✅ 基於內容的考卷生成成功！\n\n"
+            response += f"📝 **{quiz_info['title']}**\n"
+            response += f"📚 基於內容: {content[:50]}...\n"
+            response += f"🎯 主題: {quiz_info['topic']}\n"
+            response += f"🔢 題目數量: {quiz_info['question_count']} 題\n"
+            response += f"⏱️ 時間限制: {quiz_info['time_limit']} 分鐘\n"
+            response += f"🏷️ 生成類型: 基於內容\n\n"
+            
+            # 顯示第一題預覽
+            if questions:
+                first_question = questions[0]
+                response += "📋 題目預覽:\n"
+                response += f"1. {first_question['question_text'][:80]}...\n\n"
+            
+            # 使用第一個數據庫 ID 作為考卷 ID
+            quiz_id = database_ids[0] if database_ids else f"content_based_{int(time.time())}"
+            
+            response += "🚀 **開始測驗**\n\n"
+            response += f"📋 考卷ID: `{quiz_id}`"
+            
+            return response
+        else:
+            return f"❌ 基於內容的考卷生成失敗: {result.get('error', '未知錯誤')}"
+            
+    except Exception as e:
+        logger.error(f"❌ 基於內容的考卷生成執行失敗: {e}")
+        return f"❌ 基於內容的考卷生成失敗，請稍後再試。錯誤: {str(e)}"
 
 class SimilarQuizGenerator:
     """相似題目生成器 - 專門生成與選中文字相似的題目"""

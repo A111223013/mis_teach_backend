@@ -1958,3 +1958,63 @@ def get_user_errors_mongo():
             'success': False,
             'error': f'獲取用戶錯題失敗：{str(e)}'
         }), 500
+
+@ai_quiz_bp.route('/generate-content-based-quiz', methods=['POST', 'OPTIONS'])
+def generate_content_based_quiz():
+    """基於內容生成考卷 API"""
+    try:
+        if request.method == 'OPTIONS':
+            return jsonify({'token': None, 'success': True}), 204
+        
+        # 驗證用戶身份
+        token = request.headers.get('Authorization')
+        if not token:
+            return jsonify({'error': '缺少授權token'}), 401
+        
+        user_email = verify_token(token.split(" ")[1])
+        if not user_email:
+            return jsonify({'error': '無效的token'}), 401
+        
+        # 獲取請求數據
+        data = request.get_json()
+        content = data.get('content', '')
+        difficulty = data.get('difficulty', 'medium')
+        question_count = data.get('question_count', 1)
+        question_types = data.get('question_types', ['single-choice', 'multiple-choice'])
+        
+        if not content:
+            return jsonify({
+                'success': False,
+                'message': '缺少內容參數'
+            }), 400
+        
+        print(f"🎯 開始基於內容生成考卷，用戶: {user_email}, 內容長度: {len(content)}")
+        
+        # 調用基於內容的考卷生成
+        from src.quiz_generator import execute_content_based_quiz_generation
+        
+        # 構建完整的內容字符串
+        full_content = f"根據以下內容生成一道題目：{content}"
+        
+        # 生成考卷
+        result = execute_content_based_quiz_generation(full_content)
+        
+        # 解析結果中的考卷ID
+        import re
+        quiz_id_match = re.search(r'考卷ID: `([^`]+)`', result)
+        quiz_id = quiz_id_match.group(1) if quiz_id_match else f"content_based_{int(time.time())}"
+        
+        return jsonify({
+            'token': refresh_token(token),
+            'success': True,
+            'message': '基於內容的考卷生成成功',
+            'quiz_id': quiz_id,
+            'result': result
+        }), 200
+        
+    except Exception as e:
+        print(f"❌ 基於內容的考卷生成失敗: {e}")
+        return jsonify({
+            'success': False,
+            'error': f'基於內容的考卷生成失敗：{str(e)}'
+        }), 500

@@ -225,10 +225,39 @@ def create_quiz_generator_tool():
                         return f"❌ 基於選中內容的題目生成失敗: {result.get('error', '未知錯誤')}"
             
             # 導入quiz_generator.py中的主要函數（原本的生成方式）
-            from src.quiz_generator import execute_quiz_generation
+            from src.quiz_generator import execute_quiz_generation, execute_content_based_quiz_generation
             
-            # 直接調用quiz_generator.py中的函數
-            return execute_quiz_generation(requirements)
+            # 檢查是否為基於內容的生成請求
+            content_keywords = ['根據以下內容', '基於以下內容', '根據內容', '基於內容', '以下內容', '內容如下']
+            
+            # 智能檢測：如果文本包含具體的技術內容且沒有明確的題目生成指令，則視為基於內容的請求
+            technical_content_indicators = [
+                '進位系統', '二進制', '八進制', '十六進制', '十進制',
+                '數字表示', '數值轉換', '位元', '位元組',
+                '演算法', '資料結構', '程式設計', '作業系統',
+                '記憶體', 'CPU', '硬體', '軟體'
+            ]
+            
+            # 明確的題目生成指令
+            quiz_generation_keywords = ['生成', '創建', '建立', '製作', '產生', '考卷', '測驗', '題目', '考試']
+            
+            # 檢查是否包含明確的題目生成指令
+            has_quiz_generation_keyword = any(keyword in requirements for keyword in quiz_generation_keywords)
+            
+            # 檢查是否包含技術內容
+            has_technical_content = any(indicator in requirements for indicator in technical_content_indicators)
+            
+            # 如果包含明確的內容關鍵詞，直接視為基於內容的請求
+            if any(keyword in requirements for keyword in content_keywords):
+                # 使用基於內容的生成
+                return execute_content_based_quiz_generation(requirements)
+            # 如果包含技術內容但沒有明確的題目生成指令，視為基於內容的請求
+            elif has_technical_content and not has_quiz_generation_keyword:
+                # 使用基於內容的生成
+                return execute_content_based_quiz_generation(requirements)
+            else:
+                # 使用原本的生成方式
+                return execute_quiz_generation(requirements)
                 
         except Exception as e:
             logger.error(f"❌ 考卷生成工具執行失敗: {e}")
