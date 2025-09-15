@@ -346,7 +346,7 @@ def insert_db_domain(db):
 
 def insert_ai_domain(db):
     """
-    插入「AI 與機器學習（AI & Machine Learning）」的 Domain、Blocks、Micro Concepts
+    插入「AI與機器學習（AI & Machine Learning）」的 Domain、Blocks、Micro Concepts
     """
     try:
         domains_col = db["domain"]
