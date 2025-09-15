@@ -101,18 +101,28 @@ class SmartQuizGenerator:
         Returns:
             包含數據庫ID的考卷數據
         """
+        logger.info(f"🔍 開始生成考卷，需求: {requirements}")
+        
         # 生成考卷
+        logger.info("🔍 調用 generate_quiz 方法...")
         quiz_result = self.generate_quiz(requirements)
+        logger.info(f"🔍 generate_quiz 結果: success={quiz_result.get('success', False)}")
         
         if not quiz_result['success']:
+            logger.error(f"❌ 考卷生成失敗: {quiz_result.get('error', '未知錯誤')}")
             return quiz_result
         
         # 保存到數據庫
+        logger.info("🔍 開始保存到數據庫...")
         saved_questions = self._save_questions_to_database(quiz_result['questions'], requirements)
+        logger.info(f"🔍 數據庫保存結果: {len(saved_questions)} 個題目ID")
         
         if saved_questions:
             quiz_result['database_ids'] = saved_questions
             quiz_result['message'] = "考卷已成功生成並保存到數據庫"
+            logger.info("✅ 考卷生成並保存成功")
+        else:
+            logger.warning("⚠️ 數據庫保存失敗，但考卷生成成功")
         
         return quiz_result
     
@@ -1314,16 +1324,23 @@ def execute_quiz_generation(requirements: str) -> str:
         格式化的回應字符串
     """
     try:
+        logger.info(f"🔍 開始執行考卷生成，需求: {requirements[:100]}...")
+        
         # 解析用戶需求
         try:
             # 嘗試解析JSON格式的需求
             req_dict = json.loads(requirements)
+            logger.info("🔍 成功解析JSON格式需求")
         except:
             # 如果不是JSON，嘗試從文本中提取信息
+            logger.info("🔍 嘗試從文本中提取需求信息")
             req_dict = _parse_quiz_requirements(requirements)
+            logger.info(f"🔍 解析後的需求: {req_dict}")
         
         # 生成考卷並保存到數據庫
+        logger.info("🔍 開始生成考卷並保存到數據庫...")
         result = generate_and_save_quiz_by_ai(req_dict)
+        logger.info(f"🔍 考卷生成結果: success={result.get('success', False)}")
         
         if result['success']:
             quiz_info = result['quiz_info']

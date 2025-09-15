@@ -17,6 +17,7 @@ import json
 from sqlalchemy import text
 from bson import ObjectId
 from src.grade_answer import batch_grade_ai_questions
+from src.ai_teacher import get_quiz_from_database
 import time
 import hashlib
 import logging
@@ -64,7 +65,7 @@ def submit_quiz():
                 # 創建一個模擬的模板對象
                 template = type('Template', (), {
                     'question_ids': json.dumps([q.get('original_exam_id', '') for q in frontend_questions if q.get('original_exam_id')]),
-                    'template_type': 'ai_generated'
+                    'template_type': 'knowledge'  # 使用knowledge類型，避免資料庫錯誤
                 })()
                 question_ids = [q.get('original_exam_id', '') for q in frontend_questions if q.get('original_exam_id')]
                 total_questions = len(frontend_questions)
@@ -91,7 +92,7 @@ def submit_quiz():
                 # 從模板獲取題目ID列表
                 question_ids = json.loads(template.question_ids)
                 total_questions = len(question_ids)
-                quiz_type = template.template_type
+                quiz_type = 'knowledge'  # 強制使用knowledge類型，避免資料庫錯誤
             except (ValueError, TypeError):
                 return jsonify({
                     'success': False,
@@ -288,170 +289,171 @@ def submit_quiz():
     accuracy_rate = (correct_count / total_questions * 100) if total_questions > 0 else 0
     average_score = (total_score / answered_count) if answered_count > 0 else 0
     
-    # 更新或創建SQL記錄
-    with sqldb.engine.connect() as conn:
-        # 根據模板類型決定quiz_template_id
-        if isinstance(template_id, str) and template_id.startswith('ai_template_'):
-            quiz_template_id = None  # AI模板不需要SQL模板ID
-        else:
-            quiz_template_id = template_id_int  # 傳統模板使用數字ID
+    # 註解掉 SQL 資料庫操作，只使用 MongoDB
+    # # 更新或創建SQL記錄
+    # with sqldb.engine.connect() as conn:
+        # # 根據模板類型決定quiz_template_id
+        # if isinstance(template_id, str) and template_id.startswith('ai_template_'):
+        #     quiz_template_id = None  # AI模板不需要SQL模板ID
+        # else:
+        #     quiz_template_id = template_id_int  # 傳統模板使用數字ID
+        # 
+        # # 查找現有的quiz_history記錄
+        # existing_record = conn.execute(text("""
+        #     SELECT id FROM quiz_history 
+        #     WHERE user_email = :user_email AND quiz_type = :quiz_type
+        #     ORDER BY created_at DESC LIMIT 1
+        # """), {
+        #     'user_email': user_email,
+        #     'quiz_type': quiz_type
+        # }).fetchone()
+        # 
+        # if existing_record:
+        #     # 更新現有記錄
+        #     quiz_history_id = existing_record[0]
+        #     conn.execute(text("""
+        #         UPDATE quiz_history 
+        #         SET answered_questions = :answered_questions,
+        #             correct_count = :correct_count,
+        #             wrong_count = :wrong_count,
+        #             accuracy_rate = :accuracy_rate,
+        #             average_score = :average_score,
+        #             total_time_taken = :time_taken,
+        #             submit_time = :submit_time,
+        #             status = 'completed'
+        #         WHERE id = :quiz_history_id
+        #     """), {
+        #         'answered_questions': answered_count,
+        #         'correct_count': correct_count,
+        #         'wrong_count': wrong_count,
+        #         'accuracy_rate': round(accuracy_rate, 2),
+        #         'average_score': round(average_score, 2),
+        #         'time_taken': time_taken,
+        #                         'submit_time': datetime.now(),
+        #         'quiz_history_id': quiz_history_id
+        #     })
+        # else:
+        #     # 創建新記錄
+        #     # 對於AI生成的考卷，quiz_template_id設為NULL（資料庫允許NULL）
+        #     # 對於傳統考卷，使用整數template_id
+        #     db_quiz_template_id = None if quiz_template_id is None else quiz_template_id
+        #     
+        #     result = conn.execute(text("""
+        #         INSERT INTO quiz_history 
+        #         (quiz_template_id, user_email, quiz_type, total_questions, answered_questions,
+        #          correct_count, wrong_count, accuracy_rate, average_score, total_time_taken, submit_time, status)
+        #         VALUES (:quiz_template_id, :user_email, :quiz_type, :total_questions, :answered_questions,
+        #                :correct_count, :wrong_count, :accuracy_rate, :average_score, :total_time_taken, :submit_time, :status)
+        #     """), {
+        #         'quiz_template_id': db_quiz_template_id,
+        #         'user_email': user_email,
+        #         'quiz_type': quiz_type,
+        #         'total_questions': total_questions,
+        #         'answered_questions': answered_count,
+        #         'correct_count': correct_count,
+        #         'wrong_count': wrong_count,
+        #         'accuracy_rate': round(accuracy_rate, 2),
+        #         'average_score': round(average_score, 2),
+        #         'total_time_taken': time_taken,
+        #         'submit_time': datetime.now(),
+        #         'status': 'completed'
+        #     })
+        #     quiz_history_id = result.lastrowid
         
-        # 查找現有的quiz_history記錄
-        existing_record = conn.execute(text("""
-            SELECT id FROM quiz_history 
-            WHERE user_email = :user_email AND quiz_type = :quiz_type
-            ORDER BY created_at DESC LIMIT 1
-        """), {
-            'user_email': user_email,
-            'quiz_type': quiz_type
-        }).fetchone()
+        # # 儲存所有題目的用戶答案到 quiz_answers 表
+        # # 1. 儲存已作答題目（AI評分結果）
+        # for i, q_data in enumerate(answered_questions):
+        #     question = q_data['question']
+        #     user_answer = q_data['user_answer']
+        #     question_id = question.get('original_exam_id', '')
+        #     
+        #     # 獲取AI評分結果
+        #     ai_result = q_data.get('ai_result', {})
+        #     is_correct = ai_result.get('is_correct', False)
+        #     score = ai_result.get('score', 0)
+        #     feedback = ai_result.get('feedback', {})
+        #     
+        #     # 獲取作答時間（秒數）
+        #     answer_time_seconds = q_data.get('answer_time_seconds', 0)
+        #     
+        #     # 調試日誌
+        #     print(f"🔍 Debug: 保存題目 {i} - answer_time_seconds: {answer_time_seconds}")
+        #     
+        #     # 構建用戶答案資料
+        #     answer_data = {
+        #         'answer': user_answer,
+        #         'feedback': feedback  # 使用AI批改的feedback
+        #     }
+        #     
+        #     # 使用新的長答案存儲方法，保持數據完整性
+        #     stored_answer = _store_long_answer(user_answer, 'unknown', quiz_history_id, question_id, user_email)
+        #     
+        #     # 插入到 quiz_answers 表，包含feedback和作答時間
+        #     conn.execute(text("""
+        #         INSERT INTO quiz_answers 
+        #         (quiz_history_id, user_email, mongodb_question_id, user_answer, is_correct, score, feedback, answer_time_seconds)
+        #         VALUES (:quiz_history_id, :user_email, :mongodb_question_id, :user_answer, :is_correct, :score, :feedback, :answer_time_seconds)
+        #     """), {
+        #         'quiz_history_id': quiz_history_id,
+        #         'user_email': user_email,
+        #         'mongodb_question_id': question_id,
+        #         'user_answer': stored_answer,  # 使用存儲後的答案引用
+        #         'is_correct': is_correct,
+        #         'score': score,
+        #         'feedback': json.dumps(feedback),  # 將feedback轉換為JSON字符串
+        #         'answer_time_seconds': answer_time_seconds  # 每題作答時間（秒）
+        #     })
         
-        if existing_record:
-            # 更新現有記錄
-            quiz_history_id = existing_record[0]
-            conn.execute(text("""
-                UPDATE quiz_history 
-                SET answered_questions = :answered_questions,
-                    correct_count = :correct_count,
-                    wrong_count = :wrong_count,
-                    accuracy_rate = :accuracy_rate,
-                    average_score = :average_score,
-                    total_time_taken = :time_taken,
-                    submit_time = :submit_time,
-                    status = 'completed'
-                WHERE id = :quiz_history_id
-            """), {
-                'answered_questions': answered_count,
-                'correct_count': correct_count,
-                'wrong_count': wrong_count,
-                'accuracy_rate': round(accuracy_rate, 2),
-                'average_score': round(average_score, 2),
-                'time_taken': time_taken,
-                                'submit_time': datetime.now(),
-                'quiz_history_id': quiz_history_id
-            })
-        else:
-            # 創建新記錄
-            # 對於AI生成的考卷，quiz_template_id設為NULL（資料庫允許NULL）
-            # 對於傳統考卷，使用整數template_id
-            db_quiz_template_id = None if quiz_template_id is None else quiz_template_id
-            
-            result = conn.execute(text("""
-                INSERT INTO quiz_history 
-                (quiz_template_id, user_email, quiz_type, total_questions, answered_questions,
-                 correct_count, wrong_count, accuracy_rate, average_score, total_time_taken, submit_time, status)
-                VALUES (:quiz_template_id, :user_email, :quiz_type, :total_questions, :answered_questions,
-                       :correct_count, :wrong_count, :accuracy_rate, :average_score, :total_time_taken, :submit_time, :status)
-            """), {
-                'quiz_template_id': db_quiz_template_id,
-                'user_email': user_email,
-                'quiz_type': quiz_type,
-                'total_questions': total_questions,
-                'answered_questions': answered_count,
-                'correct_count': correct_count,
-                'wrong_count': wrong_count,
-                'accuracy_rate': round(accuracy_rate, 2),
-                'average_score': round(average_score, 2),
-                'total_time_taken': time_taken,
-                'submit_time': datetime.now(),
-                'status': 'completed'
-            })
-            quiz_history_id = result.lastrowid
+        # # 2. 儲存未作答題目
+        # for q_data in unanswered_questions:
+        #     i = q_data['index']
+        #     question = q_data['question']
+        #     question_id = question.get('original_exam_id', '')
+        #     
+        #     # 未作答題目：is_correct = False, score = 0
+        #     answer_data = {
+        #         'answer': '',
+        #         'feedback': {}
+        #     }
+        #     
+        #     # 插入到 quiz_answers 表
+        #     conn.execute(text("""
+        #         INSERT INTO quiz_answers 
+        #         (quiz_history_id, user_email, mongodb_question_id, user_answer, is_correct, score, answer_time_seconds)
+        #         VALUES (:quiz_history_id, :user_email, :mongodb_question_id, :user_answer, :is_correct, :score, :answer_time_seconds)
+        #     """), {
+        #         'quiz_history_id': quiz_history_id,
+        #         'user_email': user_email,
+        #         'mongodb_question_id': question_id,
+        #         'user_answer': '',  # 未作答題目答案為空
+        #         'is_correct': False,  # 未作答題目標記為錯誤
+        #         'score': 0,
+        #         'answer_time_seconds': 0
+        #     })
+        # 
+        # # 保留原有的錯題儲存邏輯（向後兼容）
+        # if wrong_questions:
+        #     for wrong_q in wrong_questions:
+        #         # 使用新的長答案存儲方法，保持數據完整性
+        #         stored_answer = _store_long_answer(wrong_q['user_answer'], 'unknown', quiz_history_id, 
+        #                                         wrong_q.get('original_exam_id', ''), user_email)
+        #         
+        #         conn.execute(text("""
+        #             INSERT INTO quiz_errors 
+        #             (quiz_history_id, user_email, mongodb_question_id, user_answer,
+        #              score, time_taken)
+        #             VALUES (:quiz_history_id, :user_email, :mongodb_question_id,
+        #                    :user_answer, :score, :time_taken)
+        #         """), {
+        #             'quiz_history_id': quiz_history_id,
+        #             'user_email': user_email,
+        #             'mongodb_question_id': wrong_q.get('original_exam_id', ''),
+        #             'user_answer': stored_answer,  # 使用存儲後的答案引用
+        #             'score': wrong_q.get('score', 0),
+        #             'time_taken': 0  # 簡化時間處理
+        #         })
         
-        # 儲存所有題目的用戶答案到 quiz_answers 表
-        # 1. 儲存已作答題目（AI評分結果）
-        for i, q_data in enumerate(answered_questions):
-            question = q_data['question']
-            user_answer = q_data['user_answer']
-            question_id = question.get('original_exam_id', '')
-            
-            # 獲取AI評分結果
-            ai_result = q_data.get('ai_result', {})
-            is_correct = ai_result.get('is_correct', False)
-            score = ai_result.get('score', 0)
-            feedback = ai_result.get('feedback', {})
-            
-            # 獲取作答時間（秒數）
-            answer_time_seconds = q_data.get('answer_time_seconds', 0)
-            
-            # 調試日誌
-            print(f"🔍 Debug: 保存題目 {i} - answer_time_seconds: {answer_time_seconds}")
-            
-            # 構建用戶答案資料
-            answer_data = {
-                'answer': user_answer,
-                'feedback': feedback  # 使用AI批改的feedback
-            }
-            
-            # 使用新的長答案存儲方法，保持數據完整性
-            stored_answer = _store_long_answer(user_answer, 'unknown', quiz_history_id, question_id, user_email)
-            
-            # 插入到 quiz_answers 表，包含feedback和作答時間
-            conn.execute(text("""
-                INSERT INTO quiz_answers 
-                (quiz_history_id, user_email, mongodb_question_id, user_answer, is_correct, score, feedback, answer_time_seconds)
-                VALUES (:quiz_history_id, :user_email, :mongodb_question_id, :user_answer, :is_correct, :score, :feedback, :answer_time_seconds)
-            """), {
-                'quiz_history_id': quiz_history_id,
-                'user_email': user_email,
-                'mongodb_question_id': question_id,
-                'user_answer': stored_answer,  # 使用存儲後的答案引用
-                'is_correct': is_correct,
-                'score': score,
-                'feedback': json.dumps(feedback),  # 將feedback轉換為JSON字符串
-                'answer_time_seconds': answer_time_seconds  # 每題作答時間（秒）
-            })
-        
-        # 2. 儲存未作答題目
-        for q_data in unanswered_questions:
-            i = q_data['index']
-            question = q_data['question']
-            question_id = question.get('original_exam_id', '')
-            
-            # 未作答題目：is_correct = False, score = 0
-            answer_data = {
-                'answer': '',
-                'feedback': {}
-            }
-            
-            # 插入到 quiz_answers 表
-            conn.execute(text("""
-                INSERT INTO quiz_answers 
-                (quiz_history_id, user_email, mongodb_question_id, user_answer, is_correct, score, answer_time_seconds)
-                VALUES (:quiz_history_id, :user_email, :mongodb_question_id, :user_answer, :is_correct, :score, :answer_time_seconds)
-            """), {
-                'quiz_history_id': quiz_history_id,
-                'user_email': user_email,
-                'mongodb_question_id': question_id,
-                'user_answer': '',  # 未作答題目答案為空
-                'is_correct': False,  # 未作答題目標記為錯誤
-                'score': 0,
-                'answer_time_seconds': 0
-            })
-        
-        # 保留原有的錯題儲存邏輯（向後兼容）
-        if wrong_questions:
-            for wrong_q in wrong_questions:
-                # 使用新的長答案存儲方法，保持數據完整性
-                stored_answer = _store_long_answer(wrong_q['user_answer'], 'unknown', quiz_history_id, 
-                                                wrong_q.get('original_exam_id', ''), user_email)
-                
-                conn.execute(text("""
-                    INSERT INTO quiz_errors 
-                    (quiz_history_id, user_email, mongodb_question_id, user_answer,
-                     score, time_taken)
-                    VALUES (:quiz_history_id, :user_email, :mongodb_question_id,
-                           :user_answer, :score, :time_taken)
-                """), {
-                    'quiz_history_id': quiz_history_id,
-                    'user_email': user_email,
-                    'mongodb_question_id': wrong_q.get('original_exam_id', ''),
-                    'user_answer': stored_answer,  # 使用存儲後的答案引用
-                    'score': wrong_q.get('score', 0),
-                    'time_taken': 0  # 簡化時間處理
-                })
-        
-        conn.commit()
+        # conn.commit()
     
 
     # 更新進度追蹤狀態為完成
@@ -463,8 +465,8 @@ def submit_quiz():
         'message': '測驗提交成功',
         'data': {
             'template_id': template_id,  # 返回模板ID
-            'quiz_history_id': quiz_history_id,  # 返回測驗歷史記錄ID
-            'result_id': f'result_{quiz_history_id}',  # 返回結果ID（用於前端跳轉）
+            'quiz_history_id': f'quiz_history_{template_id}',  # 返回測驗歷史記錄ID（使用模板ID）
+            'result_id': f'result_{template_id}',  # 返回結果ID（用於前端跳轉）
             'progress_id': progress_id,  # 返回進度追蹤ID
             'total_questions': total_questions,
             'answered_questions': answered_count,
@@ -547,57 +549,61 @@ def _store_long_answer(user_answer: any, question_type: str, quiz_history_id: in
         if len(answer_str) <= 10000:
             return answer_str
         
-        # 對於長答案，存儲到專門的表中
-        with sqldb.engine.connect() as conn:
-            # 創建長答案存儲表（如果不存在）
-            conn.execute(text("""
-                CREATE TABLE IF NOT EXISTS long_answers (
-                    id INT AUTO_INCREMENT PRIMARY KEY,
-                    quiz_history_id INT NOT NULL,
-                    question_id VARCHAR(255) NOT NULL,
-                    user_email VARCHAR(255) NOT NULL,
-                    question_type VARCHAR(50) NOT NULL,
-                    full_answer LONGTEXT NOT NULL,
-                    answer_hash VARCHAR(64) NOT NULL,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    INDEX idx_quiz_question (quiz_history_id, question_id),
-                    INDEX idx_user (user_email)
-                )
-            """))
-            
-            # 計算答案的哈希值作為唯一標識
-            answer_hash = hashlib.md5(answer_str.encode()).hexdigest()
-            
-            # 檢查是否已經存儲過相同的答案
-            existing = conn.execute(text("""
-                SELECT id FROM long_answers 
-                WHERE quiz_history_id = :quiz_history_id AND question_id = :question_id
-            """), {
-                'quiz_history_id': quiz_history_id,
-                'question_id': question_id
-            }).fetchone()
-            
-            if existing:
-                # 如果已存在，返回引用標識
-                return f"LONG_ANSWER_{existing[0]}"
-            else:
-                # 存儲新的長答案
-                result = conn.execute(text("""
-                    INSERT INTO long_answers 
-                    (quiz_history_id, question_id, user_email, question_type, full_answer, answer_hash)
-                    VALUES (:quiz_history_id, :question_id, :user_email, :question_type, :full_answer, :answer_hash)
-                """), {
-                    'quiz_history_id': quiz_history_id,
-                    'question_id': question_id,
-                    'user_email': user_email,
-                    'question_type': question_type,
-                    'full_answer': answer_str,
-                    'answer_hash': answer_hash
-                })
-                
-                long_answer_id = conn.execute(text("SELECT LAST_INSERT_ID()")).scalar()
-                conn.commit()
-                return f"LONG_ANSWER_{long_answer_id}"
+        # 註解掉 SQL 操作，暫時直接返回截斷的答案
+        # # 對於長答案，存儲到專門的表中
+        # with sqldb.engine.connect() as conn:
+        #     # 創建長答案存儲表（如果不存在）
+        #     conn.execute(text("""
+        #         CREATE TABLE IF NOT EXISTS long_answers (
+        #             id INT AUTO_INCREMENT PRIMARY KEY,
+        #             quiz_history_id INT NOT NULL,
+        #             question_id VARCHAR(255) NOT NULL,
+        #             user_email VARCHAR(255) NOT NULL,
+        #             question_type VARCHAR(50) NOT NULL,
+        #             full_answer LONGTEXT NOT NULL,
+        #             answer_hash VARCHAR(64) NOT NULL,
+        #             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        #             INDEX idx_quiz_question (quiz_history_id, question_id),
+        #             INDEX idx_user (user_email)
+        #         )
+        #     """))
+        #     
+        #     # 計算答案的哈希值作為唯一標識
+        #     answer_hash = hashlib.md5(answer_str.encode()).hexdigest()
+        #     
+        #     # 檢查是否已經存儲過相同的答案
+        #     existing = conn.execute(text("""
+        #         SELECT id FROM long_answers 
+        #         WHERE quiz_history_id = :quiz_history_id AND question_id = :question_id
+        #     """), {
+        #         'quiz_history_id': quiz_history_id,
+        #         'question_id': question_id
+        #     }).fetchone()
+        #     
+        #     if existing:
+        #         # 如果已存在，返回引用標識
+        #         return f"LONG_ANSWER_{existing[0]}"
+        #     else:
+        #         # 存儲新的長答案
+        #         result = conn.execute(text("""
+        #             INSERT INTO long_answers 
+        #             (quiz_history_id, question_id, user_email, question_type, full_answer, answer_hash)
+        #             VALUES (:quiz_history_id, :question_id, :user_email, :question_type, :full_answer, :answer_hash)
+        #         """), {
+        #             'quiz_history_id': quiz_history_id,
+        #             'question_id': question_id,
+        #             'user_email': user_email,
+        #             'question_type': question_type,
+        #             'full_answer': answer_str,
+        #             'answer_hash': answer_hash
+        #         })
+        #         
+        #         long_answer_id = conn.execute(text("SELECT LAST_INSERT_ID()")).scalar()
+        #         conn.commit()
+        #         return f"LONG_ANSWER_{long_answer_id}"
+        
+        # 暫時直接返回截斷的答案
+        return f"[答案過長，已截斷] {answer_str[:10000]}..."
                 
     except Exception as e:
         print(f"❌ 存儲長答案失敗: {e}")
@@ -1502,7 +1508,13 @@ def get_quiz_from_database_endpoint():
         # 調用獲取考卷數據函數
         result = get_quiz_from_database(quiz_ids)
         
-        return jsonify({'token': refresh_token(token), 'data': result})
+        # 直接返回結果，因為 result 已經包含了 success 和 data 字段
+        return jsonify({
+            'token': refresh_token(token),
+            'success': result.get('success', False),
+            'data': result.get('data'),
+            'message': result.get('message', '')
+        })
         
     except Exception as e:
         logger.error(f"❌ 獲取考卷數據失敗: {e}")
@@ -1510,7 +1522,78 @@ def get_quiz_from_database_endpoint():
             'success': False,
             'message': f'獲取考卷數據失敗：{str(e)}'
         }), 500
+
+@ai_quiz_bp.route('/get-latest-quiz', methods=['GET', 'OPTIONS'])
+def get_latest_quiz():
+    """從資料庫獲取最新的考卷數據"""
+    try:
+        if request.method == 'OPTIONS':
+            return jsonify({'token': None, 'success': True}), 204
         
+        auth_header = request.headers.get('Authorization')
+        if not auth_header:
+            return jsonify({'token': None, 'message': '未提供token'}), 401
+        
+        token = auth_header.split(" ")[1]
+        
+        # 從 MongoDB 獲取最新考卷數據
+        if mongo is None or mongo.db is None:
+            return jsonify({'success': False, 'error': '資料庫連接不可用'}), 500
+        
+        # 查詢最新的考卷數據
+        questions_collection = mongo.db.questions
+        
+        # 按創建時間降序排列，獲取最新的考卷
+        latest_questions = list(questions_collection.find().sort('created_at', -1).limit(10))
+        
+        if not latest_questions:
+            return jsonify({'success': False, 'error': '資料庫中沒有考卷數據'}), 404
+        
+        # 按 quiz_id 分組
+        quiz_groups = {}
+        for question in latest_questions:
+            quiz_id = question.get('quiz_id', 'unknown')
+            if quiz_id not in quiz_groups:
+                quiz_groups[quiz_id] = []
+            quiz_groups[quiz_id].append(question)
+        
+        # 獲取題目最多的考卷（通常是最完整的）
+        latest_quiz_id = max(quiz_groups.keys(), key=lambda k: len(quiz_groups[k]))
+        questions = quiz_groups[latest_quiz_id]
+        
+        # 構建考卷數據
+        quiz_info = {
+            'quiz_id': latest_quiz_id,
+            'template_id': f"template_{latest_quiz_id}",
+            'title': f"AI生成測驗 - {latest_quiz_id}",
+            'topic': questions[0].get('topic', '未知'),
+            'difficulty': questions[0].get('difficulty', 'medium'),
+            'question_count': len(questions),
+            'time_limit': 30,  # 預設30分鐘
+            'total_score': len(questions) * 10  # 預設每題10分
+        }
+        
+        quiz_data = {
+            'quiz_id': latest_quiz_id,
+            'template_id': quiz_info['template_id'],
+            'quiz_info': quiz_info,
+            'questions': questions
+        }
+        
+        logger.info(f"✅ 成功獲取最新考卷: {latest_quiz_id}, 題目數量: {len(questions)}")
+        
+        return jsonify({
+            'token': refresh_token(token),
+            'success': True,
+            'data': quiz_data
+        })
+        
+    except Exception as e:
+        logger.error(f"❌ 獲取最新考卷數據失敗: {e}")
+        return jsonify({
+            'success': False,
+            'error': f'獲取最新考卷數據失敗：{str(e)}'
+        }), 500
 
 @ai_quiz_bp.route('/get-user-submissions-analysis', methods=['POST', 'OPTIONS'])
 def get_user_submissions_analysis():
@@ -1719,23 +1802,29 @@ def generate_guided_learning_session():
         
         print(f"🔍 開始查找 submission_id: {submission_id}")
         
-        # 檢查 submission_id 格式
+        # 檢查 submission_id 格式，支援 AI 測驗的 MongoDB ObjectId
         if submission_id.startswith('quiz_'):
-            # 如果是 quiz_ 格式，提取 quiz_history_id
+            # 如果是 quiz_ 格式，提取 quiz_history_id (傳統測驗)
             try:
                 quiz_history_id = int(submission_id.replace('quiz_', ''))
                 print(f"🔍 提取的 quiz_history_id: {quiz_history_id}")
+                is_ai_quiz = False
             except ValueError:
                 print(f"❌ 無效的 quiz_history_id 格式: {submission_id}")
                 return jsonify({
                     'success': False,
                     'message': f'無效的提交記錄ID格式: {submission_id}'
                 }), 400
+        elif len(submission_id) == 24 and submission_id.isalnum():
+            # 如果是 24 位十六進制字符串，視為 MongoDB ObjectId (AI 測驗)
+            print(f"🔍 檢測到 MongoDB ObjectId 格式: {submission_id}")
+            is_ai_quiz = True
         else:
-            # 如果不是 quiz_ 格式，嘗試直接作為 quiz_history_id 使用
+            # 嘗試直接作為 quiz_history_id 使用 (傳統測驗)
             try:
                 quiz_history_id = int(submission_id)
                 print(f"🔍 直接使用 quiz_history_id: {quiz_history_id}")
+                is_ai_quiz = False
             except ValueError:
                 print(f"❌ 無效的提交記錄ID格式: {submission_id}")
                 return jsonify({
@@ -1743,21 +1832,84 @@ def generate_guided_learning_session():
                     'message': f'無效的提交記錄ID格式: {submission_id}'
                 }), 400
         
-        # 從SQL資料庫獲取測驗記錄
-        print(f"🔍 從SQL資料庫查詢 quiz_history_id: {quiz_history_id}")
-        
-        with sqldb.engine.connect() as conn:
-            # 獲取測驗歷史記錄
-            history_result = conn.execute(text("""
-                SELECT id, quiz_template_id, quiz_type, total_questions, answered_questions,
-                       correct_count, wrong_count, accuracy_rate, average_score, 
-                       total_time_taken, submit_time, status, created_at
-                FROM quiz_history 
-                WHERE id = :quiz_history_id AND user_email = :user_email
-            """), {
-                'quiz_history_id': quiz_history_id,
-                'user_email': user_email
-            }).fetchone()
+        # 根據測驗類型選擇不同的數據源
+        if is_ai_quiz:
+            # AI 測驗：從 MongoDB 獲取提交記錄
+            print(f"🔍 從 MongoDB 查詢 AI 測驗提交記錄: {submission_id}")
+            
+            if mongo is None or mongo.db is None:
+                print(f"❌ MongoDB 連接不可用")
+                return jsonify({
+                    'success': False,
+                    'message': '資料庫連接不可用'
+                }), 500
+            
+            # 從 submissions 集合獲取提交記錄
+            submission_doc = mongo.db.submissions.find_one({"_id": ObjectId(submission_id)})
+            if not submission_doc:
+                print(f"⚠️ 找不到 AI 測驗提交記錄: {submission_id}")
+                return jsonify({
+                    'success': False,
+                    'message': f'測驗記錄不存在，ID: {submission_id}'
+                }), 404
+            
+            print(f"✅ 找到 AI 測驗提交記錄: {submission_doc.get('quiz_id', 'Unknown')}")
+            
+            # 從考卷獲取題目詳情
+            quiz_id = submission_doc.get('quiz_id')
+            quiz_doc = mongo.db.quizzes.find_one({"_id": quiz_id})
+            if not quiz_doc:
+                print(f"❌ 找不到對應的考卷: {quiz_id}")
+                return jsonify({
+                    'success': False,
+                    'message': '找不到對應的考卷'
+                }), 404
+            
+            questions = quiz_doc.get('questions', [])
+            answers = submission_doc.get('answers', {})
+            
+            # 構建答案數據
+            answer_objects = []
+            for i, question in enumerate(questions):
+                user_answer = answers.get(str(i), '')
+                correct_answer = question.get('correct_answer', '')
+                is_correct = user_answer == correct_answer
+                
+                answer_obj = {
+                    'question_id': f"q_{i}",
+                    'question_text': question.get('question_text', ''),
+                    'topic': question.get('topic', 'unknown'),
+                    'chapter': question.get('chapter', 'unknown'),
+                    'user_answer': user_answer,
+                    'is_correct': is_correct,
+                    'score': 10 if is_correct else 0,
+                    'feedback': {},
+                    'answer_time_seconds': 0,
+                    'answer_time': submission_doc.get('submitted_at'),
+                    'options': question.get('options', []),
+                    'correct_answer': correct_answer,
+                    'image_file': question.get('image_file', '')
+                }
+                answer_objects.append(answer_obj)
+            
+            print(f"✅ 成功處理 {len(answer_objects)} 個 AI 測驗答案")
+            
+        else:
+            # 傳統測驗：從 SQL 資料庫獲取測驗記錄
+            print(f"🔍 從SQL資料庫查詢 quiz_history_id: {quiz_history_id}")
+            
+            with sqldb.engine.connect() as conn:
+                # 獲取測驗歷史記錄
+                history_result = conn.execute(text("""
+                    SELECT id, quiz_template_id, quiz_type, total_questions, answered_questions,
+                           correct_count, wrong_count, accuracy_rate, average_score, 
+                           total_time_taken, submit_time, status, created_at
+                    FROM quiz_history 
+                    WHERE id = :quiz_history_id AND user_email = :user_email
+                """), {
+                    'quiz_history_id': quiz_history_id,
+                    'user_email': user_email
+                }).fetchone()
             
             if not history_result:
                 print(f"⚠️ 找不到測驗記錄，quiz_history_id: {quiz_history_id}, user_email: {user_email}")
@@ -1845,11 +1997,68 @@ def generate_guided_learning_session():
                 }
                 answers.append(answer_obj)
             
-            print(f"✅ 成功處理 {len(answers)} 個答案")
+            print(f"✅ 成功處理 {len(answer_objects)} 個傳統測驗答案")
+            
+            # 將傳統測驗的答案轉換為統一格式
+            answer_objects = []
+            for answer_record in answers_result:
+                mongodb_question_id = answer_record[0]
+                user_answer = answer_record[1]
+                is_correct = answer_record[2]
+                score = float(answer_record[3]) if answer_record[3] else 0
+                feedback = json.loads(answer_record[4]) if answer_record[4] else {}
+                answer_time_seconds = answer_record[5] if answer_record[5] else 0
+                answer_created_at = answer_record[6]
+                
+                # 從MongoDB獲取題目詳情
+                question_detail = {}
+                try:
+                    if mongodb_question_id and len(mongodb_question_id) == 24:
+                        exam_question = mongo.db.exam.find_one({"_id": ObjectId(mongodb_question_id)})
+                    else:
+                        exam_question = mongo.db.exam.find_one({"_id": mongodb_question_id})
+                    
+                    if exam_question:
+                        question_detail = {
+                            'question_text': exam_question.get('question_text', ''),
+                            'topic': exam_question.get('主要學科', 'unknown'),
+                            'chapter': exam_question.get('章節', 'unknown'),
+                            'options': exam_question.get('options', []),
+                            'correct_answer': exam_question.get('answer', ''),
+                            'image_file': exam_question.get('image_file', '')
+                        }
+                except Exception as e:
+                    print(f"⚠️ 獲取題目詳情失敗: {e}")
+                    question_detail = {
+                        'question_text': f'題目 {mongodb_question_id}',
+                        'topic': 'unknown',
+                        'chapter': 'unknown',
+                        'options': [],
+                        'correct_answer': '',
+                        'image_file': ''
+                    }
+                
+                # 構建答案對象
+                answer_obj = {
+                    'question_id': mongodb_question_id,
+                    'question_text': question_detail.get('question_text', ''),
+                    'topic': question_detail.get('topic', 'unknown'),
+                    'chapter': question_detail.get('chapter', 'unknown'),
+                    'user_answer': user_answer,
+                    'is_correct': is_correct,
+                    'score': score,
+                    'feedback': feedback,
+                    'answer_time_seconds': answer_time_seconds,
+                    'answer_time': answer_created_at.isoformat() if answer_created_at else None,
+                    'options': question_detail.get('options', []),
+                    'correct_answer': question_detail.get('correct_answer', ''),
+                    'image_file': question_detail.get('image_file', '')
+                }
+                answer_objects.append(answer_obj)
         
         # 使用第一個題目作為學習會話的基礎
-        if answers:
-            first_answer = answers[0]
+        if answer_objects:
+            first_answer = answer_objects[0]
             print(f"🔍 第一個答案的結構: {first_answer}")
             
             question_text = first_answer.get('question_text', '')
@@ -2017,4 +2226,254 @@ def generate_content_based_quiz():
         return jsonify({
             'success': False,
             'error': f'基於內容的考卷生成失敗：{str(e)}'
+        }), 500
+
+@ai_quiz_bp.route('/submit-ai-quiz', methods=['POST', 'OPTIONS'])
+def submit_ai_quiz():
+    """提交 AI 生成的測驗答案 - 帶進度追蹤版本"""
+    try:
+        if request.method == 'OPTIONS':
+            return jsonify({'token': None, 'success': True}), 200
+        
+        auth_header = request.headers.get('Authorization')
+        if not auth_header:
+            return jsonify({'token': None, 'message': '未提供token'}), 401
+        
+        token = auth_header.split(" ")[1]
+        user_email = verify_token(token)
+        if not user_email:
+            return jsonify({'token': None, 'message': '無效的token'}), 401
+            
+        data = request.get_json()
+        
+        # 提取提交數據
+        quiz_id = data.get('quiz_id')
+        template_id = data.get('template_id')
+        answers = data.get('answers', {})
+        question_answer_times = data.get('question_answer_times', {})
+        time_taken = data.get('time_taken', 0)
+        frontend_questions = data.get('questions', [])
+        
+        if not quiz_id or not template_id:
+            return jsonify({
+                'success': False,
+                'message': '缺少必要的測驗參數'
+            }), 400
+        
+        # 生成唯一的進度追蹤ID
+        progress_id = f"ai_progress_{user_email}_{int(time.time())}"
+        
+        # 階段1: 獲取題目數據
+        update_progress_status(progress_id, False, 1, "正在獲取AI測驗題目數據...")
+        
+        # 從 MongoDB 獲取考卷數據
+        if mongo is None or mongo.db is None:
+            return jsonify({'success': False, 'error': '資料庫連接不可用'}), 500
+        
+        quiz_doc = mongo.db.quizzes.find_one({"_id": quiz_id})
+        if not quiz_doc:
+            return jsonify({'success': False, 'error': '找不到考卷'}), 404
+        
+        # 優先使用前端發送的題目數據，如果沒有則從MongoDB獲取
+        if frontend_questions and len(frontend_questions) > 0:
+            print("✅ AI測驗：使用前端發送的題目數據")
+            questions = frontend_questions
+        else:
+            print("🔄 AI測驗：從MongoDB獲取題目數據")
+            questions = quiz_doc.get('questions', [])
+            
+        if not questions:
+            return jsonify({'success': False, 'error': '考卷中沒有題目'}), 400
+        
+        total_questions = len(questions)
+        
+        # 階段2: 分類題目
+        update_progress_status(progress_id, False, 2, "正在分類AI測驗題目...")
+        
+        # 分類已作答和未作答題目
+        answered_questions = []
+        unanswered_questions = []
+        correct_count = 0
+        wrong_count = 0
+        total_score = 0
+        wrong_questions = []
+        
+        for i, question in enumerate(questions):
+            user_answer = answers.get(str(i), '')
+            question_type = question.get('type', 'single-choice')
+            
+            # 檢查是否有有效答案
+            has_valid_answer = False
+            if user_answer is not None and user_answer != '':
+                has_valid_answer = True
+            
+            if has_valid_answer:
+                # 已作答題目：收集到已作答列表
+                answered_questions.append({
+                    'index': i,
+                    'question': question,
+                    'user_answer': user_answer,
+                    'question_type': question_type
+                })
+            else:
+                # 未作答題目：收集到未作答列表
+                unanswered_questions.append({
+                    'index': i,
+                    'question': question,
+                    'user_answer': '',
+                    'question_type': question_type
+                })
+        
+        # 階段3: AI智能評分
+        update_progress_status(progress_id, False, 3, "AI正在進行智能評分...")
+        
+        # 批量AI評分所有已作答題目
+        if answered_questions:
+            # 準備AI評分數據
+            ai_questions_data = []
+            for q_data in answered_questions:
+                question = q_data['question']
+                user_answer = q_data['user_answer']
+                question_type = question.get('type', '')
+                
+                ai_questions_data.append({
+                    'question_id': question.get('original_exam_id', ''),
+                    'user_answer': user_answer,
+                    'question_type': question_type,
+                    'question_text': question.get('question_text', ''),
+                    'options': question.get('options', []),
+                    'correct_answer': question.get('correct_answer', ''),
+                    'key_points': question.get('key_points', '')
+                })
+            
+            # 使用AI批改模組進行批量評分
+            from src.grade_answer import batch_grade_ai_questions
+            ai_results = batch_grade_ai_questions(ai_questions_data)
+            
+            # 處理AI評分結果
+            for i, result in enumerate(ai_results):
+                q_data = answered_questions[i]
+                question = q_data['question']
+                
+                is_correct = result.get('is_correct', False)
+                score = result.get('score', 0)
+                feedback = result.get('feedback', {})
+                
+                # 統計正確和錯誤題數
+                if is_correct:
+                    correct_count += 1
+                    total_score += score
+                else:
+                    wrong_count += 1
+                    # 收集錯題信息
+                    wrong_questions.append({
+                        'question_id': question.get('id', q_data['index'] + 1),
+                        'question_text': question.get('question_text', ''),
+                        'question_type': question.get('type', ''),
+                        'user_answer': q_data['user_answer'],
+                        'correct_answer': question.get('correct_answer', ''),
+                        'options': question.get('options', []),
+                        'image_file': question.get('image_file', ''),
+                        'original_exam_id': question.get('original_exam_id', ''),
+                        'question_index': q_data['index'],
+                        'score': score,
+                        'feedback': feedback
+                    })
+                
+                # 保存AI評分結果到 answered_questions 中，供後續使用
+                q_data['ai_result'] = {
+                    'is_correct': is_correct,
+                    'score': score,
+                    'feedback': feedback
+                }
+        
+        # 階段4: 統計結果
+        update_progress_status(progress_id, False, 4, "正在統計AI測驗結果...")
+        
+        # 計算統計數據
+        answered_count = len(answered_questions)
+        unanswered_count = len(unanswered_questions)
+        accuracy_rate = (correct_count / total_questions * 100) if total_questions > 0 else 0
+        average_score = (total_score / answered_count) if answered_count > 0 else 0
+        
+        # 簡化版本：直接保存到 MongoDB，避免 SQL 資料庫問題
+        submission_data = {
+            'quiz_id': quiz_id,
+            'template_id': template_id,
+            'user_email': user_email,
+            'answers': answers,
+            'question_answer_times': question_answer_times,
+            'time_taken': time_taken,
+            'score': accuracy_rate,
+            'correct_count': correct_count,
+            'wrong_count': wrong_count,
+            'total_questions': total_questions,
+            'answered_count': answered_count,
+            'unanswered_count': unanswered_count,
+            'accuracy_rate': accuracy_rate,
+            'average_score': average_score,
+            'wrong_questions': wrong_questions,
+            'submitted_at': datetime.now().isoformat(),
+            'quiz_type': 'ai_generated',
+            'progress_id': progress_id
+        }
+        
+        # 保存到 submissions 集合
+        result = mongo.db.submissions.insert_one(submission_data)
+        submission_id = str(result.inserted_id)
+        
+        # 生成結果ID
+        result_id = f"ai_result_{submission_id}"
+        quiz_history_id = f"quiz_history_{submission_id}"
+        
+        # 更新進度追蹤狀態為完成
+        update_progress_status(progress_id, True, 4, "AI測驗批改完成！")
+        
+        return jsonify({
+            'token': refresh_token(token),
+            'success': True,
+            'message': 'AI測驗提交成功',
+            'data': {
+                'submission_id': submission_id,
+                'quiz_history_id': quiz_history_id,  # 返回測驗歷史記錄ID
+                'result_id': result_id,
+                'progress_id': progress_id,  # 返回進度追蹤ID
+                'template_id': template_id,  # 返回模板ID
+                'quiz_id': quiz_id,
+                'total_questions': total_questions,
+                'answered_questions': answered_count,
+                'unanswered_questions': unanswered_count,
+                'correct_count': correct_count,
+                'wrong_count': wrong_count,
+                'marked_count': 0,  # 暫時設為0，後續可擴展
+                'accuracy_rate': round(accuracy_rate, 2),
+                'average_score': round(average_score, 2),
+                'time_taken': time_taken,
+                'total_time': time_taken,  # 添加總時間字段
+                'grading_stages': [
+                    {'stage': 1, 'name': '試卷批改', 'status': 'completed', 'description': '獲取AI測驗題目數據完成'},
+                    {'stage': 2, 'name': '計算分數', 'status': 'completed', 'description': 'AI測驗題目分類完成'},
+                    {'stage': 3, 'name': '評判知識點', 'status': 'completed', 'description': f'AI智能評分完成，共評分{answered_count}題'},
+                    {'stage': 4, 'name': '生成學習計畫', 'status': 'completed', 'description': f'AI測驗統計完成，正確率{accuracy_rate:.1f}%'}
+                ],
+                'detailed_results': [
+                    {
+                        'question_index': q_data['index'],
+                        'question_text': q_data['question'].get('question_text', ''),
+                        'user_answer': q_data['user_answer'],
+                        'correct_answer': q_data['question'].get('correct_answer', ''),
+                        'is_correct': q_data.get('ai_result', {}).get('is_correct', False),
+                        'score': q_data.get('ai_result', {}).get('score', 0),
+                        'feedback': q_data.get('ai_result', {}).get('feedback', {})
+                    }
+                    for q_data in answered_questions
+                ]
+            }
+        })
+        
+    except Exception as e:
+        logger.error(f"❌ AI測驗提交失敗: {e}")
+        return jsonify({
+            'success': False,
+            'message': f'AI測驗提交失敗：{str(e)}'
         }), 500

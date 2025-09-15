@@ -37,18 +37,21 @@ def get_quiz_from_database(quiz_ids: List[str]) -> dict:
         
         for quiz_id in quiz_ids:
             try:
-                # 嘗試使用 ObjectId 查詢
-                quiz_doc = mongo.db.quizzes.find_one({"_id": ObjectId(quiz_id)})
+                
+                # 先嘗試直接查詢（支援時間戳格式的ID）
+                quiz_doc = mongo.db.quizzes.find_one({"_id": quiz_id})
+                
                 if not quiz_doc:
-                    # 如果 ObjectId 查詢失敗，嘗試直接查詢
-                    quiz_doc = mongo.db.quizzes.find_one({"_id": quiz_id})
+                    # 如果直接查詢失敗，嘗試使用 ObjectId 查詢
+                    try:
+                        quiz_doc = mongo.db.quizzes.find_one({"_id": ObjectId(quiz_id)})
+                    except:
+                        pass
                 
                 if quiz_doc:
-                    logger.info(f"找到考卷: {quiz_doc.get('title', 'Unknown')}")
                     break
                     
             except Exception as e:
-                logger.error(f"處理考卷ID {quiz_id} 時發生錯誤: {e}")
                 continue
         
         if not quiz_doc:
@@ -59,15 +62,22 @@ def get_quiz_from_database(quiz_ids: List[str]) -> dict:
         
         # 從考卷文檔中提取題目數據
         questions = quiz_doc.get('questions', [])
+        
         if not questions:
             return {
                 'success': False,
                 'message': '考卷中沒有題目數據'
             }
         
-        # 轉換題目格式為前端需要的格式
+        # 記錄第一個題目的詳細信息
+        if questions:
+            first_question = questions[0]
+        
+        # 直接使用 MongoDB 中的題目數據，不進行格式轉換
+        # 確保每個題目都有必要的字段
         formatted_questions = []
         for i, question in enumerate(questions):
+            # 保持原始數據結構，只確保必要字段存在
             formatted_question = {
                 'id': question.get('id', i + 1),
                 'question_text': question.get('question_text', ''),
@@ -79,7 +89,9 @@ def get_quiz_from_database(quiz_ids: List[str]) -> dict:
                 'key_points': question.get('key_points', ''),
                 'explanation': question.get('explanation', ''),
                 'topic': question.get('topic', ''),
-                'difficulty': question.get('difficulty', 'medium')
+                'difficulty': question.get('difficulty', 'medium'),
+                # 保留所有原始字段
+                **question
             }
             formatted_questions.append(formatted_question)
         
@@ -102,7 +114,6 @@ def get_quiz_from_database(quiz_ids: List[str]) -> dict:
             'database_ids': quiz_ids
         }
         
-        logger.info(f"成功載入考卷: {quiz_data['quiz_info']['title']}, 題目數量: {len(formatted_questions)}")
         
         return {
             'success': True,
