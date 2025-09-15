@@ -114,7 +114,7 @@ def create_platform_specific_agent(platform: str = "web"):
             tools=platform_tools,
             verbose=True,
             handle_parsing_errors=True,
-            return_intermediate_steps=False,
+            return_intermediate_steps=True,  # 啟用 intermediate_steps 以便提取工具結果
             max_iterations=10  # 增加迭代次數，允許AI完成複雜任務
         )
         
@@ -168,7 +168,9 @@ def get_platform_specific_tools(platform: str = "web"):
             create_learning_progress_tool(),
             create_ai_tutor_tool(),
             create_memory_tool(),
-            create_quiz_generator_tool()
+            create_quiz_generator_tool(),
+            create_university_quiz_tool(),
+            create_knowledge_quiz_tool()
         ]
 
 def create_quiz_generator_tool():
@@ -300,8 +302,10 @@ def get_platform_specific_system_prompt(platform: str = "web") -> str:
 - 如果沒有上下文，正常回應
 
 工具使用說明：
-- linebot_grade_tool(answer, correct_answer="", question="") - 可以只提供答案，系統會自動處理
-- 當用戶輸入 A、B、C、D 時，LINE Bot 會自動提供上下文
+- linebot_quiz_generator_tool(topic, question_type) - 生成測驗題目，topic 為知識點，question_type 為 "選擇題" 或 "知識問答題"
+- linebot_knowledge_tool(query) - 獲取隨機知識點，query 為知識點名稱或 "隨機"
+- linebot_grade_tool(answer, correct_answer="", question="") - 批改測驗答案，從對話上下文中提取題目信息
+- 當收到測驗批改請求時，從上下文中找到題目內容，然後使用 linebot_grade_tool(answer, question="題目內容") 進行批改
 
 開發中功能：
 - 學習分析、目標設定、最新消息/考試資訊、行事曆等功能目前顯示「開發中」訊息
@@ -309,19 +313,26 @@ def get_platform_specific_system_prompt(platform: str = "web") -> str:
 
 請根據用戶的問題，選擇最適合的工具來幫助他們。這些工具會提供簡潔、實用的回應，適合在 LINE 聊天中顯示簡單明瞭不要長篇大論。
 
-重要：當使用工具時，請直接返回工具的完整回應，不要重新格式化或摘要。
+重要：當使用工具時，請直接返回工具的完整回應，不要重新格式化或摘要，也不要包裝成 JSON 格式。
 
-記住：你是一個助手，不是工具本身。請使用工具來幫助用戶，而不是直接回答問題。"""
+記住：你是一個助手，請使用工具來幫助用戶，並直接返回工具的結果給用戶。"""
     else:
         return """你是一個智能網站助手，能夠幫助用戶了解網站功能、查詢學習進度、提供AI教學指導，以及創建考卷。
 
-你有以下工具可以使用：
-1. website_guide_tool - 網站導覽和功能介紹
-2. learning_progress_tool - 查詢學習進度和統計
-3. ai_tutor_tool - AI智能教學指導
-4. quiz_generator_tool - 考卷生成和測驗
+       你有以下工具可以使用：
+       1. website_guide_tool - 網站導覽和功能介紹
+       2. learning_progress_tool - 查詢學習進度和統計
+       3. ai_tutor_tool - AI智能教學指導
+       4. quiz_generator_tool - 考卷生成和測驗
+       5. create_university_quiz_tool - 創建大學考古題測驗
+       6. create_knowledge_quiz_tool - 創建知識點測驗
 
 請根據用戶的問題，選擇最適合的工具來幫助他們。如果用戶的問題不屬於以上任何類別，請禮貌地引導他們使用適當的功能。
+
+關於測驗創建功能：
+- 當用戶要求創建大學考古題測驗時，使用 create_university_quiz_tool 工具
+- 當用戶要求創建知識點測驗時，使用 create_knowledge_quiz_tool 工具
+- 支持自然語言描述需求，如"我要考中央大學113資訊管理考古題"
 
 關於考卷生成功能：
 - 當用戶要求創建考卷、測驗或題目時，使用 quiz_generator_tool
@@ -329,15 +340,19 @@ def get_platform_specific_system_prompt(platform: str = "web") -> str:
 - 可以指定知識點、題型、難度、題目數量等參數
 - 支持自然語言描述需求，如"幫我創建20題計算機概論的單選題"
 
-重要：當使用工具時，請直接返回工具的完整回應，不要重新格式化或摘要。特別是考卷生成工具的回應包含重要的JSON數據，必須完整保留。
+重要：當使用工具時，請直接返回工具的完整回應，不要重新格式化或摘要，也不要包裝成 JSON 格式。
 
-記住：你是一個助手，不是工具本身。請使用工具來幫助用戶，而不是直接回答問題。"""
+記住：你是一個助手，請使用工具來幫助用戶，並直接返回工具的結果給用戶。"""
 
 def process_message(message: str, user_id: str = "default", platform: str = "web") -> Dict[str, Any]:
     """處理用戶訊息 - 主代理人模式，支援平台區分"""
     try:
-        # 添加用戶訊息到記憶 - 暫時註釋掉，避免依賴問題
-        # add_user_message(user_id, message)
+        # 添加用戶訊息到記憶
+        try:
+            from src.memory_manager import add_user_message, add_ai_message
+            add_user_message(user_id, message)
+        except Exception as e:
+            logger.warning(f"添加用戶訊息到記憶失敗: {e}")
         
         # 根據平台創建對應的主代理人
         platform_executor = create_platform_specific_agent(platform)
@@ -348,15 +363,88 @@ def process_message(message: str, user_id: str = "default", platform: str = "web
             "context": {"user_id": user_id, "platform": platform}
         })
         
+        # 調試：打印主代理人的完整回應
+        print(f"🔍 主代理人完整回應：{result}")
+        print(f"🔍 回應類型：{type(result)}")
+        print(f"🔍 回應鍵值：{list(result.keys()) if isinstance(result, dict) else 'Not a dict'}")
+        
         # 格式化回應
         response = result.get("output", "抱歉，我無法理解您的請求。")
+        print(f"🔍 提取的回應內容：{response}")
+        print(f"🔍 回應內容長度：{len(response) if response else 0}")
         
-        # 添加AI回應到記憶 - 暫時註釋掉，避免依賴問題
-        # add_ai_message(user_id, response)
+        # 如果 output 為空，嘗試其他可能的字段
+        if not response or response.strip() == "":
+            print("🔍 output 為空，嘗試其他字段...")
+            
+            # 嘗試從 intermediate_steps 中提取工具結果
+            if "intermediate_steps" in result:
+                print(f"🔍 找到 intermediate_steps 字段")
+                intermediate_steps = result["intermediate_steps"]
+                if intermediate_steps and len(intermediate_steps) > 0:
+                    # 獲取最後一個工具調用的結果
+                    last_step = intermediate_steps[-1]
+                    if len(last_step) >= 2:
+                        tool_result = last_step[1]
+                        if hasattr(tool_result, 'content'):
+                            response = tool_result.content
+                        elif isinstance(tool_result, dict) and 'content' in tool_result:
+                            response = tool_result['content']
+                        elif isinstance(tool_result, str):
+                            response = tool_result
+                        print(f"🔍 從 intermediate_steps 提取的內容：{response[:100]}...")
+            
+            # 如果還是沒有，嘗試 messages 字段
+            if (not response or response.strip() == "") and "messages" in result:
+                print(f"🔍 找到 messages 字段：{result['messages']}")
+                # 嘗試從 messages 中提取最後一條消息
+                if isinstance(result["messages"], list) and len(result["messages"]) > 0:
+                    last_message = result["messages"][-1]
+                    if hasattr(last_message, 'content'):
+                        response = last_message.content
+                    elif isinstance(last_message, dict) and 'content' in last_message:
+                        response = last_message['content']
+                    print(f"🔍 從 messages 提取的內容：{response}")
+        
+        # 檢查回應是否為 JSON 格式，如果是則提取實際內容
+        if isinstance(response, str) and response.strip().startswith('{') and response.strip().endswith('}'):
+            try:
+                import json
+                response_data = json.loads(response)
+                print(f"🔍 解析 JSON 回應，鍵值: {list(response_data.keys())}")
+                
+                # 遞歸提取所有可能的 output 內容
+                def extract_output(data):
+                    if isinstance(data, dict):
+                        if 'output' in data:
+                            return data['output']
+                        else:
+                            # 遞歸查找所有值中的 output
+                            for value in data.values():
+                                result = extract_output(value)
+                                if result:
+                                    return result
+                    return None
+                
+                extracted_output = extract_output(response_data)
+                if extracted_output:
+                    response = extracted_output
+                else:
+                    print(f"🔍 未找到 output 內容，使用原始回應")
+            except Exception as e:
+                print(f"🔍 JSON 解析失敗: {e}，使用原始回應")
+        
+        
+        # 添加AI回應到記憶
+        try:
+            add_ai_message(user_id, response)
+        except Exception as e:
+            logger.warning(f"添加AI回應到記憶失敗: {e}")
         
         return {
             'success': True,
-            'message': response,
+            'content': response,
+            'message': response,  # 保持向後兼容
             'timestamp': datetime.now().isoformat()
         }
         
@@ -454,6 +542,30 @@ def create_memory_tool():
     
     return memory_tool
 
+def create_university_quiz_tool():
+    """創建大學考古題測驗工具"""
+    from langchain_core.tools import tool
+    
+    @tool
+    def create_university_quiz_tool(university: str, department: str, year: int) -> str:
+        """創建大學考古題測驗"""
+        from src.web_automation import create_university_quiz
+        return create_university_quiz(university, department, year)
+    
+    return create_university_quiz_tool
+
+def create_knowledge_quiz_tool():
+    """創建知識點測驗工具"""
+    from langchain_core.tools import tool
+    
+    @tool
+    def create_knowledge_quiz_tool(knowledge_point: str, difficulty: str, question_count: int) -> str:
+        """創建知識點測驗"""
+        from src.web_automation import create_knowledge_quiz
+        return create_knowledge_quiz(knowledge_point, difficulty, question_count)
+    
+    return create_knowledge_quiz_tool
+
 # ==================== LINE Bot 相關工具函數 ====================
 
 def create_linebot_quiz_generator_tool():
@@ -484,16 +596,8 @@ def create_linebot_grade_tool():
     
     @tool
     def linebot_grade_tool(answer: str, correct_answer: str = "", question: str = "") -> str:
-        """LINE Bot 批改工具 - 可以只提供答案，系統會自動從記憶中獲取題目信息"""
-        # 如果只提供了答案，嘗試從記憶中獲取題目信息
-        if answer and not question:
-            try:
-                from src.memory_manager import _user_memories
-                # 這裡需要根據實際情況調整，暫時返回提示信息
-                return f"正在批改答案：{answer}。請確保題目信息完整。"
-            except:
-                return f"正在批改答案：{answer}。請確保題目信息完整。"
-        
+        """LINE Bot 批改工具 - 直接使用提供的題目信息進行批改"""
+        # 直接調用批改函數，主代理人會提供完整的上下文
         return grade_answer(answer, correct_answer, question)
     
     return linebot_grade_tool
@@ -631,11 +735,6 @@ def chat():
         if request.method == 'OPTIONS':
             return jsonify({'token': None, 'success': True}), 204
     
-        auth_header = request.headers.get('Authorization')
-        if not auth_header:
-            return jsonify({'token': None, 'message': '未提供token'}), 401
-        
-        token = auth_header.split(" ")[1]
         data = request.get_json()
         if not data or 'message' not in data:
             return jsonify({'success': False, 'error': '缺少必要參數'}), 400
@@ -644,23 +743,41 @@ def chat():
         user_id = data.get('user_id', 'default')
         platform = data.get('platform', 'web')  # 新增平台參數
         
-        # 處理訊息
-        result = process_message(message, user_id, platform)
+        # 檢查是否為 LINE Bot 請求（不需要認證）
+        if platform == 'linebot':
+            print(f"🤖 收到 LINE Bot 請求：用戶={user_id}, 平台={platform}")
+            # 處理訊息
+            result = process_message(message, user_id, platform)
+        else:
+            # 其他平台需要認證
+            auth_header = request.headers.get('Authorization')
+            if not auth_header:
+                return jsonify({'token': None, 'message': '未提供token'}), 401
+            
+            token = auth_header.split(" ")[1]
+            # 處理訊息
+            result = process_message(message, user_id, platform)
         
         # 返回前端期待的格式
         if result['success']:
-            return jsonify({
-                'token': refresh_token(token),
+            response_data = {
                 'success': True,
                 'content': result['message'],
                 'timestamp': result['timestamp']
-            })
+            }
+            # 只有非 LINE Bot 請求才返回 token
+            if platform != 'linebot':
+                response_data['token'] = refresh_token(token)
+            return jsonify(response_data)
         else:
-            return jsonify({
-                'token': refresh_token(token),
+            response_data = {
                 'success': False,
                 'error': result.get('error', '處理失敗')
-            }), 500
+            }
+            # 只有非 LINE Bot 請求才返回 token
+            if platform != 'linebot':
+                response_data['token'] = refresh_token(token)
+            return jsonify(response_data), 500
         
     except Exception as e:
         logger.error(f"❌ 聊天API錯誤: {e}")
@@ -811,4 +928,5 @@ def web_get_quiz_from_database():
     except Exception as e:
         logger.error(f"❌ web-ai/get-quiz-from-database 錯誤: {e}")
         return jsonify({'success': False, 'message': f'獲取考卷數據失敗：{str(e)}'}), 500
+
 
