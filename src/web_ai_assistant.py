@@ -118,7 +118,6 @@ def create_platform_specific_agent(platform: str = "web"):
             max_iterations=10  # 增加迭代次數，允許AI完成複雜任務
         )
         
-        logger.info(f"✅ {platform} 平台主代理人創建成功")
         return platform_executor
         
     except Exception as e:
@@ -252,14 +251,20 @@ def create_quiz_generator_tool():
             # 如果包含明確的內容關鍵詞，直接視為基於內容的請求
             if any(keyword in requirements for keyword in content_keywords):
                 # 使用基於內容的生成
-                return execute_content_based_quiz_generation(requirements)
+                result = execute_content_based_quiz_generation(requirements)
+                logger.info(f"🔍 基於內容生成結果: {result[:100]}...")
+                return result
             # 如果包含技術內容但沒有明確的題目生成指令，視為基於內容的請求
             elif has_technical_content and not has_quiz_generation_keyword:
                 # 使用基於內容的生成
-                return execute_content_based_quiz_generation(requirements)
+                result = execute_content_based_quiz_generation(requirements)
+                logger.info(f"🔍 基於內容生成結果: {result[:100]}...")
+                return result
             else:
                 # 使用原本的生成方式
-                return execute_quiz_generation(requirements)
+                result = execute_quiz_generation(requirements)
+                logger.info(f"🔍 標準生成結果: {result[:100]}...")
+                return result
                 
         except Exception as e:
             logger.error(f"❌ 考卷生成工具執行失敗: {e}")
@@ -356,6 +361,14 @@ def process_message(message: str, user_id: str = "default", platform: str = "web
         
         # 根據平台創建對應的主代理人
         platform_executor = create_platform_specific_agent(platform)
+        
+        if platform_executor is None:
+            logger.error("❌ 無法創建平台特定代理人")
+            return {
+                'success': False,
+                'error': '無法創建AI代理人',
+                'timestamp': datetime.now().isoformat()
+            }
         
         # 使用平台特定的主代理人處理
         result = platform_executor.invoke({

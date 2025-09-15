@@ -4,7 +4,6 @@ import sys
 from accessories import sqldb, mail, redis_client, token_store, mongo, login_manager, init_mongo_data
 from sqlalchemy import text
 from config import Config, ProductionConfig, DevelopmentConfig
-from tool.insert_mongodb import initialize_mis_teach_db
 from src.login import login_bp
 from src.register import register_bp
 from src.dashboard import dashboard_bp
@@ -31,6 +30,7 @@ from src.user_guide_api import user_guide_bp
 from src.web_ai_assistant import web_ai_bp
 from src.linebot import linebot_bp  # 新增 LINE Bot Blueprint
 from src.learning_analytics import analytics_bp  # 從統一模組導入學習分析 API Blueprint
+from tool.insert_mongodb import initialize_mis_teach_db # 引入教材資料庫
 
 # Initialize Flask app
 app = Flask(__name__)
