@@ -4,7 +4,7 @@ import sys
 from accessories import sqldb, mail, redis_client, token_store, mongo, login_manager, init_mongo_data
 from sqlalchemy import text
 from config import Config, ProductionConfig, DevelopmentConfig
-from tool.insert_mongodb import initialize_mis_teach_db
+from tool.insert_mongodb import initialize_mis_teach_db # 引入教材資料庫
 from src.login import login_bp
 from src.register import register_bp
 from src.dashboard import dashboard_bp
