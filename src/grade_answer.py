@@ -148,29 +148,48 @@ class AnswerGrader:
                                     options: List[str], question_type: str) -> Tuple[bool, float, Dict[str, Any]]:
         """使用指定的模型進行AI評分"""
         try:
-            
             prompt = self._build_grading_prompt(user_answer, question_text, correct_answer, options, question_type)
             
             if model:
-                response = model.generate_content(prompt)
+                # 如果是繪圖題，需要特殊處理base64圖片
+                if isinstance(user_answer, str) and user_answer.startswith('data:image/'):
+                    try:
+                        import base64
+                        from google.generativeai.types import HarmCategory, HarmBlockThreshold
+                        
+                        # 提取base64數據部分
+                        base64_data = user_answer.split(',')[1] if ',' in user_answer else user_answer
+                        
+                        # 解碼base64數據
+                        image_data = base64.b64decode(base64_data)
+                        
+                        # 創建圖片內容
+                        image_content = {
+                            "mime_type": "image/png",
+                            "data": image_data
+                        }
+                        
+                        # 使用圖片和文字提示
+                        response = model.generate_content([
+                            image_content,
+                            prompt
+                        ])
+                        
+                        print(f"🔍 使用圖片分析模式")
+                        
+                    except Exception as e:
+                        print(f"❌ 圖片處理失敗，使用文字模式: {e}")
+                        response = model.generate_content(prompt)
+                else:
+                    response = model.generate_content(prompt)
                 
-                # 調試：顯示AI的完整回應
-                print(f"🔍 AI完整回應:")
-                print(f"🔍 {response.text}")
-                print(f"🔍 回應長度: {len(response.text)}")
+
                 
                 result = self._parse_ai_response(response.text)
                 if result:
-                    print(f"🔍 解析後的結果: {result}")
-                    
                     # 確保評分邏輯一致性：分數 ≥ 85 的答案被標記為正確
                     score = result.get('score', 0)
                     is_correct = score >= 85
-                    
-                    print(f"🔍 AI給的分數: {score}")
-                    print(f"🔍 AI判斷的正確性: {result.get('is_correct')}")
-                    print(f"🔍 系統計算的正確性: {is_correct}")
-                    
                     # 如果AI的判斷與我們的標準不一致，進行修正
                     if result.get('is_correct') != is_correct:
                         print(f"⚠️ AI判斷與系統標準不一致，進行修正")
@@ -208,6 +227,11 @@ class AnswerGrader:
 **參考標準（不要評分這個）**：
 正確答案：{correct_answer}
 選項：{options if options else '無'}
+
+**重要說明**：
+- 如果學生答案是base64編碼的圖片（以data:image/開頭），請直接分析圖片內容
+- 對於繪圖題，請根據圖片內容與題目要求的匹配度進行評分
+- 圖片內容應該與題目相關，包含必要的圖形元素和結構
 
 {type_guidance}
 
@@ -276,6 +300,15 @@ class AnswerGrader:
 - 如果繪圖內容與正確答案完全不符，必須給低分（0-39分）
 - 對於空白或幾乎空白的圖片，必須給0分
 - 對於只有簡單線條或無意義圖形的圖片，最多給30分
+- 評分要客觀公正，嚴格按照繪圖內容與題目要求的匹配度給分
+- 對於複雜的繪圖題目，要仔細分析每個必要元素是否正確呈現
+
+**嚴格評分要求**：
+- 對於數學計算題的繪圖，必須包含具體的計算過程和結果
+- 如果只是畫了幾條線或簡單圖形，沒有數學內容，最多給20分
+- 必須檢查繪圖是否真的回答了題目的問題
+- 對於隨意塗鴉、無意義線條、或與題目完全無關的內容，必須給0分
+- 評分時要非常嚴格，寧可給低分也不要給高分
 """
         
         elif question_type == 'coding-answer' or 'code' in question_type.lower():
@@ -323,6 +356,8 @@ class AnswerGrader:
 - 必須與正確答案完全一致才算正確
 - 如果答案格式不正確或無法識別，視為錯誤
 - 對於空白答案或無關回答，必須給0分
+- 嚴格按照正確答案進行評分，不允許任何偏差
+- 答案必須完全匹配，包括大小寫、格式、順序等
 """
         
         else:
