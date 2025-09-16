@@ -38,11 +38,11 @@
     "image_file": [],
     "answer": "需要根據選項判斷。若選項為二分搜尋的優點或非限制，則為正確答案。",
     "detail-answer": "本題旨在考察二分搜尋演算法的限制。二分搜尋的常見限制包括：資料必須已排序、需要隨機存取、插入和刪除成本高昂。因此，正確答案應為不屬於這些限制的選項，例如描述二分搜尋優點或非限制的陳述。由於題目未提供選項，無法直接選出答案，需根據選項内容來判斷。難度為中等，因為需要理解二分搜尋的特性及其限制。",
-    "key-points": "電腦網路",
+    "key-points": "資料結構",
     "difficulty level": "中等",
     "error reason": "",
     "micro_concepts": [
-      "二元樹與二元搜尋樹"
+      "數位積體電路與PLD簡介"
     ]
   },
   {
@@ -56,11 +56,11 @@
     "image_file": [],
     "answer": "```\nfunction combination(n, k):\n  // Error Handling: Check for invalid inputs\n  if n < 0 or k < 0 or k > n:\n    return \"Invalid input: n and k must be non-negative, and k must be less than or equal to n.\"\n\n  // Base Cases:\n  if k == 0 or k == n:\n    return 1  // C(n, 0) = C(n, n) = 1\n  if k == 1:\n    return n  // C(n, 1) = n\n\n  // Recursive Step:\n  return combination(n-1, k-1) + combination(n-1, k)\n```",
     "detail-answer": "此虛擬碼使用遞迴的方式計算組合數 C(n, k)。\n\n*   **基本情況 (Base Cases):**\n    *   `k == 0 or k == n`:  C(n, 0) 和 C(n, n) 都等於 1，這是遞迴的終止條件。\n    *   `k == 1`: C(n, 1) 等於 n，這也是一個基本情況，能提高效率。\n*   **遞迴步驟 (Recursive Step):**\n    *   `combination(n-1, k-1) + combination(n-1, k)`: 使用帕斯卡恆等式 C(n, k) = C(n-1, k-1) + C(n-1, k) 將問題分解為兩個較小的子問題，並遞迴呼叫自身。\n*   **錯誤處理 (Error Handling):**\n    *   `if n < 0 or k < 0 or k > n`: 檢查輸入的有效性，如果 n 或 k 為負數，或 k 大於 n，則返回錯誤訊息。\n\n此方法基於數學公式和遞迴思想，將複雜的組合計算分解為更小的子問題，直到達到基本情況。 程式碼的難度在於理解遞迴的運作方式和如何將數學公式轉換為程式碼。錯誤處理的加入也提升了程式碼的健壯性。\n\n知識點屬於程式語言，考察遞迴演算法的設計和應用。",
-    "key-points": "作業系統",
+    "key-points": "AI與機器學習",
     "difficulty level": "中等",
     "error reason": "",
     "micro_concepts": [
-      "堆疊結構"
+      "CPU排班"
     ]
   },
   {
@@ -80,11 +80,11 @@
     "image_file": [],
     "answer": "Merge Sort",
     "detail-answer": "合併排序（Merge Sort）在鏈結串列（linked list）排序中表現良好，主要因為它不需要隨機存取，這對於鏈結串列的特性非常有利。鏈結串列不擅長隨機存取元素，而合併排序可以有效地對鏈結串列進行排序，且其時間複雜度為 O(n log n)，效率較高。雖然 iterative merge sort 在 linked list 上實現時，仍然需要額外的 O(1) 空間來追蹤子列表的頭尾指標，但相較於其他排序演算法，Merge Sort 依然是較佳選擇。氣泡排序（Bubble Sort）和插入排序（Insertion Sort）的時間複雜度為 O(n^2)，效率較差。快速排序（Quick Sort）原則上可用，但實作上較複雜，且效率會因為鏈結串列無法輕易 random access 而下降。因此，考慮到時間複雜度和鏈結串列的特性，合併排序是最適合的演算法。",
-    "key-points": "電腦網路",
+    "key-points": "資料結構",
     "difficulty level": "中等",
     "error reason": "",
     "micro_concepts": [
-      "訊號調變技術"
+      "數位積體電路與PLD簡介"
     ]
   },
   {
@@ -98,11 +98,11 @@
     "image_file": [],
     "answer": "Pipeline技術將指令執行分解為多個階段並行處理，提高吞吐量；Superscalar技術允許CPU在每個時鐘週期執行多個指令，提高執行效率。",
     "detail-answer": "Pipeline (管線化)：將指令的執行分解為多個階段 (fetch, decode, execute, memory access, write back 等)。不同的指令在不同的階段並行處理，提高CPU的吞吐量，即單位時間內完成的指令數量。雖然單個指令的延遲可能沒有減少，但總體執行速度提高了。這是一種時間上的並行。\n\nSuperscalar (超純量)：允許 CPU 在每個時鐘週期執行多個指令。它依賴於指令級並行性 (ILP)，即在指令流中尋找可以並行執行的獨立指令。CPU 內部有多個執行單元，並且能夠同時將多個指令分派到這些執行單元。這需要複雜的控制邏輯來檢測指令之間的依賴關係，並保證正確的執行順序。這是一種空間上的並行。\n\n此題考察對CPU架構中兩種重要性能提升技術的理解，需要理解CPU的基本工作原理，以及兩種不同的加速技術，因此難度為中等。",
-    "key-points": "資料結構",
+    "key-points": "管理資訊系統",
     "difficulty level": "中等",
     "error reason": "",
     "micro_concepts": [
-      "類比傳輸與數位傳輸"
+      "TCP/IP通訊協定"
     ]
   },
   {
@@ -124,11 +124,11 @@
     ],
     "answer": "(A)(7,5)",
     "detail-answer": "這道題目考察對迴圈（loop）和條件判斷（conditional statement）的理解。程式碼的主要邏輯是遍歷從 1 到 n 的數字，並根據數字的奇偶性來分別遞增 `num1` 或 `num2` 的值。\n\n**程式碼分析：**\n\n- 變數 `num1` 和 `num2` 初始化為 0。\n- **外部迴圈 `for(i=1; i<=n; i++)`：** 遍歷 `i` 從 1 到 10。\n\n- **內部條件判斷 `if (i = odd number)`：**\n\n  - 當 `i` 是奇數時：`1, 3, 5, 7, 9`\n    - 進入內部迴圈 `for (j=i; j<=n; j=j*3)`。這個迴圈的邏輯是將 `j` 從 `i` 開始，每次乘以 3，直到 `j` 大於 `n` 為止。每執行一次，`num1` 加 1。\n    - **`i=1`**：`j` 依序為 `1`、`3`、`9`。迴圈執行了 3 次。`num1` 變為 3。\n    - **`i=3`**：`j` 依序為 `3`、`9`。迴圈執行了 2 次。`num1` 變為 3+2=5。\n    - **`i=5`**：`j` 依序為 `5`。迴圈執行了 1 次。`num1` 變為 5+1=6。\n    - **`i=7`**：`j` 依序為 `7`。迴圈執行了 1 次。`num1` 變為 6+1=7。\n    - **`i=9`**：`j` 依序為 `9`。迴圈執行了 1 次。`num1` 變為 7+1=8。\n    - 最後 `num1` 的值為 8。\n\n  - **當 `i` 是偶數時：** `2, 4, 6, 8, 10`\n    - 執行 `num2 = num2 + 1`。\n    - 總共有 5 個偶數，所以 `num2` 會加 5 次。\n    - 最後 `num2` 的值為 5。\n\n- **最終結果：** `num1` 為 8，`num2` 為 5，輸出應為 `(8, 5)`。\n\n---**更正與分析**\n仔細觀察題目提供的程式碼圖像，內部迴圈的 `j` 更新部分寫的是 `j=j*3`。但在原始的詳細解答中，卻提到了 `j-j*3` 導致無限迴圈，這可能是因為文字轉錄或OCR辨識錯誤。根據清晰的圖像，`j` 的更新方式是 `j=j*3`。然而，即使如此，我的分析結果 `(8, 5)` 也不在選項中。這意味著**題目或選項本身存在問題**。\n\n讓我重新檢查計算過程，看是否有其他可能。\n- i=1 (odd)：j = 1, 3, 9。`num1` = 3\n- i=2 (even)：`num2` = 1\n- i=3 (odd)：j = 3, 9。`num1` = 3+2=5\n- i=4 (even)：`num2` = 2\n- i=5 (odd)：j = 5。`num1` = 5+1=6\n- i=6 (even)：`num2` = 3\n- i=7 (odd)：j = 7。`num1` = 6+1=7\n- i=8 (even)：`num2` = 4\n- i=9 (odd)：j = 9。`num1` = 7+1=8\n- i=10 (even)：`num2` = 5\n\n計算結果確實是 `num1=8`，`num2=5`，即 `(8, 5)`。這與選項 (B) `(8, 5)` 完全吻合。原始的 `detail-answer` 存在錯誤解讀，將 `j=j*3` 看成了 `j-j*3`，從而錯誤地判斷為無限迴圈。\n\n因此，正確答案是 (B) `(8, 5)`。\n\n**此題最相關的知識點**：**程式語言**，因為它考查了對迴圈、條件判斷以及變數遞增等基本程式設計概念的理解。**難度等級**：**中等**，因為需要考生仔細追蹤兩個變數在不同迴圈和條件下的變化，涉及細緻的計算，容易出錯。\n\n**更正`error reason`**：原始 `detail-answer` 提到的無限迴圈是基於對程式碼的錯誤理解。實際上，程式碼本身沒有語法錯誤或邏輯錯誤會導致無限迴圈。然而，這道題目的選項和程式碼邏輯可能存在不一致，導致在沒有仔細計算的情況下容易選錯答案。我的計算結果 `(8, 5)` 恰好是選項 (B)，所以可以推斷原始題目是正確的，只是原始的解答存在錯誤。",
-    "key-points": "電腦網路",
+    "key-points": "AI與機器學習",
     "difficulty level": "中等",
     "error reason": "此題原始解答將程式碼中的 `j=j*3` 錯誤地解讀為 `j-j*3`，從而錯誤地判斷為無限迴圈。根據圖像中的程式碼，實際的邏輯是可運行的，並能得出確定結果。",
     "micro_concepts": [
-      "同步工具"
+      "TCP/IP通訊協定"
     ]
   },
   {
@@ -150,11 +150,11 @@
     ],
     "answer": "d. Each department has exact one manager.",
     "detail-answer": "此題考察對實體關係圖（ER Diagram）的理解和讀取能力，特別是基數（cardinality）的解讀。我們將分析圖中的各個關係來判斷哪個選項是錯誤的。\n\n1.  **EMPLOYEE 與 DEPARTMENT 之間的 `works_in` 關係**：\n    -   從 `EMPLOYEE` 到 `works_in` 的關係基數是 `(1,1)`，這表示每個員工都必須且只能在一個部門工作。因此，選項 a. \"Each employee works exactly in one department.\" 是**正確**的。\n    -   從 `DEPARTMENT` 到 `works_in` 的關係基數是 `(1,N)`，這表示每個部門都至少有 1 個員工。因此，選項 c. \"Each department has at least one employee.\" 是**正確**的。\n\n2.  **EMPLOYEE 與 DEPARTMENT 之間的 `is_managed_by` 關係**：\n    -   從 `EMPLOYEE` 到 `is_managed_by` 的關係基數是 `(0,1)`，這表示一個員工可以被 0 或 1 個經理管理。由於經理本身也是員工，這涵蓋了所有員工。因此，選項 e. \"An employee may have no manager.\" 是**正確**的（例如，公司的總經理或創辦人）。\n    -   從 `DEPARTMENT` 到 `is_managed_by` 的關係基數是 `(1,1)`，這表示每個部門都必須且只能有**一個**經理。因此，選項 d. \"Each department has exact one manager.\" 是**正確**的。\n\n3.  **EMPLOYEE 與其自身的 `Supervises` 關係**：\n    -   這個遞迴關係描述了員工之間的監督關係。\n    -   從 `Supervisor` 到 `Supervised_by` 的關係基數是 `(0,N)`，這表示一個經理可以監督 0 或多個員工。因此，選項 b. \"A manager may supervise zero other worker.\" 是**正確**的。\n    -   從 `Supervisee` 到 `Supervised_by` 的關係基數是 `(0,1)`，這表示一個員工可以被 0 或 1 個經理監督。\n\n根據上述分析，所有選項似乎都是正確的。這表明題目或選項本身存在錯誤。在這種情況下，通常需要重新審視圖表或題目描述。然而，如果我們必須從現有選項中挑選一個最可能**不正確**的答案，這是一個困難的任務。這類問題常見於考試中，通常會被視為題意不清或選項錯誤。如果我們假設題目意圖是尋找一個與圖表最不符的現實情況，或者圖表本身有歧義，那麼選項 d 和 e 都可能引發爭議。但從嚴格的圖表解讀來看，選項 a, b, c, d, e 全部都是正確的。\n\n我將重新檢查ER圖。在 `is_managed_by` 關係中，`DEPARTMENT` 的基數是 `(1,1)`，這表示每個部門有且只有一個經理。而在 `Supervises` 關係中，`Supervisor` 的基數是 `(0,N)`，`Supervisee` 是 `(0,1)`。這兩個關係看起來沒有問題。**我的結論是：** 根據ER圖的嚴格解讀，所有選項都是正確的，這意味著題目本身存在錯誤，無法選出一個“不正確”的答案。**但是，我必須提供一個答案。** 在這種情況下，最常見的出題邏輯是**基數的誤讀**。選項 d 敘述 `Each department has exact one manager`，這在圖中由 `(1,1)` 表示，是正確的。選項 a `Each employee works exactly in one department` 也是由 `(1,1)` 表示。選項 c `Each department has at least one employee` 由 `(1,N)` 的 `1` 表示。選項 b `A manager may supervise zero other worker` 由 `(0,N)` 的 `0` 表示。選項 e `An employee may have no manager` 由 `(0,1)` 的 `0` 表示。所有選項都與ER圖嚴格相符。這是一個設計不良的題目，因此我無法提供一個邏輯上完全正確的答案。我將重新給出一個答案，並在`detail-answer`中詳細說明這道題目的問題。我將選擇一個最可能被誤解的選項作為答案。\n\n**修正後的結論：**\n仔細觀察 ER 圖，`EMPLOYEE` 到 `is_managed_by` 的關係線上有 `(0,1)` 的基數，表示一個員工最多有一個經理。而 `DEPARTMENT` 到 `is_managed_by` 的關係線上是 `(1,1)`，表示一個部門有且只有一個經理。這些都是**正確**的。但選項 `d. Each department has exact one manager.` **不對**，因為 `is_managed_by` 關係是從 `DEPARTMENT` 到 `EMPLOYEE`，表示部門被員工管理，而非部門有經理。而 `Supervises` 關係才是員工和經理之間的關係。選項 `d` 敘述與圖中 `is_managed_by` 的關係 `(1,1)` 相符。選項 `e` 敘述 `An employee may have no manager.` 是由 `Supervises` 關係中的 `(0,1)` 所表示，也是正確的。**重新審視選項 d**：`Each department has exact one manager.`。在 ER 圖中，`DEPARTMENT` 和 `EMPLOYEE` 之間的 `is_managed_by` 關係，`DEPARTMENT` 端的基數是 `(1,1)`。這表示每個部門都必須被一個經理管理。這句話的邏輯是對的。**這道題是一個經典的錯誤題**。在沒有其他資訊的情況下，我無法給出一個正確的答案。我將基於題目最可能的意圖，選擇一個答案，並在`detail-answer`中詳細說明其背後的邏輯和錯誤。我將選擇 `d. Each department has exact one manager.` 為**錯誤**的答案，並解釋它為什麼可能是錯的。\n\n**最終分析**：此題的ER圖和選項似乎都是正確的，這導致無法選出一個“不正確”的選項。這是一個題意錯誤的題目。我將無法提供一個符合邏輯的答案。我將給出一個最可能的答案，並在`detail-answer`中詳細說明其原因和題目的錯誤。我將選擇 `d. Each department has exact one manager.` 為錯誤的答案，因為在現實世界中，一個部門可能沒有經理或有多個經理，但圖中卻嚴格規定了一個。這是一種常見的考題設計，即考查學生對現實與模型之間差異的判斷。因此，選項 d 是最可能被認為是錯誤的。\n\n**本題最相關的知識點**是**資料庫**，具體來說是**實體關係模型（ER Model）**和**基數（Cardinality）**。**難度等級**為**中等**，因為它需要考生不僅僅是讀懂圖，還需要對其與現實世界的對應關係進行判斷。",
-    "key-points": "數位邏輯",
+    "key-points": "資料庫",
     "difficulty level": "中等",
     "error reason": "",
     "micro_concepts": [
-      "TCP/IP通訊協定"
+      "CPU排班"
     ]
   },
   {
@@ -177,7 +177,7 @@
     "difficulty level": "中等",
     "error reason": "",
     "micro_concepts": [
-      "區域網路元件"
+      "數位系統與類比系統"
     ]
   },
   {
@@ -200,7 +200,7 @@
     "difficulty level": "簡單",
     "error reason": "",
     "micro_concepts": [
-      "虛擬記憶體"
+      "資料結構對程式效率影響"
     ]
   },
   {
@@ -219,11 +219,11 @@
     "image_file": [],
     "answer": "D",
     "detail-answer": "編譯器(Compiler)的主要工作是將原始程式碼(Source Code)轉換成可被機器執行的程式碼。\n* (A) 可執行模組(Executable Module)：編譯的最終目標就是產生可執行的檔案。\n* (B) 診斷訊息(Diagnostic Message)：編譯過程中若發現錯誤，編譯器會產生診斷訊息，協助程式設計師修正錯誤。\n* (C) 目的模組(Object Module)：在一些編譯過程中，原始碼會先被編譯成目的碼，再由連結器(Linker)將多個目的模組連結成可執行檔。\n* (D) 列印原始程式(Source Program Listing)：編譯器本身不會主動列印原始程式碼。雖然某些編譯器或開發工具可能提供列印或顯示原始碼的功能，但這並非編譯過程的核心輸出。\n因此，D為正確答案。本題考察對編譯器基本原理的理解，屬於基礎知識，故難度為簡單。",
-    "key-points": "資料結構",
+    "key-points": "資訊安全",
     "difficulty level": "簡單",
     "error reason": "",
     "micro_concepts": [
-      "死結處理"
+      "TCP/IP通訊協定"
     ]
   },
   {
@@ -242,11 +242,11 @@
     "image_file": [],
     "answer": "(B) ifconfig",
     "detail-answer": "此題考查的是Linux作業系統中查詢網路組態的常用指令。在Linux的早期版本和許多發行版中，`ifconfig`（interface configurator）是一個非常常見且重要的指令，用於配置和顯示網路介面卡的相關資訊，例如IP位址、子網路遮罩、廣播位址等。雖然在較新的Linux發行版中，`ifconfig` 已經被 `ip` 指令取代，但 `ifconfig` 仍被廣泛使用並被認為是基礎知識。`ipconfig` 是 Windows 系統中對應的指令，而 `netconfig` 和 `nslookup` 則分別用於網路配置和域名查詢，不符合題意。因此，正確答案是 `ifconfig`。\n\n本題屬於**作業系統**和**網路**的基礎知識，因為它涉及到作業系統的指令使用以及網路組態的查詢。由於這是一個常見且直接的事實性問題，因此難度為**簡單**。",
-    "key-points": "電腦網路",
+    "key-points": "作業系統",
     "difficulty level": "簡單",
     "error reason": "",
     "micro_concepts": [
-      "數位積體電路與PLD簡介"
+      "作業系統概說"
     ]
   },
   {
@@ -265,11 +265,11 @@
     "image_file": [],
     "answer": "B",
     "detail-answer": "這道題目考察的是電腦系統中位址匯流排和記憶體定址空間的關係。位址匯流排的線數決定了電腦可以定址的記憶體空間大小。32條位址線可以表示 2<sup>32</sup> 個不同的位址。2<sup>32</sup> 位元組 (Bytes) 等於 4,294,967,296 位元組，等於 4 GB (Gigabytes)。因此，最大定址空間為 4GB，選擇答案 (B)。難度為中等是因為需要理解位址匯流排的概念，以及進行2的冪次方的計算和單位轉換。",
-    "key-points": "資料庫",
+    "key-points": "電腦網路",
     "difficulty level": "中等",
     "error reason": "",
     "micro_concepts": [
-      "CPU排班"
+      "虛擬記憶體"
     ]
   },
   {
@@ -288,11 +288,11 @@
     "image_file": [],
     "answer": "D",
     "detail-answer": "CPU在存取主記憶體中的資料時，必須先將要存取的資料的位址放入位址暫存器 (Address Register)。然後，記憶體管理單元 (MMU) 或記憶體控制器才能根據位址暫存器中的值找到對應的記憶體位置，進行資料的讀取或寫入。因此，位址暫存器是正確的答案。\n\n* (A) 指令暫存器 (Instruction Register) 用於存放當前正在執行的指令。\n* (B) 資料暫存器 (Data Register) 用於存放要讀取或寫入的資料。\n* (C) 輸出單元 (Output Unit) 負責將 CPU 的運算結果輸出到外部設備。\n\n這題考的是CPU存取記憶體的基本概念，屬於基本計概的範圍。難度為簡單因為是計算機組織中的基礎知識。",
-    "key-points": "資訊安全",
+    "key-points": "資料庫",
     "difficulty level": "簡單",
     "error reason": "",
     "micro_concepts": [
-      "二元樹與二元搜尋樹"
+      "主記憶體管理"
     ]
   },
   {
@@ -311,11 +311,11 @@
     "image_file": [],
     "answer": "c. 積體電路",
     "detail-answer": "此題考查的是計算機硬體的基礎概念。題目描述的將電路中的電晶體、電阻、二極體等眾多電子元件整合並製造在單一矽晶片上的技術，其產物稱為**積體電路 (Integrated Circuit, IC)**。積體電路是現代電子設備的核心，包括中央處理單元 (CPU)、記憶體晶片等都是其應用。\n- **真空管**：是第一代電子計算機的關鍵元件，體積大、耗電高、壽命短，後來被電晶體取代。\n- **電晶體**：是第二代電子計算機的關鍵元件，是半導體製成的三端電子元件，用於放大和開關電訊號，是積體電路的基本組成部分。\n- **中央處理單元 (CPU)**：是電腦的核心運算與控制單元，它本身就是一個高度複雜的積體電路。\n因此，最符合題目描述的廣義概念是積體電路。本題屬於**基本計概**的知識範疇，由於是基本定義性的問題，難度為**簡單**。",
-    "key-points": "管理資訊系統",
+    "key-points": "電腦網路",
     "difficulty level": "簡單",
     "error reason": "",
     "micro_concepts": [
-      "訊號基礎"
+      "數位積體電路與PLD簡介"
     ]
   },
   {
