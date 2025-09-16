@@ -4,9 +4,10 @@
 import os
 import json
 import random
+import difflib
 from typing import List, Dict, Any
 
-# ========== 讀取 API KEY ==========
+# ====== 讀取 API KEY ======
 def load_api_keys(env_file: str = "api.env") -> List[str]:
     api_keys = []
     if os.path.exists(env_file):
@@ -22,7 +23,7 @@ def load_api_keys(env_file: str = "api.env") -> List[str]:
     print(f"🔑 載入API密鑰: {len(api_keys)} 個")
     return api_keys
 
-# ========== 載入分類數據 ==========
+# ====== 載入分類數據 ======
 def load_classification_data(domains_file: str, micro_concepts_file: str):
     try:
         with open(domains_file, "r", encoding="utf-8") as f:
@@ -45,7 +46,7 @@ def load_classification_data(domains_file: str, micro_concepts_file: str):
         print(f"❌ 載入分類數據錯誤: {e}")
         return [], []
 
-# ========== 載入題目 ==========
+# ====== 載入題目 ======
 def load_questions(file_path: str) -> List[Dict[str, Any]]:
     try:
         with open(file_path, "r", encoding="utf-8") as f:
@@ -58,45 +59,63 @@ def load_questions(file_path: str) -> List[Dict[str, Any]]:
         print(f"❌ 載入題目錯誤: {e}")
         return []
 
-# ========== 比對大知識點 ==========
-def match_domain(text: str, domains: List[str]) -> str:
-    if not text or not domains:
-        return random.choice(domains) if domains else ""
-    text_lower = str(text).lower()
-    for d in domains:
-        if d.lower() in text_lower:
-            return d
-    return random.choice(domains)
+# ====== 文字標準化 ======
+def normalize_text(text: str) -> str:
+    return text.lower().replace(" ", "").replace("\n", "")
 
-# ========== 比對微概念 ==========
-def match_micro_concepts(text: str, micro_list: List[str]) -> List[str]:
-    if not text or not micro_list:
-        return [random.choice(micro_list)] if micro_list else []
-    text_lower = str(text).lower()
-    matched = [m for m in micro_list if m.lower() in text_lower]
-    if not matched:
-        matched = [random.choice(micro_list)]
+# ====== 大知識點匹配 ======
+def match_domains(text: str, domains: List[str], key_points: str) -> str:
+    text_norm = normalize_text(text)
+    key_norm = normalize_text(key_points)
+    # 先找文字中或 key_points 出現的 domain
+    for d in domains:
+        d_norm = normalize_text(d)
+        if d_norm in text_norm or d_norm in key_norm:
+            return d
+    # 找不到就選最接近的一個
+    if domains:
+        best_match = max(domains, key=lambda d: difflib.SequenceMatcher(None, text_norm, normalize_text(d)).ratio())
+        return best_match
+    return ""
+
+# ====== 微概念匹配 ======
+def match_micro_concepts(text: str, micro_list: List[str], key_points: str) -> List[str]:
+    text_norm = normalize_text(text)
+    key_norm = normalize_text(key_points)
+    matched = []
+
+    # 找文字中或 key_points 出現的微概念
+    for m in micro_list:
+        m_norm = normalize_text(m)
+        if m_norm in text_norm or m_norm in key_norm:
+            matched.append(m)
+
+    # 找不到就選最接近的一個
+    if not matched and micro_list:
+        best_match = max(micro_list, key=lambda m: difflib.SequenceMatcher(None, text_norm, normalize_text(m)).ratio())
+        matched = [best_match]
+
     return matched
 
-# ========== 分類題目 ==========
+# ====== 分類題目 ======
 def classify_questions(questions: List[Dict[str, Any]], domains: List[str], micro_concepts: List[str]) -> List[Dict[str, Any]]:
     classified = []
     for q in questions:
         text = q.get("question_text", "")
+        # 如果 options 有內容，也納入判斷
+        options_text = " ".join(q.get("options", [])) if q.get("options") else ""
+        full_text = text + " " + options_text
+        key_points = q.get("key-points", "")
 
-        # 判斷 key-points (大知識點)
-        key_point = match_domain(text, domains)
+        domain = match_domains(full_text, domains, key_points)
+        micro_matched = match_micro_concepts(full_text, micro_concepts, key_points)
 
-        # 判斷 micro_concepts (微概念)
-        micro_matched = match_micro_concepts(text, micro_concepts)
-
-        # 更新題目
-        q["key-points"] = key_point
+        q["key-points"] = domain
         q["micro_concepts"] = micro_matched
         classified.append(q)
     return classified
 
-# ========== 儲存 JSON ==========
+# ====== 儲存 JSON ======
 def save_to_json(data: Any, filename: str):
     try:
         with open(filename, "w", encoding="utf-8") as f:
@@ -105,12 +124,12 @@ def save_to_json(data: Any, filename: str):
     except Exception as e:
         print(f"❌ 儲存 JSON 錯誤: {e}")
 
-# ========== 主程式 ==========
+# ====== 主程式 ======
 if __name__ == "__main__":
     api_keys = load_api_keys("api.env")
     domains, micro_concepts = load_classification_data("domains_batch_20250903.json", "micro_concepts_batch_20250903.json")
-    questions = load_questions("check_exam_output2.json")
+    questions = load_questions("fainaldata_no_del.json")
 
     if questions:
         classified = classify_questions(questions, domains, micro_concepts)
-        save_to_json(classified, "fainaldata_updated.json")
+        save_to_json(classified, "classified_questions.json")
