@@ -33,7 +33,7 @@ from src.learning_analytics import analytics_bp  # 從統一模組導入學習�
 from tool.insert_mongodb import initialize_mis_teach_db # 引入教材資料庫
 
 # Initialize Flask app
-app = Flask(__name__)
+app = Flask(__name__, static_folder=os.path.join("data", "courses_picture"))
 
 # Load configuration based on environment
 cfg = Config()

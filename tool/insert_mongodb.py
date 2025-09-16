@@ -354,7 +354,7 @@ def insert_ai_domain(db):
         micro_col = db["micro_concept"]
 
         domain_data = {
-            "name": "AI 與機器學習（AI & Machine Learning）",
+            "name": "AI與機器學習（AI & Machine Learning）",
             "description": "介紹 AI 工程、基礎模型、提示工程與微調技術",
             "blocks": []
         }
@@ -395,9 +395,9 @@ def insert_ai_domain(db):
         for i, (block_idx, _) in enumerate(micro_map):
             blocks_col.update_one({"_id": block_ids[block_idx]}, {"$push": {"subtopics": micro_ids[i]}})
 
-        print("✅ AI 與機器學習資料插入成功")
+        print("✅ AI與機器學習資料插入成功")
     except Exception as e:
-        print(f"❌ 插入 AI 與機器學習失敗：{e}")
+        print(f"❌ 插入 AI與機器學習失敗：{e}")
 
 
 def insert_sec_domain(db):
