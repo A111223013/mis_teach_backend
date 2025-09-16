@@ -3,28 +3,17 @@
 
 import os
 import json
-import random
-import difflib
+import re
+import time
 from typing import List, Dict, Any
+import google.generativeai as genai
 
-# ====== 讀取 API KEY ======
-def load_api_keys(env_file: str = "api.env") -> List[str]:
-    api_keys = []
-    if os.path.exists(env_file):
-        print(f"✅ 成功載入 {env_file}")
-        with open(env_file, "r", encoding="utf-8") as f:
-            for line in f:
-                if line.strip() and not line.startswith("#"):
-                    key = line.strip()
-                    if key.startswith("AIza"):
-                        api_keys.append(key)
-    else:
-        print(f"⚠️ 找不到 {env_file}")
-    print(f"🔑 載入API密鑰: {len(api_keys)} 個")
-    return api_keys
+# 延遲時間（秒）
+delay_between_requests = 1.0
 
-# ====== 載入分類數據 ======
+# ========== 載入分類數據 ==========
 def load_classification_data(domains_file: str, micro_concepts_file: str):
+    """從 JSON 檔案載入 key-points 和 micro_concepts 清單。"""
     try:
         with open(domains_file, "r", encoding="utf-8") as f:
             domains_data = json.load(f)
@@ -39,15 +28,16 @@ def load_classification_data(domains_file: str, micro_concepts_file: str):
         domains_list = [d.get("name", "") for d in domains_data if isinstance(d, dict) and d.get("name")]
         micro_list = [m.get("name", "") for m in micro_data if isinstance(m, dict) and m.get("name")]
 
-        print(f"📊 載入了 {len(domains_list)} 個大知識點 和 {len(micro_list)} 個小知識點")
+        print(f"📊 載入了 {len(domains_list)} 個 key-points 和 {len(micro_list)} 個 micro_concepts")
         return domains_list, micro_list
 
     except Exception as e:
         print(f"❌ 載入分類數據錯誤: {e}")
         return [], []
 
-# ====== 載入題目 ======
+# ========== 載入題目 ==========
 def load_questions(file_path: str) -> List[Dict[str, Any]]:
+    """從 JSON 檔案載入題目清單。"""
     try:
         with open(file_path, "r", encoding="utf-8") as f:
             data = json.load(f)
@@ -59,64 +49,64 @@ def load_questions(file_path: str) -> List[Dict[str, Any]]:
         print(f"❌ 載入題目錯誤: {e}")
         return []
 
-# ====== 文字標準化 ======
-def normalize_text(text: str) -> str:
-    return text.lower().replace(" ", "").replace("\n", "")
+# ========== 使用 Gemini AI 批量判斷（含重試機制） ==========
+def classify_with_gemini_batch(model_name: str, questions: List[Dict[str, Any]], domains: List[str], micro_concepts: List[str], max_retries=3):
+    """
+    批量處理題目，將多個問題打包成一個 API 請求。
+    """
+    prompt = f"""
+請協助判斷以下題目的 key-points 和 micro_concepts，並以 JSON 陣列格式回覆。
 
-# ====== 大知識點匹配 ======
-def match_domains(text: str, domains: List[str], key_points: str) -> str:
-    text_norm = normalize_text(text)
-    key_norm = normalize_text(key_points)
-    # 先找文字中或 key_points 出現的 domain
-    for d in domains:
-        d_norm = normalize_text(d)
-        if d_norm in text_norm or d_norm in key_norm:
-            return d
-    # 找不到就選最接近的一個
-    if domains:
-        best_match = max(domains, key=lambda d: difflib.SequenceMatcher(None, text_norm, normalize_text(d)).ratio())
-        return best_match
-    return ""
+候選 key-points: {domains}
+候選 micro_concepts: {micro_concepts}
 
-# ====== 微概念匹配 ======
-def match_micro_concepts(text: str, micro_list: List[str], key_points: str) -> List[str]:
-    text_norm = normalize_text(text)
-    key_norm = normalize_text(key_points)
-    matched = []
+要求：
+1. 針對每個題目，從候選列表中選出最符合的 key-points 和 micro_concepts。
+2. key_points 必須為單一字串，如果沒有明確匹配，選最接近的一個。
+3. micro_concepts 必須為字串陣列 (array of strings)，允許多個，若完全沒有匹配，選最接近的一個。
+4. 以 JSON 陣列格式回覆，每個物件代表一題，其結構應為：
+   {{"question_number": "題號", "key_points": "選出的 key-points", "micro_concepts": ["選出的微概念列表"]}}
 
-    # 找文字中或 key_points 出現的微概念
-    for m in micro_list:
-        m_norm = normalize_text(m)
-        if m_norm in text_norm or m_norm in key_norm:
-            matched.append(m)
+待分類的題目列表：
+{json.dumps(questions, ensure_ascii=False, indent=2)}
+"""
 
-    # 找不到就選最接近的一個
-    if not matched and micro_list:
-        best_match = max(micro_list, key=lambda m: difflib.SequenceMatcher(None, text_norm, normalize_text(m)).ratio())
-        matched = [best_match]
+    attempt = 0
+    while attempt < max_retries:
+        try:
+            gemini_model = genai.GenerativeModel(model_name=model_name)
+            response = gemini_model.generate_content(
+                prompt,
+                generation_config=genai.types.GenerationConfig(
+                    temperature=0.3,
+                    max_output_tokens=4096  # 增加 token 限制以處理多個題目
+                )
+            )
 
-    return matched
+            # 確保回應有內容
+            if not response.text:
+                raise ValueError("API 回應為空")
 
-# ====== 分類題目 ======
-def classify_questions(questions: List[Dict[str, Any]], domains: List[str], micro_concepts: List[str]) -> List[Dict[str, Any]]:
-    classified = []
-    for q in questions:
-        text = q.get("question_text", "")
-        # 如果 options 有內容，也納入判斷
-        options_text = " ".join(q.get("options", [])) if q.get("options") else ""
-        full_text = text + " " + options_text
-        key_points = q.get("key-points", "")
+            output_text = response.text
+            # 尋找並提取 JSON 陣列
+            json_match = re.search(r'\[\s*\{.*\}\s*\]', output_text, re.S)
+            if json_match:
+                result_list = json.loads(json_match.group())
+                return result_list
+            else:
+                raise ValueError("API 回應中找不到有效的 JSON 陣列")
 
-        domain = match_domains(full_text, domains, key_points)
-        micro_matched = match_micro_concepts(full_text, micro_concepts, key_points)
+        except Exception as e:
+            attempt += 1
+            wait_time = 2 ** attempt
+            print(f"❌ Gemini 批量判斷失敗 (第 {attempt} 次): {e}, {wait_time}s 後重試...")
+            time.sleep(wait_time)
+    print(f"❌ Gemini 批量判斷重試 {max_retries} 次仍失敗，跳過所有題目")
+    return []
 
-        q["key-points"] = domain
-        q["micro_concepts"] = micro_matched
-        classified.append(q)
-    return classified
-
-# ====== 儲存 JSON ======
+# ========== 儲存 JSON ==========
 def save_to_json(data: Any, filename: str):
+    """將資料儲存為 JSON 檔案。"""
     try:
         with open(filename, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
@@ -124,12 +114,34 @@ def save_to_json(data: Any, filename: str):
     except Exception as e:
         print(f"❌ 儲存 JSON 錯誤: {e}")
 
-# ====== 主程式 ======
+# ========== 主程式 ==========
 if __name__ == "__main__":
-    api_keys = load_api_keys("api.env")
+    # 這裡只需要設定模型名稱，不需要初始化完整的模型物件
+    genai.configure(api_key="AIzaSyC8y6nInv339tG3j2jwFfd2W3lU1A6aoBg") # 請確保您已設定您的 API 金鑰
+    model_name = 'gemini-1.5-flash'
+    
+    # 載入所有數據
     domains, micro_concepts = load_classification_data("domains_batch_20250903.json", "micro_concepts_batch_20250903.json")
-    questions = load_questions("fainaldata_no_del.json")
+    questions = load_questions("check_exam_output2.json")
 
-    if questions:
-        classified = classify_questions(questions, domains, micro_concepts)
-        save_to_json(classified, "classified_questions.json")
+    if questions and domains and micro_concepts:
+        # 批量呼叫 Gemini API 進行分類
+        classified_results = classify_with_gemini_batch(model_name, questions, domains, micro_concepts)
+
+        # 將分類結果與原始題目數據合併
+        final_questions = []
+        result_map = {q.get('question_number'): q for q in classified_results}
+        for q in questions:
+            q_num = q.get('question_number')
+            if q_num in result_map:
+                classified_info = result_map[q_num]
+                q['key-points'] = classified_info.get('key_points', '')
+                q['micro_concepts'] = classified_info.get('micro_concepts', [])
+            else:
+                # 若未找到分類結果，可給予預設值
+                q['key-points'] = ''
+                q['micro_concepts'] = []
+            final_questions.append(q)
+
+        # 儲存最終結果
+        save_to_json(final_questions, "classified_questions_batch.json")
