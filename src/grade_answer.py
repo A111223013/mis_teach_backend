@@ -148,6 +148,10 @@ class AnswerGrader:
                                     options: List[str], question_type: str) -> Tuple[bool, float, Dict[str, Any]]:
         """使用指定的模型進行AI評分"""
         try:
+            # 對於選擇題，先進行嚴格的正確答案比對
+            if question_type in ['single-choice', 'multiple-choice', 'true-false']:
+                return self._grade_choice_question_strict(user_answer, correct_answer, question_text, options, question_type)
+            
             prompt = self._build_grading_prompt(user_answer, question_text, correct_answer, options, question_type)
             
             if model:
@@ -281,6 +285,68 @@ class AnswerGrader:
 """
         return prompt
     
+    def _grade_choice_question_strict(self, user_answer: Any, correct_answer: str, question_text: str, 
+                                     options: List[str], question_type: str) -> Tuple[bool, float, Dict[str, Any]]:
+        """嚴格評分選擇題 - 完全按照正確答案進行判斷"""
+        try:
+            # 處理用戶答案
+            if user_answer is None or user_answer == '':
+                user_answer_str = ''
+            else:
+                user_answer_str = str(user_answer).strip().upper()
+            
+            # 處理正確答案
+            correct_answer_str = str(correct_answer).strip().upper()
+            # 判斷是否正確
+            is_correct = False
+            score = 0
+            
+            if question_type == 'single-choice' or question_type == 'true-false':
+                # 單選題：必須完全匹配
+                is_correct = user_answer_str == correct_answer_str
+                score = 100 if is_correct else 0
+                
+            elif question_type == 'multiple-choice':
+                # 多選題：答案集合必須完全相同（順序無關）
+                if user_answer_str and correct_answer_str:
+                    # 將答案轉換為字符集合進行比較
+                    user_set = set(user_answer_str)
+                    correct_set = set(correct_answer_str)
+                    is_correct = user_set == correct_set
+                    score = 100 if is_correct else 0
+                else:
+                    is_correct = False
+                    score = 0
+            
+            # 生成反饋
+            if is_correct:
+                feedback = {
+                    "explanation": f"答案正確！您選擇了正確的選項。",
+                    "strengths": "答案完全正確，理解準確。",
+                    "weaknesses": "無",
+                    "suggestions": "繼續保持，您對這個概念掌握得很好。"
+                }
+            else:
+                feedback = {
+                    "explanation": f"答案錯誤。正確答案是 '{correct_answer}'，您選擇了 '{user_answer}'。",
+                    "strengths": "您嘗試回答了問題。",
+                    "weaknesses": f"答案不正確，正確答案是 '{correct_answer}'。",
+                    "suggestions": "請重新學習相關概念，確保理解正確後再作答。"
+                }
+            
+            print(f"   評分結果: {score}分, 正確: {is_correct}")
+            
+            return is_correct, score, feedback
+            
+        except Exception as e:
+            print(f"❌ 選擇題嚴格評分失敗: {e}")
+            return False, 0, {
+                "explanation": "評分過程中發生錯誤",
+                "strengths": "無",
+                "weaknesses": "評分系統錯誤",
+                "suggestions": "請聯繫管理員"
+            }
+    
     def _get_type_specific_guidance(self, question_type: str) -> str:
         """根據題目類型返回特定的評分指導"""
         
@@ -358,7 +424,12 @@ class AnswerGrader:
 - 對於空白答案或無關回答，必須給0分
 - 嚴格按照正確答案進行評分，不允許任何偏差
 - 答案必須完全匹配，包括大小寫、格式、順序等
-"""
+
+**嚴格評分規則**：
+- 單選題：學生答案必須與正確答案完全相同（如正確答案是"B"，學生答"C"則0分）
+- 多選題：學生答案集合必須與正確答案集合完全相同（如正確答案是"ABD"，學生答"ABE"則0分）
+- 順序無關：多選題中答案順序不影響評分（"ABD"與"DBA"視為相同）
+- 任何偏差都視為錯誤，給0分"""
         
         else:
             return """

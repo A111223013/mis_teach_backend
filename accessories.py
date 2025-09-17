@@ -18,6 +18,7 @@ import json
 import os
 import google.generativeai as genai
 from tool.api_keys import get_api_key
+from neo4j import GraphDatabase
 
 sqldb = SQLAlchemy()
 mail = Mail()
@@ -26,6 +27,31 @@ token_store = FlaskRedis()
 mongo = PyMongo()
 login_manager = LoginManager()
 login_manager.login_view = "login"
+
+# Neo4j 驅動程式
+neo4j_driver = None
+
+def init_neo4j():
+    """初始化 Neo4j 連接"""
+    global neo4j_driver
+    try:
+        from config import Config
+        neo4j_driver = GraphDatabase.driver(
+            Config.NEO4J_URI, 
+            auth=(Config.NEO4J_USERNAME, Config.NEO4J_PASSWORD)
+        )
+        print(f"✅ Neo4j 連接成功: {Config.NEO4J_URI}")
+        return neo4j_driver
+    except Exception as e:
+        print(f"❌ Neo4j 連接失敗: {e}")
+        return None
+
+def get_neo4j_driver():
+    """獲取 Neo4j 驅動程式"""
+    global neo4j_driver
+    if neo4j_driver is None:
+        neo4j_driver = init_neo4j()
+    return neo4j_driver
 
 @login_manager.user_loader
 def load_user(user_id):

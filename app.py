@@ -30,6 +30,7 @@ from src.user_guide_api import user_guide_bp
 from src.web_ai_assistant import web_ai_bp
 from src.linebot import linebot_bp  # 新增 LINE Bot Blueprint
 from src.learning_analytics import analytics_bp  # 從統一模組導入學習分析 API Blueprint
+from src.unified_learning_analytics import learning_analytics_bp  # 統一學習分析 API Blueprint
 from tool.insert_mongodb import initialize_mis_teach_db # 引入教材資料庫
 
 # Initialize Flask app
@@ -64,8 +65,7 @@ token_store.init_app(app)
 mongo.init_app(app)
 login_manager.init_app(app)
 login_manager.login_view = '/login'
-init_mongo_data()
-initialize_mis_teach_db()
+
 
 # Register blueprints
 app.register_blueprint(login_bp, url_prefix='/login')
@@ -79,6 +79,7 @@ app.register_blueprint(web_ai_bp, url_prefix='/web-ai')
 app.register_blueprint(linebot_bp, url_prefix='/linebot') # 註冊 LINE Bot Blueprint
 app.register_blueprint(materials_bp, url_prefix="/materials")
 app.register_blueprint(analytics_bp, url_prefix="/analytics")  # 註冊學習分析 API Blueprint
+app.register_blueprint(learning_analytics_bp, url_prefix="/personalized_learning")  # 註冊統一學習分析 API Blueprint
 
 # 創建靜態文件服務路由 (用於圖片)
 @app.route('/static/images/<path:filename>')
@@ -185,7 +186,8 @@ with app.app_context():
     scheduler_thread = threading.Thread(target=run_scheduler, daemon=True)
     scheduler_thread.start()
     print("✅ 行事曆通知排程器已啟動")
-
+init_mongo_data()
+initialize_mis_teach_db()
 
 if __name__ == '__main__':
     app.run(debug=True)
