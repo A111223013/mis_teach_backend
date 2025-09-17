@@ -33,8 +33,16 @@ from src.learning_analytics import analytics_bp  # 從統一模組導入學習�
 from src.unified_learning_analytics import learning_analytics_bp  # 統一學習分析 API Blueprint
 from tool.insert_mongodb import initialize_mis_teach_db # 引入教材資料庫
 
+
+# 定義 BASE_DIR 為 backend 資料夾的絕對路徑
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
 # Initialize Flask app
-app = Flask(__name__)
+app = Flask(
+    __name__,
+    static_folder=os.path.join(BASE_DIR, "data", "courses_picture"),
+    static_url_path="/static"
+)
 
 # Load configuration based on environment
 cfg = Config()

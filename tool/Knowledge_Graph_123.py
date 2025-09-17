@@ -53,8 +53,20 @@ def load_questions(file_path: str) -> List[Dict[str, Any]]:
 def classify_with_gemini_batch(model_name: str, questions: List[Dict[str, Any]], domains: List[str], micro_concepts: List[str], max_retries=3):
     """
     批量處理題目，將多個問題打包成一個 API 請求。
+    
+    根據 key-points 欄位是否為 "基本計概" 來決定判斷範圍。
     """
-    prompt = f"""
+    
+    # 根據 key-points 區分需要重新判斷的題目和只需判斷 micro_concepts 的題目
+    reclassify_questions = [q for q in questions if q.get('key-points') == '基本計概']
+    micro_only_questions = [q for q in questions if q.get('key-points') != '基本計概']
+
+    classified_results = []
+    
+    # --- 處理 key-points 為 "基本計概" 的題目 ---
+    if reclassify_questions:
+        print(f"🔄 正在重新判斷 {len(reclassify_questions)} 題 '基本計概' 類別的題目...")
+        prompt_reclassify = f"""
 請協助判斷以下題目的 key-points 和 micro_concepts，並以 JSON 陣列格式回覆。
 
 候選 key-points: {domains}
@@ -68,41 +80,86 @@ def classify_with_gemini_batch(model_name: str, questions: List[Dict[str, Any]],
    {{"question_number": "題號", "key_points": "選出的 key-points", "micro_concepts": ["選出的微概念列表"]}}
 
 待分類的題目列表：
-{json.dumps(questions, ensure_ascii=False, indent=2)}
+{json.dumps(reclassify_questions, ensure_ascii=False, indent=2)}
 """
-
-    attempt = 0
-    while attempt < max_retries:
-        try:
-            gemini_model = genai.GenerativeModel(model_name=model_name)
-            response = gemini_model.generate_content(
-                prompt,
-                generation_config=genai.types.GenerationConfig(
-                    temperature=0.3,
-                    max_output_tokens=4096  # 增加 token 限制以處理多個題目
+        attempt = 0
+        while attempt < max_retries:
+            try:
+                gemini_model = genai.GenerativeModel(model_name=model_name)
+                response = gemini_model.generate_content(
+                    prompt_reclassify,
+                    generation_config=genai.types.GenerationConfig(
+                        temperature=0.3,
+                        max_output_tokens=4096  # 增加 token 限制以處理多個題目
+                    )
                 )
-            )
+                if not response.text:
+                    raise ValueError("API 回應為空")
 
-            # 確保回應有內容
-            if not response.text:
-                raise ValueError("API 回應為空")
+                output_text = response.text
+                json_match = re.search(r'\[\s*\{.*\}\s*\]', output_text, re.S)
+                if json_match:
+                    classified_results.extend(json.loads(json_match.group()))
+                    break
+                else:
+                    raise ValueError("API 回應中找不到有效的 JSON 陣列")
 
-            output_text = response.text
-            # 尋找並提取 JSON 陣列
-            json_match = re.search(r'\[\s*\{.*\}\s*\]', output_text, re.S)
-            if json_match:
-                result_list = json.loads(json_match.group())
-                return result_list
-            else:
-                raise ValueError("API 回應中找不到有效的 JSON 陣列")
+            except Exception as e:
+                attempt += 1
+                wait_time = 2 ** attempt
+                print(f"❌ Gemini 批量判斷 (基本計概) 失敗 (第 {attempt} 次): {e}, {wait_time}s 後重試...")
+                time.sleep(wait_time)
+        else:
+            print("❌ Gemini 判斷重試失敗，跳過所有 '基本計概' 題目。")
 
-        except Exception as e:
-            attempt += 1
-            wait_time = 2 ** attempt
-            print(f"❌ Gemini 批量判斷失敗 (第 {attempt} 次): {e}, {wait_time}s 後重試...")
-            time.sleep(wait_time)
-    print(f"❌ Gemini 批量判斷重試 {max_retries} 次仍失敗，跳過所有題目")
-    return []
+    # --- 處理只需判斷 micro_concepts 的題目 ---
+    if micro_only_questions:
+        print(f"🔍 正在判斷 {len(micro_only_questions)} 題 '非基本計概' 類別的 micro_concepts...")
+        prompt_micro_only = f"""
+請協助判斷以下題目的 micro_concepts，並以 JSON 陣列格式回覆。
+這些題目的 key-points 已確定，請忽略。
+
+候選 micro_concepts: {micro_concepts}
+
+要求：
+1. 針對每個題目，從候選列表中選出題目中出現的或最相關的微概念。
+2. micro_concepts 必須為字串陣列 (array of strings)，允許多個，若完全沒有匹配，選最接近的一個。
+3. 以 JSON 陣列格式回覆，每個物件代表一題，其結構應為：
+   {{"question_number": "題號", "micro_concepts": ["選出的微概念列表"]}}
+
+待分類的題目列表：
+{json.dumps(micro_only_questions, ensure_ascii=False, indent=2)}
+"""
+        attempt = 0
+        while attempt < max_retries:
+            try:
+                gemini_model = genai.GenerativeModel(model_name=model_name)
+                response = gemini_model.generate_content(
+                    prompt_micro_only,
+                    generation_config=genai.types.GenerationConfig(
+                        temperature=0.3,
+                        max_output_tokens=4096
+                    )
+                )
+                if not response.text:
+                    raise ValueError("API 回應為空")
+
+                output_text = response.text
+                json_match = re.search(r'\[\s*\{.*\}\s*\]', output_text, re.S)
+                if json_match:
+                    classified_results.extend(json.loads(json_match.group()))
+                    break
+                else:
+                    raise ValueError("API 回應中找不到有效的 JSON 陣列")
+            except Exception as e:
+                attempt += 1
+                wait_time = 2 ** attempt
+                print(f"❌ Gemini 批量判斷 (micro_concepts) 失敗 (第 {attempt} 次): {e}, {wait_time}s 後重試...")
+                time.sleep(wait_time)
+        else:
+            print("❌ Gemini 判斷重試失敗，跳過所有 '非基本計概' 題目。")
+
+    return classified_results
 
 # ========== 儲存 JSON ==========
 def save_to_json(data: Any, filename: str):
@@ -135,12 +192,9 @@ if __name__ == "__main__":
             q_num = q.get('question_number')
             if q_num in result_map:
                 classified_info = result_map[q_num]
-                q['key-points'] = classified_info.get('key_points', '')
-                q['micro_concepts'] = classified_info.get('micro_concepts', [])
-            else:
-                # 若未找到分類結果，可給予預設值
-                q['key-points'] = ''
-                q['micro_concepts'] = []
+                # 只更新有判斷結果的欄位
+                q['key-points'] = classified_info.get('key_points', q.get('key-points'))
+                q['micro_concepts'] = classified_info.get('micro_concepts', q.get('micro_concepts', []))
             final_questions.append(q)
 
         # 儲存最終結果

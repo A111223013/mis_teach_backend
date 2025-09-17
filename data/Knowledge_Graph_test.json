@@ -15,7 +15,7 @@
     "image_file": [],
     "answer": "a",
     "detail-answer": "正確答案是 (a) int [x][];。在 Java 中，二維陣列的宣告必須遵守語法規則。選項 (b) int x[][];、(c) int []x[]; 與 (d) int [][]x; 都是合法的二維陣列宣告方式，只是書寫風格不同。而 (a) int [x][]; 並不符合 Java 語法規則，因為方括號不能寫在型別前的變數名稱位置。若要合法宣告二維陣列，必須以 int[][] x;、int x[][]; 或 int[] x[]; 的形式撰寫。\n\n此題主要考察 Java 語法中陣列宣告的規則，屬於程式語言基礎語法題，因此難度為中等。",
-    "key-points": "資料結構",
+    "key-points": "程式語言",
     "difficulty level": "中等",
     "error reason": "",
     "micro_concepts": [
@@ -58,11 +58,12 @@
     "image_file": [],
     "answer": "```\nfunction combination(n, k):\n  // Error Handling: Check for invalid inputs\n  if n < 0 or k < 0 or k > n:\n    return \"Invalid input: n and k must be non-negative, and k must be less than or equal to n.\"\n\n  // Base Cases:\n  if k == 0 or k == n:\n    return 1  // C(n, 0) = C(n, n) = 1\n  if k == 1:\n    return n  // C(n, 1) = n\n\n  // Recursive Step:\n  return combination(n-1, k-1) + combination(n-1, k)\n```",
     "detail-answer": "此虛擬碼使用遞迴的方式計算組合數 C(n, k)。\n\n*   **基本情況 (Base Cases):**\n    *   `k == 0 or k == n`:  C(n, 0) 和 C(n, n) 都等於 1，這是遞迴的終止條件。\n    *   `k == 1`: C(n, 1) 等於 n，這也是一個基本情況，能提高效率。\n*   **遞迴步驟 (Recursive Step):**\n    *   `combination(n-1, k-1) + combination(n-1, k)`: 使用帕斯卡恆等式 C(n, k) = C(n-1, k-1) + C(n-1, k) 將問題分解為兩個較小的子問題，並遞迴呼叫自身。\n*   **錯誤處理 (Error Handling):**\n    *   `if n < 0 or k < 0 or k > n`: 檢查輸入的有效性，如果 n 或 k 為負數，或 k 大於 n，則返回錯誤訊息。\n\n此方法基於數學公式和遞迴思想，將複雜的組合計算分解為更小的子問題，直到達到基本情況。 程式碼的難度在於理解遞迴的運作方式和如何將數學公式轉換為程式碼。錯誤處理的加入也提升了程式碼的健壯性。\n\n知識點屬於程式語言，考察遞迴演算法的設計和應用。",
-    "key-points": "資料結構",
+    "key-points": "程式語言",
     "difficulty level": "中等",
     "error reason": "",
     "micro_concepts": [
-      "遞迴"
+      "演算法定義",
+      "遞迴結構"
     ]
   },
   {
@@ -88,8 +89,7 @@
     "micro_concepts": [
       "單向鏈結串列",
       "演算法定義",
-      "程式效率分析",
-      "合併排序"
+      "程式效率分析"
     ]
   },
   {
@@ -107,7 +107,9 @@
     "difficulty level": "中等",
     "error reason": "",
     "micro_concepts": [
-      "CPU排班"
+      "CPU排班",
+      "行程觀念",
+      "執行緒與並行性"
     ]
   }
 ]
