@@ -206,6 +206,7 @@ def init_mongo_data():
                         'key-points': item.get('key-points'),
                         'micro_concepts': item.get('micro_concepts', []),
                         'difficulty level': item.get('difficulty level'),
+                        'error reason': item.get('error reason', '')  # 新增 error reason 欄位
                     }
                     processed_data.append(processed_item)
                 
@@ -225,18 +226,22 @@ def init_mongo_data():
                     # 處理子題目
                     if 'sub_questions' in item and isinstance(item['sub_questions'], list):
                         for sub_item in item['sub_questions']:
-                            sub_question = {
-                                'question_number': sub_item.get('question_number'),
-                                'question_text': sub_item.get('question_text'),
-                                'options': sub_item.get('options', []),
-                                'answer': sub_item.get('answer'),
-                                'answer_type': sub_item.get('answer_type'),
-                                'image_file': sub_item.get('image_file', []),
-                                'detail-answer': sub_item.get('detail-answer'),
-                                'key-points': sub_item.get('key-points'),
-                                'difficulty level': sub_item.get('difficulty level'),
-                            }
-                            group_item['sub_questions'].append(sub_question)
+                            try:
+                                sub_question = {
+                                    'question_number': sub_item.get('question_number'),
+                                    'question_text': sub_item.get('question_text'),
+                                    'options': sub_item.get('options', []),
+                                    'answer': sub_item.get('answer'),
+                                    'answer_type': sub_item.get('answer_type'),
+                                    'image_file': sub_item.get('image_file', []),
+                                    'detail-answer': sub_item.get('detail-answer'),
+                                    'key-points': sub_item.get('key-points'),
+                                    'difficulty level': sub_item.get('difficulty level'),
+                                
+                                }
+                                group_item['sub_questions'].append(sub_question)
+                            except Exception:
+                                continue
                     
                     processed_data.append(group_item)
                 
@@ -245,7 +250,6 @@ def init_mongo_data():
                     processed_data.append(item)
            
             result = mongo.db.exam.insert_many(processed_data)
-            print(f"成功初始化考試資料，共插入 {len(result.inserted_ids)} 筆資料")
             print(f"包含單題和群組題的完整結構")
             return True    
         else:
