@@ -17,13 +17,8 @@ from flask_mail import Mail, Message
 from accessories import mail, redis_client, send_calendar_notification
 import threading
 import schedule
+from src.dashboard import init_calendar_tables
 
-# Temporarily removed langchain imports until dependencies are installed
-# from langchain_google_genai import ChatGoogleGenerativeAI, GoogleGenerativeAIEmbeddings
-# from langchain_community.vectorstores import FAISS
-# from langchain.text_splitter import CharacterTextSplitter
-# from langchain.chains import RetrievalQA
-# from langchain.schema.document import Document
 
 from src.ai_teacher import ai_teacher_bp
 from src.user_guide_api import user_guide_bp
@@ -175,22 +170,16 @@ def check_calendar_notifications():
 
 def run_scheduler():
     """運行背景排程器"""
-    # 每分鐘檢查一次通知
     schedule.every(1).minutes.do(check_calendar_notifications)
-    
     while True:
         schedule.run_pending()
-        time.sleep(60)  # 每分鐘檢查一次
+        time.sleep(60) 
 
 # 初始化數據庫表格
 with app.app_context():
     sqldb.create_all()
-    # 移除自動初始化，改為按需初始化
-    init_quiz_tables()  # 初始化測驗相關表格
-    from src.dashboard import init_calendar_tables
-    init_calendar_tables()  # 初始化行事曆表格
-
-    # 啟動背景排程器
+    init_quiz_tables() 
+    init_calendar_tables() 
     scheduler_thread = threading.Thread(target=run_scheduler, daemon=True)
     scheduler_thread.start()
     print("✅ 行事曆通知排程器已啟動")

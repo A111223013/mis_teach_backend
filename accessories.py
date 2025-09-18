@@ -176,62 +176,85 @@ def init_gemini(model_name = 'gemini-2.5-flash'):
 def init_mongo_data():
     try:
         exam_count = mongo.db.exam.count_documents({})
-        
         if exam_count == 0:
             print("檢測到exam collection為空，開始初始化資料...")
-            
             current_dir = os.path.dirname(os.path.abspath(__file__))
-            json_file_path = os.path.join(current_dir, 'data', 'merged_results.json')
-            
+            json_file_path = os.path.join(current_dir, 'data', '20250918_ai_judged_final.json')
             if not os.path.exists(json_file_path):
                 print(f"錯誤：找不到檔案 {json_file_path}")
                 return False
-            
             with open(json_file_path, 'r', encoding='utf-8') as file:
                 exam_data = json.load(file)
             
-            if not exam_data:
-                print("錯誤：json檔案為空或格式不正確")
-                return False
-            
-            # 扁平化資料結構
-            flattened_data = []
+            # 處理不同類型的題目結構
+            processed_data = []
             for item in exam_data:
-                flattened_item = {
-                    'type': item.get('type'),
-                    'school': item.get('school'),
-                    'department': item.get('department'),
-                    'year': item.get('year'),
-                    'question_number': item.get('question_number'),
-                    'question_text': item.get('question_text'),
-                    'options': item.get('options'),
-                    'answer': item.get('answer'),
-                    'answer_type': item.get('answer_type'),
-                    'image_file': item.get('image_file'),
-                    'detail-answer': item.get('detail-answer'),
-                    'key_points': item.get('key-points'),
-                    'difficulty level': item.get('difficulty level'),
-                }
-                flattened_data.append(flattened_item)
+                if item.get('type') == 'single':
+                    # 單題結構
+                    processed_item = {
+                        'type': item.get('type'),
+                        'school': item.get('school'),
+                        'department': item.get('department'),
+                        'year': item.get('year'),
+                        'question_number': item.get('question_number'),
+                        'question_text': item.get('question_text'),
+                        'options': item.get('options', []),
+                        'answer': item.get('answer'),
+                        'answer_type': item.get('answer_type'),
+                        'image_file': item.get('image_file', []),
+                        'detail-answer': item.get('detail-answer'),
+                        'key-points': item.get('key-points'),
+                        'micro_concepts': item.get('micro_concepts', []),
+                        'difficulty level': item.get('difficulty level'),
+                    }
+                    processed_data.append(processed_item)
+                
+                elif item.get('type') == 'group':
+                    # 群組題結構
+                    group_item = {
+                        'type': item.get('type'),
+                        'school': item.get('school'),
+                        'department': item.get('department'),
+                        'year': item.get('year'),
+                        'group_question_text': item.get('group_question_text'),
+                        'key-points': item.get('key-points'),
+                        'micro_concepts': item.get('micro_concepts', []),
+                        'sub_questions': []
+                    }
+                    
+                    # 處理子題目
+                    if 'sub_questions' in item and isinstance(item['sub_questions'], list):
+                        for sub_item in item['sub_questions']:
+                            sub_question = {
+                                'question_number': sub_item.get('question_number'),
+                                'question_text': sub_item.get('question_text'),
+                                'options': sub_item.get('options', []),
+                                'answer': sub_item.get('answer'),
+                                'answer_type': sub_item.get('answer_type'),
+                                'image_file': sub_item.get('image_file', []),
+                                'detail-answer': sub_item.get('detail-answer'),
+                                'key-points': sub_item.get('key-points'),
+                                'difficulty level': sub_item.get('difficulty level'),
+                            }
+                            group_item['sub_questions'].append(sub_question)
+                    
+                    processed_data.append(group_item)
+                
+                else:
+                    # 其他類型，保持原始結構
+                    processed_data.append(item)
            
-            result = mongo.db.exam.insert_many(flattened_data)
-            
+            result = mongo.db.exam.insert_many(processed_data)
             print(f"成功初始化考試資料，共插入 {len(result.inserted_ids)} 筆資料")
-            return True
-            
+            print(f"包含單題和群組題的完整結構")
+            return True    
         else:
             print(f"exam collection已有 {exam_count} 筆資料，無需初始化")
             return True
-            
     except FileNotFoundError:
-        print("錯誤：找不到correct_exam.json檔案")
+        print("錯誤：找不到20250918_ai_judged_final.json檔案")
         return False
-    except json.JSONDecodeError:
-        print("錯誤：json檔案格式不正確")
-        return False
-    except Exception as e:
-        print(f"初始化考試資料時發生錯誤：{str(e)}")
-        return False
+
 
 
 def send_mail(sender, receiver, subject,content):

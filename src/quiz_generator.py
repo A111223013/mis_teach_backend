@@ -221,7 +221,6 @@ class SmartQuizGenerator:
             "detail-answer": question.get('explanation', ''),
             "key-points": [question.get('key_points', requirements.get('topic', 'AI生成'))],
             "difficulty level": self._map_difficulty(question.get('difficulty', 'medium')),
-            "error reason": "",
             "create_time": datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
         }
         
