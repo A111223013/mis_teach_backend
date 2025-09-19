@@ -82,7 +82,6 @@ app.register_blueprint(web_ai_bp, url_prefix='/web-ai')
 app.register_blueprint(linebot_bp, url_prefix='/linebot') # 註冊 LINE Bot Blueprint
 app.register_blueprint(materials_bp, url_prefix="/materials")
 app.register_blueprint(analytics_bp, url_prefix="/analytics")  # 註冊學習分析 API Blueprint
-app.register_blueprint(learning_analytics_bp, url_prefix="/personalized_learning")  # 註冊統一學習分析 API Blueprint
 
 # 創建靜態文件服務路由 (用於圖片)
 @app.route('/static/images/<path:filename>')

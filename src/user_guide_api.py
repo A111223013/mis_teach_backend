@@ -41,10 +41,10 @@ def get_user_guide_status():
         if not user_email:
             # 如果沒有 token，從 session 獲取用戶 ID
             user_id = session.get('user_id', 'anonymous_user')
-            user_record = mongo.db.students.find_one({'user_id': user_id})
+            user_record = mongo.db.user.find_one({'user_id': user_id})
         else:
             # 使用 email 查詢用戶
-            user_record = mongo.db.students.find_one({'email': user_email})
+            user_record = mongo.db.user.find_one({'email': user_email})
 
         if user_record:
             # 用戶存在，返回實際狀態
@@ -104,7 +104,7 @@ def mark_user_as_guided():
             identifier = user_email
 
         # 更新用戶記錄
-        update_result = mongo.db.students.update_one(
+        update_result = mongo.db.user.update_one(
             query,
             {
                 '$set': {
@@ -151,7 +151,7 @@ def reset_user_guide_status():
         user_id = session.get('user_id', 'anonymous_user')
         
         # 連接 MongoDB
-        users_collection = mongo.db.students
+        users_collection = mongo.db.user
         
         # 重置用戶記錄
         update_result = users_collection.update_one(
@@ -200,7 +200,7 @@ def get_guide_statistics():
     """
     try:
         # 連接 MongoDB
-        users_collection = mongo.db.students
+        users_collection = mongo.db.user
         
         # 統計數據
         total_users = users_collection.count_documents({})

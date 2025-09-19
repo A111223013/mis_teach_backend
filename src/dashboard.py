@@ -89,7 +89,7 @@ def get_user_info_api():
             return jsonify({'message': 'Token無效或已過期'}), 401
         
         # 從 MongoDB 獲取用戶資料
-        user = mongo.db.students.find_one({"email": user_email})
+        user = mongo.db.user.find_one({"email": user_email})
         if not user:
             return jsonify({'message': '找不到用戶資料'}), 404
         
@@ -145,7 +145,7 @@ def update_user_info():
             return jsonify({'message': '沒有可更新的資料'}), 400
         
         
-        result = mongo.db.students.update_one(
+        result = mongo.db.user.update_one(
             {"email": user_email},
             {"$set": update_data}
         )

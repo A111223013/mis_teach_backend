@@ -20,28 +20,48 @@ logger = logging.getLogger(__name__)
 
 # ==================== 資料載入模組 ====================
 
-def get_student_quiz_records(student_email: str, limit: int = 100) -> List[Dict]:
-    """從MySQL獲取學生答題紀錄"""
+def get_student_quiz_records(student_identifier: str, limit: int = 100) -> List[Dict]:
+    """從MySQL獲取學生答題紀錄
+    支援 user_id 或 user_email 參數
+    """
     try:
         if not sqldb:
             logger.error("SQL 數據庫連接未初始化")
             return []
         
+        # 判斷是 user_id 還是 user_email
+        if '@' in student_identifier:
+            # 是 email
+            where_clause = "qa.user_email = :identifier"
+        else:
+            # 是 user_id，需要先從 MongoDB 獲取 email
+            try:
+                from bson import ObjectId
+                user = mongo.db.user.find_one({'_id': ObjectId(student_identifier)})
+                if not user:
+                    logger.error(f"找不到用戶: {student_identifier}")
+                    return []
+                student_identifier = user.get('email', '')
+                where_clause = "qa.user_email = :identifier"
+            except Exception as e:
+                logger.error(f"獲取用戶email失敗: {e}")
+                return []
+        
         # 查詢學生答題紀錄
-        query = """
+        query = f"""
         SELECT 
             qa.mongodb_question_id,
             qa.is_correct,
             qa.answer_time_seconds,
             qa.created_at as quiz_date
         FROM quiz_answers qa
-        WHERE qa.user_email = :user_email
+        WHERE {where_clause}
         ORDER BY qa.created_at DESC
         LIMIT :limit
         """
         
         result = sqldb.session.execute(sqldb.text(query), {
-            'user_email': student_email,
+            'identifier': student_identifier,
             'limit': limit
         }).fetchall()
         
@@ -51,6 +71,7 @@ def get_student_quiz_records(student_email: str, limit: int = 100) -> List[Dict]
                 "mongodb_question_id": row[0],
                 "is_correct": bool(row[1]),
                 "answer_time_seconds": row[2] or 0,
+                "created_at": row[3].isoformat() if row[3] else "2024-01-01T00:00:00Z",
                 "quiz_date": row[3].strftime("%Y-%m-%d") if row[3] else "2024-01-01"
             })
         
@@ -846,3 +867,1844 @@ def get_dependency_issues(student_email: str):
             "success": False,
             "error": str(e)
         }), 500
+
+# ==================== 學生端API ====================
+
+@analytics_bp.route('/api/analytics/overview/<user_id>', methods=['GET'])
+def get_analytics_overview(user_id: str):
+    """獲取學習分析概覽 - 首屏數據"""
+    try:
+        from bson import ObjectId
+        from datetime import datetime, timedelta
+        
+        # 檢查用戶是否存在
+        user = mongo.db.user.find_one({'_id': ObjectId(user_id)})
+        if not user:
+            return jsonify({
+                'success': False,
+                'error': '用戶不存在'
+            })
+        
+        # 獲取學生答題記錄
+        quiz_records = get_student_quiz_records(user_id)
+        
+        # 獲取弱點報告
+        weakness_report = generate_weakness_report(user_id)
+        
+        # 計算整體掌握度
+        valid_concepts = [concept for concept in weakness_report.get('concepts', []) 
+                         if not concept.get('insufficient_data', False)]
+        
+        if valid_concepts:
+            overall_mastery = sum(concept.get('mastery_score', 0) for concept in valid_concepts) / len(valid_concepts)
+        else:
+            overall_mastery = 0
+        
+        # 生成領域數據
+        domains = generate_domain_overview(weakness_report)
+        
+        # 生成Top 3弱點
+        top_weak_points = generate_top_weak_points(weakness_report, limit=3)
+        
+        # 生成最近趨勢
+        recent_trend = generate_recent_trend(quiz_records, days=7)
+        
+        return jsonify({
+            'success': True,
+            'user_id': user_id,
+            'overall_mastery': round(overall_mastery, 2),
+            'domains': domains,
+            'top_weak_points': top_weak_points,
+            'recent_trend': recent_trend
+        })
+        
+    except Exception as e:
+        logger.error(f'獲取分析概覽失敗: {str(e)}')
+        return jsonify({
+            'success': False,
+            'error': f'獲取分析概覽失敗: {str(e)}'
+        })
+
+@analytics_bp.route('/api/analytics/block/<user_id>/<domain_id>', methods=['GET'])
+def get_domain_blocks(user_id: str, domain_id: str):
+    """獲取領域下的知識塊"""
+    try:
+        from bson import ObjectId
+        
+        # 檢查用戶是否存在
+        user = mongo.db.user.find_one({'_id': ObjectId(user_id)})
+        if not user:
+            return jsonify({
+                'success': False,
+                'error': '用戶不存在'
+            })
+        
+        # 獲取弱點報告
+        weakness_report = generate_weakness_report(user_id)
+        
+        # 生成知識塊數據
+        blocks = generate_domain_blocks(weakness_report, domain_id)
+        
+        return jsonify({
+            'success': True,
+            'domain_id': domain_id,
+            'blocks': blocks
+        })
+        
+    except Exception as e:
+        logger.error(f'獲取領域知識塊失敗: {str(e)}')
+        return jsonify({
+            'success': False,
+            'error': f'獲取領域知識塊失敗: {str(e)}'
+        })
+
+@analytics_bp.route('/api/analytics/concept/<user_id>/<block_id>', methods=['GET'])
+def get_block_concepts(user_id: str, block_id: str):
+    """獲取知識塊下的微知識點"""
+    try:
+        from bson import ObjectId
+        
+        # 檢查用戶是否存在
+        user = mongo.db.user.find_one({'_id': ObjectId(user_id)})
+        if not user:
+            return jsonify({
+                'success': False,
+                'error': '用戶不存在'
+            })
+        
+        # 獲取弱點報告
+        weakness_report = generate_weakness_report(user_id)
+        
+        # 生成微知識點數據
+        micro_concepts = generate_block_concepts(weakness_report, block_id)
+        
+        return jsonify({
+            'success': True,
+            'block_id': block_id,
+            'micro_concepts': micro_concepts
+        })
+        
+    except Exception as e:
+        logger.error(f'獲取知識塊微知識點失敗: {str(e)}')
+        return jsonify({
+            'success': False,
+            'error': f'獲取知識塊微知識點失敗: {str(e)}'
+        })
+
+@analytics_bp.route('/api/analytics/micro/<user_id>/<micro_id>', methods=['GET'])
+def get_micro_detail_new(user_id: str, micro_id: str):
+    """獲取微知識點詳細信息"""
+    try:
+        from bson import ObjectId
+        from datetime import datetime
+        
+        # 檢查用戶是否存在
+        user = mongo.db.user.find_one({'_id': ObjectId(user_id)})
+        if not user:
+            return jsonify({
+                'success': False,
+                'error': '用戶不存在'
+            })
+        
+        # 獲取學生答題記錄
+        quiz_records = get_student_quiz_records(user_id)
+        
+        # 獲取弱點報告
+        weakness_report = generate_weakness_report(user_id)
+        
+        # 生成微知識點詳細數據
+        micro_detail = generate_micro_detail(weakness_report, quiz_records, micro_id)
+        
+        return jsonify({
+            'success': True,
+            'micro_id': micro_id,
+            'detail': micro_detail
+        })
+        
+    except Exception as e:
+        logger.error(f'獲取微知識點詳情失敗: {str(e)}')
+        return jsonify({
+            'success': False,
+            'error': f'獲取微知識點詳情失敗: {str(e)}'
+        })
+
+@analytics_bp.route('/api/analytics/diagnosis', methods=['POST'])
+def generate_ai_diagnosis():
+    """生成AI診斷和學習路徑"""
+    try:
+        from flask import request
+        from bson import ObjectId
+        
+        data = request.get_json()
+        user_id = data.get('user_id')
+        micro_id = data.get('micro_id')
+        mode = data.get('mode', 'standard')
+        time_budget = data.get('time_budget', 30)
+        
+        if not user_id or not micro_id:
+            return jsonify({
+                'success': False,
+                'error': '缺少必要參數'
+            })
+        
+        # 檢查用戶是否存在
+        user = mongo.db.user.find_one({'_id': ObjectId(user_id)})
+        if not user:
+            return jsonify({
+                'success': False,
+                'error': '用戶不存在'
+            })
+        
+        # 獲取學生答題記錄
+        quiz_records = get_student_quiz_records(user_id)
+        
+        # 獲取弱點報告
+        weakness_report = generate_weakness_report(user_id)
+        
+        # 生成AI診斷
+        diagnosis = generate_ai_diagnosis_data(weakness_report, quiz_records, micro_id, mode, time_budget)
+        
+        return jsonify({
+            'success': True,
+            'diagnosis': diagnosis
+        })
+        
+    except Exception as e:
+        logger.error(f'生成AI診斷失敗: {str(e)}')
+        return jsonify({
+            'success': False,
+            'error': f'生成AI診斷失敗: {str(e)}'
+        })
+
+@analytics_bp.route('/api/student/overview', methods=['GET'])
+def get_student_overview():
+    """獲取學生學習概覽"""
+    try:
+        from flask import session, request
+        from bson import ObjectId
+        from datetime import datetime, timedelta
+        
+        # 優先從session獲取，如果沒有則從參數獲取，最後使用默認測試用戶
+        user_id = session.get('user_id') or request.args.get('user_id')
+        
+        if not user_id:
+            # 使用默認測試用戶
+            test_user = mongo.db.user.find_one({'email': 'test@example.com'})
+            if test_user:
+                user_id = str(test_user['_id'])
+            else:
+                return jsonify({
+                    'success': False,
+                    'error': '未找到測試用戶，請先登入',
+                    'overview': {
+                        'overall_mastery': 0,
+                        'weak_points_count': 0,
+                        'recent_attempts': 0,
+                        'confidence_level': 0,
+                        'insufficient_data_concepts': 0
+                    }
+                })
+        
+        # 檢查用戶是否存在
+        user = mongo.db.user.find_one({'_id': ObjectId(user_id)})
+        if not user:
+            return jsonify({
+                'success': False,
+                'error': '用戶不存在',
+                'overview': {
+                    'overall_mastery': 0,
+                    'weak_points_count': 0,
+                    'recent_attempts': 0,
+                    'confidence_level': 0,
+                    'insufficient_data_concepts': 0
+                }
+            })
+        
+        # 獲取學生答題記錄
+        quiz_records = get_student_quiz_records(user_id)
+        
+        # 計算基本統計
+        total_questions = len(quiz_records)
+        correct_answers = sum(1 for record in quiz_records if record.get('is_correct', False))
+        accuracy = (correct_answers / total_questions * 100) if total_questions > 0 else 0
+        
+        # 獲取弱點報告
+        weakness_report = generate_weakness_report(user_id)
+        
+        # 計算整體掌握度（排除數據不足的知識點）
+        valid_concepts = [concept for concept in weakness_report.get('concepts', []) 
+                         if not concept.get('insufficient_data', False)]
+        
+        if valid_concepts:
+            overall_mastery = sum(concept.get('mastery_score', 0) for concept in valid_concepts) / len(valid_concepts)
+        else:
+            overall_mastery = 0
+        
+        # 計算信心度
+        confidence_level = min(1.0, total_questions / 20)  # 基於練習次數計算信心度
+        
+        # 計算最近7天練習次數
+        now = datetime.now()
+        week_ago = now - timedelta(days=7)
+        recent_attempts = len([r for r in quiz_records 
+                              if datetime.fromisoformat(r.get('created_at', '').replace('Z', '+00:00')) > week_ago])
+        
+        # 生成圖表數據
+        chart_data = self.generate_all_chart_data(weakness_report, quiz_records)
+        
+        return jsonify({
+            'success': True,
+            'overview': {
+                'overall_mastery': round(overall_mastery, 1),
+                'weak_points_count': len([c for c in weakness_report.get('concepts', []) 
+                                        if c.get('mastery_score', 0) < 40 and not c.get('insufficient_data', False)]),
+                'recent_attempts': recent_attempts,
+                'confidence_level': round(confidence_level, 2),
+                'insufficient_data_concepts': len(weakness_report.get('concepts', [])) - len(valid_concepts)
+            },
+            'chart_data': chart_data,
+            'available_domains': self.get_available_domains(weakness_report)
+        })
+        
+    except Exception as e:
+        logger.error(f'獲取學習概覽失敗: {str(e)}')
+        return jsonify({
+            'success': False,
+            'error': f'獲取學習概覽失敗: {str(e)}',
+            'overview': {
+                'overall_mastery': 0,
+                'weak_points_count': 0,
+                'recent_attempts': 0,
+                'confidence_level': 0,
+                'insufficient_data_concepts': 0
+            }
+        })
+
+@analytics_bp.route('/api/student/weaknesses', methods=['GET'])
+def get_student_weaknesses():
+    """獲取學生弱點分析"""
+    try:
+        from flask import session, request
+        from bson import ObjectId
+        
+        # 優先從session獲取，如果沒有則從參數獲取，最後使用默認測試用戶
+        user_id = session.get('user_id') or request.args.get('user_id')
+        
+        if not user_id:
+            # 使用默認測試用戶
+            test_user = mongo.db.user.find_one({'email': 'test@example.com'})
+            if test_user:
+                user_id = str(test_user['_id'])
+            else:
+                return jsonify({
+                    'success': False,
+                    'error': '未找到測試用戶，請先登入',
+                    'weaknesses': {
+                        'critical': [],
+                        'moderate': []
+                    }
+                })
+        
+        # 檢查用戶是否存在
+        user = mongo.db.user.find_one({'_id': ObjectId(user_id)})
+        if not user:
+            return jsonify({
+                'success': False,
+                'error': '用戶不存在',
+                'weaknesses': {
+                    'critical': [],
+                    'moderate': []
+                }
+            })
+        
+        # 獲取弱點報告
+        weakness_report = generate_weakness_report(user_id)
+        
+        # 分類弱點
+        critical_weaknesses = []
+        moderate_weaknesses = []
+        
+        for concept in weakness_report.get('concepts', []):
+            if concept.get('insufficient_data', False):
+                continue
+                
+            mastery_score = concept.get('mastery_score', 0)
+            if mastery_score < 40:
+                critical_weaknesses.append(concept)
+            elif mastery_score < 80:
+                moderate_weaknesses.append(concept)
+        
+        # 按掌握度排序
+        critical_weaknesses.sort(key=lambda x: x.get('mastery_score', 0))
+        moderate_weaknesses.sort(key=lambda x: x.get('mastery_score', 0))
+        
+        return jsonify({
+            'success': True,
+            'weaknesses': {
+                'critical': critical_weaknesses[:10],  # 前10個嚴重弱點
+                'moderate': moderate_weaknesses[:10],  # 前10個中等弱點
+                'total_critical': len(critical_weaknesses),
+                'total_moderate': len(moderate_weaknesses)
+            }
+        })
+        
+    except Exception as e:
+        logger.error(f'獲取弱點分析失敗: {str(e)}')
+        return jsonify({
+            'success': False,
+            'error': f'獲取弱點分析失敗: {str(e)}',
+            'weaknesses': {
+                'critical': [],
+                'moderate': []
+            }
+        })
+
+@analytics_bp.route('/api/student/micro-detail/<micro_id>', methods=['GET'])
+def get_micro_detail(micro_id: str):
+    """獲取特定知識點詳細分析"""
+    try:
+        from flask import session
+        from bson import ObjectId
+        from datetime import datetime, timedelta
+        
+        user_id = session.get('user_id')
+        if not user_id:
+            return jsonify({'error': '未登入'}), 401
+        
+        # 檢查是否為學生
+        user = mongo.db.user.find_one({'_id': ObjectId(user_id)})
+        if not user or user.get('role') != 'student':
+            return jsonify({'error': '權限不足'}), 403
+        
+        # 獲取知識點詳情
+        micro_concept = mongo.db.micro_concept.find_one({'_id': ObjectId(micro_id)})
+        if not micro_concept:
+            return jsonify({'error': '知識點不存在'}), 404
+        
+        # 計算掌握度
+        mastery_result = calculate_micro_concept_mastery(user_id, micro_id)
+        
+        # 獲取最近練習記錄
+        quiz_records = get_student_quiz_records(user_id)
+        recent_attempts = []
+        
+        # 模擬最近練習記錄（實際應該從資料庫查詢）
+        for i in range(3):
+            recent_attempts.append({
+                'date': (datetime.now() - timedelta(days=i)).strftime('%Y-%m-%d'),
+                'correct': i % 2 == 0,
+                'time_spent': 30 + i * 10
+            })
+        
+        # 模擬錯誤範例
+        wrong_examples = [
+            {
+                'question_id': f'q_{micro_id}_1',
+                'question_preview': f'關於{micro_concept.get("name", "此知識點")}的問題...',
+                'user_answer': '錯誤答案',
+                'correct_answer': '正確答案',
+                'error_analysis': '常見錯誤分析：需要理解基本概念'
+            }
+        ]
+        
+        # 模擬前置依賴
+        prereqs = [
+            {
+                'id': 'prereq_1',
+                'name': '前置知識點1',
+                'mastery': 60,
+                'status': 'learning'
+            },
+            {
+                'id': 'prereq_2', 
+                'name': '前置知識點2',
+                'mastery': 80,
+                'status': 'mastered'
+            }
+        ]
+        
+        # AI 建議
+        ai_suggestion = f"建議先複習{micro_concept.get('name', '此知識點')}的基本概念，理解其核心原理，然後通過大量練習來鞏固理解。"
+        
+        # 學習路徑
+        learning_path = ['前置知識點1', '前置知識點2', micro_concept.get('name', '目標知識點')]
+        
+        return jsonify({
+            'success': True,
+            'detail': {
+                'micro_id': micro_id,
+                'name': micro_concept.get('name', ''),
+                'mastery': mastery_result.get('mastery_score', 0),
+                'confidence': mastery_result.get('confidence', 0),
+                'recent_attempts': recent_attempts,
+                'wrong_examples': wrong_examples,
+                'prereqs': prereqs,
+                'ai_suggestion': ai_suggestion,
+                'learning_path': learning_path
+            }
+        })
+        
+    except Exception as e:
+        logger.error(f'獲取知識點詳情失敗: {str(e)}')
+        return jsonify({
+            'success': False,
+            'error': f'獲取知識點詳情失敗: {str(e)}',
+            'detail': {
+                'micro_id': micro_id,
+                'name': '未知知識點',
+                'mastery': 0,
+                'confidence': 0,
+                'recent_attempts': [],
+                'wrong_examples': [],
+                'prereqs': [],
+                'ai_suggestion': '數據不足，無法提供分析',
+                'learning_path': []
+            }
+        })
+
+@analytics_bp.route('/api/student/learning-suggestions', methods=['GET'])
+def get_learning_suggestions():
+    """獲取學習建議"""
+    try:
+        from flask import session
+        from bson import ObjectId
+        
+        user_id = session.get('user_id')
+        if not user_id:
+            return jsonify({'error': '未登入'}), 401
+        
+        # 檢查是否為學生
+        user = mongo.db.user.find_one({'_id': ObjectId(user_id)})
+        if not user or user.get('role') != 'student':
+            return jsonify({'error': '權限不足'}), 403
+        
+        # 獲取弱點報告
+        weakness_report = generate_weakness_report(user_id)
+        
+        # 生成學習建議
+        suggestions = []
+        
+        # 按領域分組弱點
+        domain_weaknesses = {}
+        for concept in weakness_report.get('concepts', []):
+            if concept.get('insufficient_data', False):
+                continue
+                
+            domain_name = concept.get('domain_name', '未知領域')
+            if domain_name not in domain_weaknesses:
+                domain_weaknesses[domain_name] = []
+            domain_weaknesses[domain_name].append(concept)
+        
+        # 為每個領域生成建議
+        for domain_name, concepts in domain_weaknesses.items():
+            if not concepts:
+                continue
+                
+            # 按掌握度排序
+            concepts.sort(key=lambda x: x.get('mastery_score', 0))
+            
+            # 取前3個最弱的知識點
+            weak_concepts = concepts[:3]
+            
+            suggestion = {
+                'domain': domain_name,
+                'priority': 'high' if any(c.get('mastery_score', 0) < 40 for c in weak_concepts) else 'medium',
+                'focus_concepts': [{
+                    'name': c.get('name', ''),
+                    'mastery_score': c.get('mastery_score', 0),
+                    'practice_count': c.get('practice_count', 0)
+                } for c in weak_concepts],
+                'recommended_actions': [
+                    f"專注練習 {domain_name} 領域的基礎概念",
+                    "完成相關章節的練習題",
+                    "複習相關理論知識"
+                ]
+            }
+            suggestions.append(suggestion)
+        
+        # 按優先級排序
+        suggestions.sort(key=lambda x: 0 if x['priority'] == 'high' else 1)
+        
+        return jsonify({
+            'success': True,
+            'suggestions': suggestions[:5]  # 返回前5個建議
+        })
+        
+    except Exception as e:
+        logger.error(f'獲取學習建議失敗: {str(e)}')
+        return jsonify({
+            'success': False,
+            'error': f'獲取學習建議失敗: {str(e)}',
+            'suggestions': []
+        })
+
+@analytics_bp.route('/api/student/progress-points', methods=['GET'])
+def get_progress_points():
+    """獲取最近進步的知識點"""
+    try:
+        from flask import session
+        from bson import ObjectId
+        from datetime import datetime, timedelta
+        
+        user_id = session.get('user_id')
+        if not user_id:
+            return jsonify({'error': '未登入'}), 401
+        
+        # 檢查是否為學生
+        user = mongo.db.user.find_one({'_id': ObjectId(user_id)})
+        if not user or user.get('role') != 'student':
+            return jsonify({'error': '權限不足'}), 403
+        
+        # 獲取答題記錄
+        quiz_records = get_student_quiz_records(user_id)
+        
+        # 計算最近進步的知識點
+        progress_points = calculate_progress_points(user_id, quiz_records)
+        
+        return jsonify({
+            'success': True,
+            'progress_points': progress_points
+        })
+        
+    except Exception as e:
+        logger.error(f'獲取進步點失敗: {str(e)}')
+        return jsonify({
+            'success': False,
+            'error': f'獲取進步點失敗: {str(e)}',
+            'progress_points': []
+        })
+
+@analytics_bp.route('/api/student/chart-data', methods=['GET'])
+def get_chart_data():
+    """獲取圖表數據"""
+    try:
+        from flask import session, request
+        from bson import ObjectId
+        from datetime import datetime, timedelta
+        
+        # 優先從session獲取，如果沒有則從參數獲取，最後使用默認測試用戶
+        user_id = session.get('user_id') or request.args.get('user_id')
+        chart_type = request.args.get('type', 'all')  # radar, heatmap, trend, bar, all
+        domain_filter = request.args.get('domain', 'all')  # 知識領域篩選
+        
+        if not user_id:
+            # 使用默認測試用戶
+            test_user = mongo.db.user.find_one({'email': 'test@example.com'})
+            if test_user:
+                user_id = str(test_user['_id'])
+            else:
+                return jsonify({
+                    'success': False,
+                    'error': '未找到測試用戶，請先登入',
+                    'chart_data': {}
+                })
+        
+        # 檢查用戶是否存在
+        user = mongo.db.user.find_one({'_id': ObjectId(user_id)})
+        if not user:
+            return jsonify({
+                'success': False,
+                'error': '用戶不存在',
+                'chart_data': {}
+            })
+        
+        # 獲取學生答題記錄
+        quiz_records = get_student_quiz_records(user_id)
+        
+        # 獲取弱點報告
+        weakness_report = generate_weakness_report(user_id)
+        
+        chart_data = {}
+        
+        if chart_type in ['all', 'radar']:
+            # 雷達圖數據 - 各知識領域掌握度
+            chart_data['radar'] = generate_radar_chart_data(weakness_report, domain_filter)
+        
+        if chart_type in ['all', 'heatmap']:
+            # 熱力圖數據 - 知識點掌握度矩陣
+            chart_data['heatmap'] = generate_heatmap_data(weakness_report, domain_filter)
+        
+        if chart_type in ['all', 'trend']:
+            # 趨勢圖數據 - 學習進度趨勢
+            chart_data['trend'] = generate_trend_chart_data(quiz_records, domain_filter)
+        
+        if chart_type in ['all', 'bar']:
+            # 長條圖數據 - 知識點掌握度對比
+            chart_data['bar'] = generate_bar_chart_data(weakness_report, domain_filter)
+        
+        return jsonify({
+            'success': True,
+            'chart_data': chart_data,
+            'domain_filter': domain_filter,
+            'available_domains': get_available_domains(weakness_report)
+        })
+        
+    except Exception as e:
+        logger.error(f'獲取圖表數據失敗: {str(e)}')
+        return jsonify({
+            'success': False,
+            'error': f'獲取圖表數據失敗: {str(e)}',
+            'chart_data': {}
+        })
+
+@analytics_bp.route('/api/student/practice-stats', methods=['GET'])
+def get_practice_stats():
+    """獲取練習統計（進度追蹤用）"""
+    try:
+        from flask import session, request
+        from bson import ObjectId
+        from datetime import datetime, timedelta
+        
+        # 優先從session獲取，如果沒有則從參數獲取，最後使用默認測試用戶
+        user_id = session.get('user_id') or request.args.get('user_id')
+        
+        if not user_id:
+            # 使用默認測試用戶
+            test_user = mongo.db.user.find_one({'email': 'test@example.com'})
+            if test_user:
+                user_id = str(test_user['_id'])
+            else:
+                return jsonify({
+                    'success': False,
+                    'error': '未找到測試用戶，請先登入',
+                    'stats': {
+                        'total_questions': 0,
+                        'correct_rate': 0,
+                        'avg_time': 0,
+                        'recent_trend': []
+                    }
+                })
+        
+        # 檢查用戶是否存在
+        user = mongo.db.user.find_one({'_id': ObjectId(user_id)})
+        if not user:
+            return jsonify({
+                'success': False,
+                'error': '用戶不存在',
+                'stats': {
+                    'total_questions': 0,
+                    'correct_rate': 0,
+                    'avg_time': 0,
+                    'recent_trend': []
+                }
+            })
+        
+        # 獲取答題記錄
+        quiz_records = get_student_quiz_records(user_id)
+        
+        # 計算時間範圍內的統計
+        now = datetime.now()
+        last_week = now - timedelta(days=7)
+        last_month = now - timedelta(days=30)
+        
+        # 按時間過濾記錄
+        recent_records = [r for r in quiz_records 
+                         if datetime.fromisoformat(r.get('created_at', '').replace('Z', '+00:00')) > last_week]
+        monthly_records = [r for r in quiz_records 
+                          if datetime.fromisoformat(r.get('created_at', '').replace('Z', '+00:00')) > last_month]
+        
+        # 計算統計數據
+        stats = {
+            'total_practice': len(quiz_records),
+            'weekly_practice': len(recent_records),
+            'monthly_practice': len(monthly_records),
+            'weekly_accuracy': round(sum(1 for r in recent_records if r.get('is_correct', False)) / len(recent_records) * 100, 1) if recent_records else 0,
+            'monthly_accuracy': round(sum(1 for r in monthly_records if r.get('is_correct', False)) / len(monthly_records) * 100, 1) if monthly_records else 0,
+            'streak_days': calculate_streak_days(quiz_records),
+            'last_practice': quiz_records[-1].get('created_at') if quiz_records else None
+        }
+        
+        return jsonify({
+            'success': True,
+            'stats': stats
+        })
+        
+    except Exception as e:
+        logger.error(f'獲取練習統計失敗: {str(e)}')
+        return jsonify({
+            'success': False,
+            'error': f'獲取練習統計失敗: {str(e)}',
+            'stats': {
+                'total_questions': 0,
+                'correct_rate': 0,
+                'avg_time': 0,
+                'recent_trend': []
+            }
+        })
+
+def generate_radar_chart_data(weakness_report: dict, domain_filter: str = 'all') -> dict:
+    """生成雷達圖數據 - 各知識領域掌握度"""
+    try:
+        concepts = weakness_report.get('concepts', [])
+        
+        # 按領域分組
+        domain_stats = {}
+        for concept in concepts:
+            if concept.get('insufficient_data', False):
+                continue
+                
+            domain = concept.get('domain_name', '未知領域')
+            if domain_filter != 'all' and domain != domain_filter:
+                continue
+                
+            if domain not in domain_stats:
+                domain_stats[domain] = {
+                    'mastery_scores': [],
+                    'concept_count': 0,
+                    'total_attempts': 0
+                }
+            
+            domain_stats[domain]['mastery_scores'].append(concept.get('mastery_score', 0))
+            domain_stats[domain]['concept_count'] += 1
+            domain_stats[domain]['total_attempts'] += concept.get('attempts', 0)
+        
+        # 計算各領域平均掌握度
+        radar_data = {
+            'labels': [],
+            'datasets': [{
+                'label': '掌握度',
+                'data': [],
+                'backgroundColor': 'rgba(54, 162, 235, 0.2)',
+                'borderColor': 'rgba(54, 162, 235, 1)',
+                'borderWidth': 2
+            }]
+        }
+        
+        for domain, stats in domain_stats.items():
+            if stats['concept_count'] > 0:
+                avg_mastery = sum(stats['mastery_scores']) / len(stats['mastery_scores'])
+                radar_data['labels'].append(domain)
+                radar_data['datasets'][0]['data'].append(round(avg_mastery, 1))
+        
+        return radar_data
+        
+    except Exception as e:
+        logger.error(f'生成雷達圖數據失敗: {e}')
+        return {'labels': [], 'datasets': []}
+
+def generate_heatmap_data(weakness_report: dict, domain_filter: str = 'all') -> dict:
+    """生成熱力圖數據 - 知識點掌握度矩陣"""
+    try:
+        concepts = weakness_report.get('concepts', [])
+        
+        # 按領域和難度分組
+        heatmap_data = {
+            'x_labels': [],
+            'y_labels': [],
+            'data': []
+        }
+        
+        # 獲取所有領域和難度等級
+        domains = set()
+        difficulties = set()
+        
+        for concept in concepts:
+            if concept.get('insufficient_data', False):
+                continue
+                
+            domain = concept.get('domain_name', '未知領域')
+            difficulty = concept.get('difficulty_level', 'medium')
+            
+            if domain_filter != 'all' and domain != domain_filter:
+                continue
+                
+            domains.add(domain)
+            difficulties.add(difficulty)
+        
+        # 排序
+        domains = sorted(list(domains))
+        difficulties = sorted(list(difficulties))
+        
+        heatmap_data['x_labels'] = difficulties
+        heatmap_data['y_labels'] = domains
+        
+        # 計算每個領域-難度組合的平均掌握度
+        for domain in domains:
+            row = []
+            for difficulty in difficulties:
+                domain_difficulty_concepts = [
+                    c for c in concepts 
+                    if (c.get('domain_name') == domain and 
+                        c.get('difficulty_level') == difficulty and
+                        not c.get('insufficient_data', False))
+                ]
+                
+                if domain_difficulty_concepts:
+                    avg_mastery = sum(c.get('mastery_score', 0) for c in domain_difficulty_concepts) / len(domain_difficulty_concepts)
+                    row.append(round(avg_mastery, 1))
+                else:
+                    row.append(0)
+            
+            heatmap_data['data'].append(row)
+        
+        return heatmap_data
+        
+    except Exception as e:
+        logger.error(f'生成熱力圖數據失敗: {e}')
+        return {'x_labels': [], 'y_labels': [], 'data': []}
+
+def generate_trend_chart_data(quiz_records: list, domain_filter: str = 'all') -> dict:
+    """生成趨勢圖數據 - 學習進度趨勢"""
+    try:
+        from datetime import datetime, timedelta
+        
+        # 按日期分組答題記錄
+        daily_stats = {}
+        
+        for record in quiz_records:
+            created_at = record.get('created_at', '')
+            if not created_at:
+                continue
+                
+            try:
+                # 解析日期
+                if 'T' in created_at:
+                    date_str = created_at.split('T')[0]
+                else:
+                    date_str = created_at.split(' ')[0]
+                
+                date_obj = datetime.strptime(date_str, '%Y-%m-%d')
+                
+                if date_obj not in daily_stats:
+                    daily_stats[date_obj] = {
+                        'total': 0,
+                        'correct': 0,
+                        'domains': {}
+                    }
+                
+                daily_stats[date_obj]['total'] += 1
+                if record.get('is_correct', False):
+                    daily_stats[date_obj]['correct'] += 1
+                
+                # 按領域統計
+                micro_concepts = record.get('micro_concepts', [])
+                for concept in micro_concepts:
+                    domain = concept.get('domain_name', '未知領域')
+                    if domain_filter != 'all' and domain != domain_filter:
+                        continue
+                        
+                    if domain not in daily_stats[date_obj]['domains']:
+                        daily_stats[date_obj]['domains'][domain] = {'total': 0, 'correct': 0}
+                    
+                    daily_stats[date_obj]['domains'][domain]['total'] += 1
+                    if record.get('is_correct', False):
+                        daily_stats[date_obj]['domains'][domain]['correct'] += 1
+                        
+            except Exception as e:
+                continue
+        
+        # 生成趨勢數據
+        trend_data = {
+            'labels': [],
+            'datasets': []
+        }
+        
+        # 按日期排序
+        sorted_dates = sorted(daily_stats.keys())
+        
+        for date in sorted_dates:
+            trend_data['labels'].append(date.strftime('%m/%d'))
+        
+        # 整體趨勢
+        overall_data = []
+        for date in sorted_dates:
+            stats = daily_stats[date]
+            accuracy = (stats['correct'] / stats['total'] * 100) if stats['total'] > 0 else 0
+            overall_data.append(round(accuracy, 1))
+        
+        trend_data['datasets'].append({
+            'label': '整體正確率',
+            'data': overall_data,
+            'borderColor': 'rgba(54, 162, 235, 1)',
+            'backgroundColor': 'rgba(54, 162, 235, 0.1)',
+            'tension': 0.4
+        })
+        
+        # 如果指定了領域，添加該領域的趨勢
+        if domain_filter != 'all':
+            domain_data = []
+            for date in sorted_dates:
+                stats = daily_stats[date]
+                domain_stats = stats['domains'].get(domain_filter, {'total': 0, 'correct': 0})
+                accuracy = (domain_stats['correct'] / domain_stats['total'] * 100) if domain_stats['total'] > 0 else 0
+                domain_data.append(round(accuracy, 1))
+            
+            trend_data['datasets'].append({
+                'label': f'{domain_filter}正確率',
+                'data': domain_data,
+                'borderColor': 'rgba(255, 99, 132, 1)',
+                'backgroundColor': 'rgba(255, 99, 132, 0.1)',
+                'tension': 0.4
+            })
+        
+        return trend_data
+        
+    except Exception as e:
+        logger.error(f'生成趨勢圖數據失敗: {e}')
+        return {'labels': [], 'datasets': []}
+
+def generate_bar_chart_data(weakness_report: dict, domain_filter: str = 'all') -> dict:
+    """生成長條圖數據 - 知識點掌握度對比"""
+    try:
+        concepts = weakness_report.get('concepts', [])
+        
+        # 篩選和排序概念
+        filtered_concepts = []
+        for concept in concepts:
+            if concept.get('insufficient_data', False):
+                continue
+                
+            domain = concept.get('domain_name', '未知領域')
+            if domain_filter != 'all' and domain != domain_filter:
+                continue
+                
+            filtered_concepts.append(concept)
+        
+        # 按掌握度排序
+        filtered_concepts.sort(key=lambda x: x.get('mastery_score', 0))
+        
+        # 取前10個最需要關注的知識點
+        top_concepts = filtered_concepts[:10]
+        
+        bar_data = {
+            'labels': [],
+            'datasets': [{
+                'label': '掌握度',
+                'data': [],
+                'backgroundColor': [],
+                'borderColor': [],
+                'borderWidth': 1
+            }]
+        }
+        
+        for concept in top_concepts:
+            name = concept.get('name', '未知知識點')
+            mastery = concept.get('mastery_score', 0)
+            
+            # 截斷過長的名稱
+            if len(name) > 15:
+                name = name[:12] + '...'
+            
+            bar_data['labels'].append(name)
+            bar_data['datasets'][0]['data'].append(round(mastery, 1))
+            
+            # 根據掌握度設置顏色
+            if mastery < 40:
+                bar_data['datasets'][0]['backgroundColor'].append('rgba(255, 99, 132, 0.8)')
+                bar_data['datasets'][0]['borderColor'].append('rgba(255, 99, 132, 1)')
+            elif mastery < 70:
+                bar_data['datasets'][0]['backgroundColor'].append('rgba(255, 206, 86, 0.8)')
+                bar_data['datasets'][0]['borderColor'].append('rgba(255, 206, 86, 1)')
+            else:
+                bar_data['datasets'][0]['backgroundColor'].append('rgba(75, 192, 192, 0.8)')
+                bar_data['datasets'][0]['borderColor'].append('rgba(75, 192, 192, 1)')
+        
+        return bar_data
+        
+    except Exception as e:
+        logger.error(f'生成長條圖數據失敗: {e}')
+        return {'labels': [], 'datasets': []}
+
+def get_available_domains(weakness_report: dict) -> list:
+    """獲取可用的知識領域列表"""
+    try:
+        concepts = weakness_report.get('concepts', [])
+        domains = set()
+        
+        for concept in concepts:
+            domain = concept.get('domain_name', '未知領域')
+            if domain and domain != '未知領域':
+                domains.add(domain)
+        
+        return sorted(list(domains))
+        
+    except Exception as e:
+        logger.error(f'獲取可用領域失敗: {e}')
+        return []
+
+def generate_all_chart_data(weakness_report: dict, quiz_records: list) -> dict:
+    """生成所有圖表數據"""
+    try:
+        return {
+            'radar': generate_radar_chart_data(weakness_report),
+            'heatmap': generate_heatmap_data(weakness_report),
+            'trend': generate_trend_chart_data(quiz_records),
+            'bar': generate_bar_chart_data(weakness_report),
+            'domain_stats': generate_domain_statistics(weakness_report),
+            'difficulty_stats': generate_difficulty_statistics(weakness_report),
+            'time_series': generate_time_series_data(quiz_records)
+        }
+    except Exception as e:
+        logger.error(f'生成圖表數據失敗: {e}')
+        return {}
+
+def generate_domain_statistics(weakness_report: dict) -> dict:
+    """生成領域統計數據"""
+    try:
+        concepts = weakness_report.get('concepts', [])
+        domain_stats = {}
+        
+        for concept in concepts:
+            if concept.get('insufficient_data', False):
+                continue
+                
+            domain = concept.get('domain_name', '未知領域')
+            if domain not in domain_stats:
+                domain_stats[domain] = {
+                    'total_concepts': 0,
+                    'mastered_concepts': 0,
+                    'weak_concepts': 0,
+                    'avg_mastery': 0,
+                    'total_attempts': 0,
+                    'concepts': []
+                }
+            
+            mastery = concept.get('mastery_score', 0)
+            domain_stats[domain]['total_concepts'] += 1
+            domain_stats[domain]['total_attempts'] += concept.get('attempts', 0)
+            domain_stats[domain]['concepts'].append({
+                'name': concept.get('name', ''),
+                'mastery': mastery,
+                'attempts': concept.get('attempts', 0),
+                'difficulty': concept.get('difficulty_level', 'medium')
+            })
+            
+            if mastery >= 70:
+                domain_stats[domain]['mastered_concepts'] += 1
+            elif mastery < 40:
+                domain_stats[domain]['weak_concepts'] += 1
+        
+        # 計算平均掌握度
+        for domain, stats in domain_stats.items():
+            if stats['total_concepts'] > 0:
+                total_mastery = sum(c['mastery'] for c in stats['concepts'])
+                stats['avg_mastery'] = round(total_mastery / stats['total_concepts'], 1)
+        
+        return domain_stats
+        
+    except Exception as e:
+        logger.error(f'生成領域統計失敗: {e}')
+        return {}
+
+def generate_difficulty_statistics(weakness_report: dict) -> dict:
+    """生成難度統計數據"""
+    try:
+        concepts = weakness_report.get('concepts', [])
+        difficulty_stats = {}
+        
+        for concept in concepts:
+            if concept.get('insufficient_data', False):
+                continue
+                
+            difficulty = concept.get('difficulty_level', 'medium')
+            if difficulty not in difficulty_stats:
+                difficulty_stats[difficulty] = {
+                    'total_concepts': 0,
+                    'mastered_concepts': 0,
+                    'weak_concepts': 0,
+                    'avg_mastery': 0,
+                    'concepts': []
+                }
+            
+            mastery = concept.get('mastery_score', 0)
+            difficulty_stats[difficulty]['total_concepts'] += 1
+            difficulty_stats[difficulty]['concepts'].append({
+                'name': concept.get('name', ''),
+                'mastery': mastery,
+                'domain': concept.get('domain_name', ''),
+                'attempts': concept.get('attempts', 0)
+            })
+            
+            if mastery >= 70:
+                difficulty_stats[difficulty]['mastered_concepts'] += 1
+            elif mastery < 40:
+                difficulty_stats[difficulty]['weak_concepts'] += 1
+        
+        # 計算平均掌握度
+        for difficulty, stats in difficulty_stats.items():
+            if stats['total_concepts'] > 0:
+                total_mastery = sum(c['mastery'] for c in stats['concepts'])
+                stats['avg_mastery'] = round(total_mastery / stats['total_concepts'], 1)
+        
+        return difficulty_stats
+        
+    except Exception as e:
+        logger.error(f'生成難度統計失敗: {e}')
+        return {}
+
+def generate_time_series_data(quiz_records: list) -> dict:
+    """生成時間序列數據"""
+    try:
+        from datetime import datetime, timedelta
+        
+        # 按日期分組
+        daily_stats = {}
+        
+        for record in quiz_records:
+            created_at = record.get('created_at', '')
+            if not created_at:
+                continue
+                
+            try:
+                # 解析日期
+                if 'T' in created_at:
+                    date_str = created_at.split('T')[0]
+                else:
+                    date_str = created_at.split(' ')[0]
+                
+                date_obj = datetime.strptime(date_str, '%Y-%m-%d')
+                
+                if date_obj not in daily_stats:
+                    daily_stats[date_obj] = {
+                        'total': 0,
+                        'correct': 0,
+                        'domains': {},
+                        'difficulties': {}
+                    }
+                
+                daily_stats[date_obj]['total'] += 1
+                if record.get('is_correct', False):
+                    daily_stats[date_obj]['correct'] += 1
+                
+                # 按領域統計
+                micro_concepts = record.get('micro_concepts', [])
+                for concept in micro_concepts:
+                    domain = concept.get('domain_name', '未知領域')
+                    difficulty = concept.get('difficulty_level', 'medium')
+                    
+                    if domain not in daily_stats[date_obj]['domains']:
+                        daily_stats[date_obj]['domains'][domain] = {'total': 0, 'correct': 0}
+                    if difficulty not in daily_stats[date_obj]['difficulties']:
+                        daily_stats[date_obj]['difficulties'][difficulty] = {'total': 0, 'correct': 0}
+                    
+                    daily_stats[date_obj]['domains'][domain]['total'] += 1
+                    daily_stats[date_obj]['difficulties'][difficulty]['total'] += 1
+                    
+                    if record.get('is_correct', False):
+                        daily_stats[date_obj]['domains'][domain]['correct'] += 1
+                        daily_stats[date_obj]['difficulties'][difficulty]['correct'] += 1
+                        
+            except Exception as e:
+                continue
+        
+        # 生成時間序列數據
+        sorted_dates = sorted(daily_stats.keys())
+        
+        time_series = {
+            'dates': [date.strftime('%Y-%m-%d') for date in sorted_dates],
+            'overall_accuracy': [],
+            'domain_accuracy': {},
+            'difficulty_accuracy': {}
+        }
+        
+        # 整體準確率
+        for date in sorted_dates:
+            stats = daily_stats[date]
+            accuracy = (stats['correct'] / stats['total'] * 100) if stats['total'] > 0 else 0
+            time_series['overall_accuracy'].append(round(accuracy, 1))
+        
+        # 各領域準確率
+        all_domains = set()
+        for stats in daily_stats.values():
+            all_domains.update(stats['domains'].keys())
+        
+        for domain in all_domains:
+            time_series['domain_accuracy'][domain] = []
+            for date in sorted_dates:
+                stats = daily_stats[date]
+                domain_stats = stats['domains'].get(domain, {'total': 0, 'correct': 0})
+                accuracy = (domain_stats['correct'] / domain_stats['total'] * 100) if domain_stats['total'] > 0 else 0
+                time_series['domain_accuracy'][domain].append(round(accuracy, 1))
+        
+        # 各難度準確率
+        all_difficulties = set()
+        for stats in daily_stats.values():
+            all_difficulties.update(stats['difficulties'].keys())
+        
+        for difficulty in all_difficulties:
+            time_series['difficulty_accuracy'][difficulty] = []
+            for date in sorted_dates:
+                stats = daily_stats[date]
+                difficulty_stats = stats['difficulties'].get(difficulty, {'total': 0, 'correct': 0})
+                accuracy = (difficulty_stats['correct'] / difficulty_stats['total'] * 100) if difficulty_stats['total'] > 0 else 0
+                time_series['difficulty_accuracy'][difficulty].append(round(accuracy, 1))
+        
+        return time_series
+        
+    except Exception as e:
+        logger.error(f'生成時間序列數據失敗: {e}')
+        return {'dates': [], 'overall_accuracy': [], 'domain_accuracy': {}, 'difficulty_accuracy': {}}
+
+def generate_domain_overview(weakness_report: dict) -> list:
+    """生成領域概覽數據"""
+    try:
+        concepts = weakness_report.get('concepts', [])
+        domain_stats = {}
+        
+        for concept in concepts:
+            if concept.get('insufficient_data', False):
+                continue
+                
+            domain = concept.get('domain_name', '未知領域')
+            if domain not in domain_stats:
+                domain_stats[domain] = {
+                    'mastery_scores': [],
+                    'concept_count': 0
+                }
+            
+            domain_stats[domain]['mastery_scores'].append(concept.get('mastery_score', 0))
+            domain_stats[domain]['concept_count'] += 1
+        
+        domains = []
+        for domain, stats in domain_stats.items():
+            if stats['concept_count'] > 0:
+                avg_mastery = sum(stats['mastery_scores']) / len(stats['mastery_scores'])
+                domains.append({
+                    'domain_id': f"D{len(domains) + 1}",
+                    'name': domain,
+                    'mastery': round(avg_mastery, 2)
+                })
+        
+        return domains
+        
+    except Exception as e:
+        logger.error(f'生成領域概覽失敗: {e}')
+        return []
+
+def generate_top_weak_points(weakness_report: dict, limit: int = 3) -> list:
+    """生成Top弱點列表"""
+    try:
+        concepts = weakness_report.get('concepts', [])
+        
+        # 篩選有效概念並按掌握度排序
+        valid_concepts = [
+            concept for concept in concepts 
+            if not concept.get('insufficient_data', False)
+        ]
+        
+        # 按掌握度升序排序，取前N個
+        weak_concepts = sorted(valid_concepts, key=lambda x: x.get('mastery_score', 0))[:limit]
+        
+        weak_points = []
+        for i, concept in enumerate(weak_concepts):
+            weak_points.append({
+                'micro_id': f"M{concept.get('id', i + 1)}",
+                'name': concept.get('name', '未知知識點'),
+                'mastery': round(concept.get('mastery_score', 0), 2),
+                'attempts': concept.get('attempts', 0)
+            })
+        
+        return weak_points
+        
+    except Exception as e:
+        logger.error(f'生成Top弱點失敗: {e}')
+        return []
+
+def generate_recent_trend(quiz_records: list, days: int = 7) -> list:
+    """生成最近趨勢數據"""
+    try:
+        from datetime import datetime, timedelta
+        
+        # 按日期分組
+        daily_stats = {}
+        
+        for record in quiz_records:
+            created_at = record.get('created_at', '')
+            if not created_at:
+                continue
+                
+            try:
+                # 解析日期
+                if 'T' in created_at:
+                    date_str = created_at.split('T')[0]
+                else:
+                    date_str = created_at.split(' ')[0]
+                
+                date_obj = datetime.strptime(date_str, '%Y-%m-%d')
+                
+                if date_obj not in daily_stats:
+                    daily_stats[date_obj] = {'total': 0, 'correct': 0}
+                
+                daily_stats[date_obj]['total'] += 1
+                if record.get('is_correct', False):
+                    daily_stats[date_obj]['correct'] += 1
+                    
+            except Exception as e:
+                continue
+        
+        # 生成趨勢數據
+        trend_data = []
+        sorted_dates = sorted(daily_stats.keys())
+        
+        for date in sorted_dates:
+            stats = daily_stats[date]
+            accuracy = (stats['correct'] / stats['total']) if stats['total'] > 0 else 0
+            trend_data.append({
+                'date': date.strftime('%Y-%m-%d'),
+                'accuracy': round(accuracy, 2)
+            })
+        
+        return trend_data
+        
+    except Exception as e:
+        logger.error(f'生成趨勢數據失敗: {e}')
+        return []
+
+def generate_domain_blocks(weakness_report: dict, domain_id: str) -> list:
+    """生成領域下的知識塊"""
+    try:
+        concepts = weakness_report.get('concepts', [])
+        
+        # 根據domain_id找到對應的領域名稱
+        domain_mapping = {
+            'D1': '資料結構',
+            'D2': '演算法', 
+            'D3': '程式設計',
+            'D4': '資料庫'
+        }
+        domain_name = domain_mapping.get(domain_id, '未知領域')
+        
+        # 篩選該領域的概念
+        domain_concepts = [
+            concept for concept in concepts 
+            if concept.get('domain_name') == domain_name and not concept.get('insufficient_data', False)
+        ]
+        
+        # 按知識塊分組（這裡簡化為按難度分組）
+        difficulty_groups = {}
+        for concept in domain_concepts:
+            difficulty = concept.get('difficulty_level', 'medium')
+            if difficulty not in difficulty_groups:
+                difficulty_groups[difficulty] = []
+            difficulty_groups[difficulty].append(concept)
+        
+        # 生成知識塊數據
+        blocks = []
+        for i, (difficulty, concepts_list) in enumerate(difficulty_groups.items()):
+            if concepts_list:
+                avg_mastery = sum(c.get('mastery_score', 0) for c in concepts_list) / len(concepts_list)
+                blocks.append({
+                    'block_id': f"B{i + 1}",
+                    'name': f"{domain_name} - {difficulty}",
+                    'mastery': round(avg_mastery, 2),
+                    'micro_count': len(concepts_list)
+                })
+        
+        return blocks
+        
+    except Exception as e:
+        logger.error(f'生成領域知識塊失敗: {e}')
+        return []
+
+def generate_block_concepts(weakness_report: dict, block_id: str) -> list:
+    """生成知識塊下的微知識點"""
+    try:
+        concepts = weakness_report.get('concepts', [])
+        
+        # 根據block_id找到對應的知識塊
+        block_mapping = {
+            'B1': '資料結構 - easy',
+            'B2': '資料結構 - medium',
+            'B3': '資料結構 - hard'
+        }
+        block_name = block_mapping.get(block_id, '未知知識塊')
+        
+        # 篩選該知識塊的概念
+        block_concepts = [
+            concept for concept in concepts 
+            if not concept.get('insufficient_data', False)
+        ]
+        
+        # 生成微知識點數據
+        micro_concepts = []
+        for i, concept in enumerate(block_concepts[:10]):  # 限制前10個
+            mastery = concept.get('mastery_score', 0)
+            attempts = concept.get('attempts', 0)
+            
+            # 計算信心度
+            if attempts >= 10:
+                confidence = 'high'
+            elif attempts >= 5:
+                confidence = 'medium'
+            else:
+                confidence = 'low'
+            
+            micro_concepts.append({
+                'micro_id': f"M{i + 1}",
+                'name': concept.get('name', '未知知識點'),
+                'mastery': round(mastery, 2),
+                'attempts': attempts,
+                'difficulty': concept.get('difficulty_level', 'medium'),
+                'confidence': confidence
+            })
+        
+        return micro_concepts
+        
+    except Exception as e:
+        logger.error(f'生成知識塊微知識點失敗: {e}')
+        return []
+
+def generate_micro_detail(weakness_report: dict, quiz_records: list, micro_id: str) -> dict:
+    """生成微知識點詳細信息"""
+    try:
+        concepts = weakness_report.get('concepts', [])
+        
+        # 找到對應的微知識點
+        micro_concept = None
+        for concept in concepts:
+            if concept.get('id') == micro_id or f"M{concepts.index(concept) + 1}" == micro_id:
+                micro_concept = concept
+                break
+        
+        if not micro_concept:
+            return {
+                'mastery': 0,
+                'attempts': 0,
+                'avg_time': 0,
+                'last_attempt': None,
+                'confidence': 'low',
+                'trend': []
+            }
+        
+        # 計算平均時間
+        micro_records = [
+            record for record in quiz_records 
+            if micro_id in [c.get('id') for c in record.get('micro_concepts', [])]
+        ]
+        
+        avg_time = 0
+        if micro_records:
+            times = [r.get('time_spent', 0) for r in micro_records if r.get('time_spent')]
+            avg_time = sum(times) / len(times) if times else 0
+        
+        # 生成趨勢數據
+        trend = []
+        for i in range(7):
+            trend.append({
+                'date': f"2025-01-{i + 1:02d}",
+                'mastery': round(micro_concept.get('mastery_score', 0) + (i * 0.05), 2)
+            })
+        
+        return {
+            'mastery': round(micro_concept.get('mastery_score', 0), 2),
+            'attempts': micro_concept.get('attempts', 0),
+            'avg_time': round(avg_time, 1),
+            'last_attempt': micro_concept.get('last_attempt'),
+            'confidence': 'high' if micro_concept.get('attempts', 0) >= 10 else 'medium' if micro_concept.get('attempts', 0) >= 5 else 'low',
+            'trend': trend
+        }
+        
+    except Exception as e:
+        logger.error(f'生成微知識點詳情失敗: {e}')
+        return {
+            'mastery': 0,
+            'attempts': 0,
+            'avg_time': 0,
+            'last_attempt': None,
+            'confidence': 'low',
+            'trend': []
+        }
+
+def generate_ai_diagnosis_data(weakness_report: dict, quiz_records: list, micro_id: str, mode: str, time_budget: int) -> dict:
+    """生成AI診斷數據"""
+    try:
+        # 這裡應該調用Gemini API生成診斷
+        # 暫時返回模擬數據
+        return {
+            'diagnosis': '你在這個知識點上常犯錯是因為對基礎概念的理解不夠深入',
+            'root_cause': '先修知識點掌握不足，需要加強基礎練習',
+            'learning_path': [
+                {
+                    'step': 1,
+                    'micro_id': 'M1',
+                    'action': '複習基礎概念'
+                },
+                {
+                    'step': 2,
+                    'micro_id': micro_id,
+                    'action': '練習基礎題型'
+                },
+                {
+                    'step': 3,
+                    'micro_id': micro_id,
+                    'action': '挑戰進階題型'
+                }
+            ],
+            'practice_questions': [
+                {
+                    'q_id': 'Q1',
+                    'text': '基礎概念練習題...',
+                    'answer': 'A'
+                },
+                {
+                    'q_id': 'Q2',
+                    'text': '進階應用題...',
+                    'answer': 'B'
+                }
+            ],
+            'evidence': ['missed q101', 'low mastery'],
+            'confidence': 'medium'
+        }
+        
+    except Exception as e:
+        logger.error(f'生成AI診斷失敗: {e}')
+        return {
+            'diagnosis': '無法生成診斷，請稍後重試',
+            'root_cause': '數據不足',
+            'learning_path': [],
+            'practice_questions': [],
+            'evidence': [],
+            'confidence': 'low'
+        }
+
+def calculate_progress_points(user_id: str, quiz_records: list) -> list:
+    """計算最近進步的知識點"""
+    try:
+        from datetime import datetime, timedelta
+        
+        # 獲取所有微知識點
+        micro_concepts = list(mongo.db.micro_concept.find())
+        progress_points = []
+        
+        for concept in micro_concepts:
+            micro_id = str(concept['_id'])
+            
+            # 計算該知識點的掌握度變化
+            mastery_data = calculate_micro_concept_mastery(user_id, micro_id)
+            current_mastery = mastery_data.get('mastery_score', 0)
+            
+            # 計算最近7天的進步幅度
+            now = datetime.now()
+            week_ago = now - timedelta(days=7)
+            
+            # 獲取最近7天的答題記錄
+            recent_records = [r for r in quiz_records 
+                            if datetime.fromisoformat(r.get('created_at', '').replace('Z', '+00:00')) > week_ago]
+            
+            if len(recent_records) >= 3:  # 至少3次練習才計算進步
+                # 計算進步幅度
+                improvement = calculate_improvement_rate(micro_id, recent_records)
+                
+                if improvement > 5:  # 進步超過5%才顯示
+                    progress_points.append({
+                        'micro_id': micro_id,
+                        'name': concept.get('name', ''),
+                        'mastery': round(current_mastery, 1),
+                        'improvement': round(improvement, 1),
+                        'recent_breakthrough': improvement > 15,  # 進步超過15%視為突破
+                        'domain_name': concept.get('domain_name', '未知領域'),
+                        'trend': 'improving'
+                    })
+        
+        # 按進步幅度排序
+        progress_points.sort(key=lambda x: x['improvement'], reverse=True)
+        return progress_points[:5]  # 返回前5個進步點
+        
+    except Exception as e:
+        logger.error(f"計算進步點失敗: {e}")
+        return []
+
+def calculate_improvement_rate(micro_id: str, recent_records: list) -> float:
+    """計算知識點的進步率"""
+    try:
+        # 這裡簡化計算，實際應該根據歷史數據計算
+        # 可以通過比較最近幾天的準確率變化來計算
+        correct_count = sum(1 for r in recent_records if r.get('is_correct', False))
+        total_count = len(recent_records)
+        
+        if total_count == 0:
+            return 0
+        
+        accuracy = correct_count / total_count * 100
+        
+        # 模擬進步計算（實際應該比較歷史數據）
+        return min(accuracy * 0.2, 20)  # 最大進步20%
+        
+    except Exception as e:
+        logger.error(f"計算進步率失敗: {e}")
+        return 0
+
+def calculate_streak_days(quiz_records):
+    """計算連續練習天數"""
+    if not quiz_records:
+        return 0
+    
+    # 按日期分組
+    daily_practice = {}
+    for record in quiz_records:
+        date = record.get('created_at', '').split('T')[0]
+        if date not in daily_practice:
+            daily_practice[date] = 0
+        daily_practice[date] += 1
+    
+    # 計算連續天數
+    dates = sorted(daily_practice.keys(), reverse=True)
+    streak = 0
+    current_date = datetime.now().date()
+    
+    for date_str in dates:
+        date = datetime.fromisoformat(date_str).date()
+        if date == current_date or date == current_date - timedelta(days=1):
+            streak += 1
+            current_date = date
+        else:
+            break
+    
+    return streak
+
+# ==================== AI 提示詞設計 ====================
+
+def generate_ai_diagnosis_prompt(student_data: dict, micro_concept: dict) -> str:
+    """生成AI診斷提示詞 - 固定JSON結構"""
+    prompt = f"""
+你是一個專業的學習分析AI導師，請根據以下學生資料進行深度分析：
+
+## 學生資料
+- 學生ID: {student_data.get('user_id', '')}
+- 答題總數: {student_data.get('total_questions', 0)}
+- 正確率: {student_data.get('accuracy', 0)}%
+- 平均答題時間: {student_data.get('avg_time', 0)}秒
+- 最近7天練習: {student_data.get('recent_attempts', 0)}次
+
+## 目標知識點
+- 名稱: {micro_concept.get('name', '')}
+- 領域: {micro_concept.get('domain_name', '')}
+- 當前掌握度: {student_data.get('current_mastery', 0)}%
+- 練習次數: {student_data.get('practice_count', 0)}次
+
+## 錯誤模式分析
+- 常見錯誤: {student_data.get('common_errors', [])}
+- 答題時間分佈: {student_data.get('time_distribution', {})}
+- 難度適應性: {student_data.get('difficulty_adaptation', {})}
+
+## 前置依賴分析
+- 前置知識點: {student_data.get('prerequisites', [])}
+- 依賴掌握度: {student_data.get('prereq_mastery', {})}
+
+請提供結構化的分析報告，必須使用以下JSON格式：
+
+{{
+  "diagnosis": {{
+    "root_cause": "根本原因分析（粗心/概念不清/先修不足/學習方法問題）",
+    "error_patterns": ["錯誤模式1", "錯誤模式2"],
+    "confidence_level": 0.85,
+    "severity": "high|medium|low"
+  }},
+  "learning_path": {{
+    "immediate_actions": [
+      "立即行動1：具體可執行的步驟",
+      "立即行動2：具體可執行的步驟"
+    ],
+    "learning_sequence": [
+      {{
+        "step": 1,
+        "title": "步驟標題",
+        "description": "詳細描述",
+        "estimated_time": "15分鐘",
+        "prerequisites": ["前置知識點1", "前置知識點2"]
+      }},
+      {{
+        "step": 2,
+        "title": "步驟標題",
+        "description": "詳細描述",
+        "estimated_time": "20分鐘",
+        "prerequisites": []
+      }}
+    ],
+    "practice_strategy": {{
+      "recommended_questions": 8,
+      "difficulty_progression": "easy->medium->hard",
+      "focus_areas": ["重點領域1", "重點領域2"]
+    }}
+  }},
+  "motivation": {{
+    "encouragement": "鼓勵話語，強調進步和潛力",
+    "achievement_highlight": "突出已取得的成就",
+    "next_milestone": "下一個里程碑目標"
+  }},
+  "monitoring": {{
+    "key_indicators": ["監控指標1", "監控指標2"],
+    "success_criteria": "成功標準描述",
+    "review_schedule": "每3天複習一次"
+  }}
+}}
+
+請確保：
+1. 分析基於具體數據，避免泛泛而談
+2. 提供可執行的具體建議
+3. 考慮學生的學習風格和當前水平
+4. 保持積極正面的語調
+5. 所有時間估計要合理
+6. 學習路徑要符合知識點依賴關係
+"""
+    return prompt
+
+def generate_learning_path_ai_prompt(weak_points: list, progress_points: list, knowledge_graph: dict) -> str:
+    """生成個性化學習路徑的AI提示詞"""
+    prompt = f"""
+你是一個專業的學習路徑規劃AI，請根據以下資料生成個性化學習路徑：
+
+## 弱點分析
+{json.dumps(weak_points, ensure_ascii=False, indent=2)}
+
+## 進步點分析
+{json.dumps(progress_points, ensure_ascii=False, indent=2)}
+
+## 知識圖譜依賴關係
+{json.dumps(knowledge_graph, ensure_ascii=False, indent=2)}
+
+請生成一個完整的學習路徑，使用以下JSON格式：
+
+{{
+  "learning_path": {{
+    "overall_strategy": "整體學習策略描述",
+    "estimated_duration": "預估總時間",
+    "difficulty_progression": "難度進階說明",
+    "phases": [
+      {{
+        "phase": 1,
+        "title": "階段標題",
+        "description": "階段描述",
+        "duration": "預估時間",
+        "focus_areas": ["重點領域1", "重點領域2"],
+        "micro_concepts": [
+          {{
+            "id": "micro_concept_id",
+            "name": "知識點名稱",
+            "priority": "high|medium|low",
+            "prerequisites": ["前置知識點1"],
+            "learning_goals": ["學習目標1", "學習目標2"],
+            "practice_questions": 5,
+            "estimated_time": "15分鐘"
+          }}
+        ],
+        "success_criteria": "階段成功標準",
+        "assessment_method": "評估方法"
+      }}
+    ],
+    "adaptive_elements": {{
+      "difficulty_adjustment": "難度調整策略",
+      "pace_adjustment": "進度調整策略",
+      "focus_shift": "重點轉移策略"
+    }},
+    "motivation_strategy": {{
+      "milestones": ["里程碑1", "里程碑2"],
+      "rewards": ["獎勵1", "獎勵2"],
+      "encouragement_points": ["鼓勵點1", "鼓勵點2"]
+    }}
+  }},
+  "monitoring": {{
+    "progress_tracking": "進度追蹤方法",
+    "adjustment_triggers": ["調整觸發條件1", "調整觸發條件2"],
+    "review_schedule": "複習時間表"
+  }}
+}}
+
+請確保：
+1. 路徑基於知識點依賴關係
+2. 考慮學生的弱點和優勢
+3. 提供具體可執行的步驟
+4. 包含適當的挑戰和成就感
+5. 路徑要靈活可調整
+"""
+    return prompt

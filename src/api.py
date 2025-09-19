@@ -30,7 +30,7 @@ def verify_token(token):
 def get_user_info(token, key):
     decoded_token = jwt.decode(token, current_app.config['SECRET_KEY'], algorithms=["HS256"])
     
-    user = mongo.db.students.find_one({"email": decoded_token['user']})
+    user = mongo.db.user.find_one({"email": decoded_token['user']})
     if not user:
         print(f"❌ 找不到用戶: {decoded_token['user']}")
         raise ValueError("User not found")
