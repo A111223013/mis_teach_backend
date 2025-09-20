@@ -330,6 +330,9 @@ def submit_quiz():
                         
                         micro_concepts = exam_question.get('micro_concepts', [])
                         key_points = exam_question.get('key-points', '')
+                        # 處理 key-points 可能是陣列或字串的情況
+                        if isinstance(key_points, list):
+                            key_points = ', '.join(key_points) if key_points else ''
                         parent_id = str(exam_question.get('_id', ''))
 
                         # 構建子題清單
@@ -352,7 +355,7 @@ def submit_quiz():
                                 'answer_type': sub.get('answer_type', 'single-choice'),
                                 'image_file': sub_image,
                                 'detail_answer': sub.get('detail-answer', ''),
-                                'key_points': sub.get('key-points', ''),
+                                'key_points': ', '.join(sub.get('key-points', [])) if isinstance(sub.get('key-points', []), list) else sub.get('key-points', ''),
                                 'difficulty_level': sub.get('difficulty level', sub.get('difficulty_level', '')),
                                 'original_exam_id': parent_id
                             })
@@ -401,7 +404,7 @@ def submit_quiz():
                             'correct_answer': exam_question.get('answer', ''),
                             'original_exam_id': str(exam_question.get('_id', '')),
                             'image_file': exam_question.get('image_file'),
-                            'key_points': exam_question.get('key-points', ''),
+                            'key_points': ', '.join(exam_question.get('key-points', [])) if isinstance(exam_question.get('key-points', []), list) else exam_question.get('key-points', ''),
                             'answer_type': question_type,
                             'detail_answer': exam_question.get('detail-answer', '')
                         }
@@ -480,6 +483,7 @@ def submit_quiz():
             # GROUP 題特殊處理：處理子題答案
             sub_questions = question.get('sub_questions', [])
             group_answered = False
+            group_sub_answers = []  # 收集所有子題答案
             
             for sub_idx, sub_question in enumerate(sub_questions):
                 sub_answer_key = f"{i}_sub_{sub_idx}"  # 子題答案鍵值格式：主題索引_sub_子題索引
@@ -488,6 +492,7 @@ def submit_quiz():
                 if sub_user_answer:  # 子題有答案
                     group_answered = True
                     answer_time_seconds = question_answer_times.get(sub_answer_key, 0)
+                    group_sub_answers.append(sub_user_answer)
                     
                     # 為每個子題創建獨立的評分資料
                     sub_q_data = {
@@ -513,7 +518,114 @@ def submit_quiz():
                     
                     answered_questions.append(sub_q_data)
             
+            # 如果沒有找到標準格式的子題答案，檢查是否有其他格式的答案
             if not group_answered:
+                # 檢查是否有以主題索引為鍵的答案（可能是子題答案陣列）
+                main_answer = answers.get(str(i), '')
+                if isinstance(main_answer, list) and len(main_answer) > 0:
+                    # 如果主答案是一個陣列，可能是子題答案
+                    group_answered = True
+                    group_sub_answers = main_answer
+                    for sub_idx, sub_question in enumerate(sub_questions):
+                        if sub_idx < len(main_answer):
+                            sub_user_answer = main_answer[sub_idx]
+                            answer_time_seconds = question_answer_times.get(str(i), 0) // len(sub_questions)  # 平均分配時間
+                            
+                            # 為每個子題創建獨立的評分資料
+                            sub_q_data = {
+                                'index': i,
+                                'sub_index': sub_idx,
+                                'question': {
+                                    'id': f"{i}_{sub_idx}",
+                                    'question_text': sub_question.get('question_text', ''),
+                                    'type': sub_question.get('answer_type', 'single-choice'),
+                                    'options': sub_question.get('options', []),
+                                    'correct_answer': sub_question.get('answer', ''),
+                                    'original_exam_id': sub_question.get('original_exam_id', question_id),
+                                    'image_file': sub_question.get('image_file', ''),
+                                    'key_points': sub_question.get('key_points', ''),
+                                    'question_number': sub_question.get('question_number', ''),
+                                    'is_sub_question': True,
+                                    'parent_question_id': question_id,
+                                    'parent_question_text': question.get('group_question_text', '')
+                                },
+                                'user_answer': sub_user_answer,
+                                'answer_time_seconds': answer_time_seconds
+                            }
+                            
+                            answered_questions.append(sub_q_data)
+                
+                # 如果還是沒有找到，檢查所有答案中是否有陣列格式的答案
+                if not group_answered:
+                    for answer_key, answer_value in answers.items():
+                        if isinstance(answer_value, list) and len(answer_value) > 0:
+                            # 假設這個陣列答案對應當前 Group 題目
+                            group_answered = True
+                            group_sub_answers = answer_value
+                            # 找到陣列格式答案，處理 Group 題目
+                            
+                            for sub_idx, sub_question in enumerate(sub_questions):
+                                if sub_idx < len(answer_value):
+                                    sub_user_answer = answer_value[sub_idx]
+                                    answer_time_seconds = question_answer_times.get(answer_key, 0) // len(sub_questions)
+                                    
+                                    # 為每個子題創建獨立的評分資料
+                                    sub_q_data = {
+                                        'index': i,
+                                        'sub_index': sub_idx,
+                                        'question': {
+                                            'id': f"{i}_{sub_idx}",
+                                            'question_text': sub_question.get('question_text', ''),
+                                            'type': sub_question.get('answer_type', 'single-choice'),
+                                            'options': sub_question.get('options', []),
+                                            'correct_answer': sub_question.get('answer', ''),
+                                            'original_exam_id': sub_question.get('original_exam_id', question_id),
+                                            'image_file': sub_question.get('image_file', ''),
+                                            'key_points': sub_question.get('key_points', ''),
+                                            'question_number': sub_question.get('question_number', ''),
+                                            'is_sub_question': True,
+                                            'parent_question_id': question_id,
+                                            'parent_question_text': question.get('group_question_text', '')
+                                        },
+                                        'user_answer': sub_user_answer,
+                                        'answer_time_seconds': answer_time_seconds
+                                    }
+                                    
+                                    answered_questions.append(sub_q_data)
+                            break  # 只處理第一個找到的陣列答案
+            
+            # 為 Group 題目本身創建一個整體的答案記錄
+            if group_answered:
+                # 計算 Group 題目的整體作答時間
+                group_answer_time = question_answer_times.get(str(i), 0)
+                if not group_answer_time:
+                    # 如果沒有找到主題索引的時間，嘗試從子題時間計算
+                    group_answer_time = sum(q_data.get('answer_time_seconds', 0) for q_data in answered_questions 
+                                          if q_data.get('index') == i and q_data.get('question', {}).get('is_sub_question'))
+                
+                # 創建 Group 題目的整體答案資料
+                group_q_data = {
+                    'index': i,
+                    'question': {
+                        'id': str(i),
+                        'question_text': question.get('group_question_text', ''),
+                        'type': 'group',
+                        'options': [],
+                        'correct_answer': '',  # Group 題目沒有單一正確答案
+                        'original_exam_id': question_id,
+                        'image_file': question.get('image_file', ''),
+                        'key_points': question.get('key_points', ''),
+                        'is_sub_question': False,
+                        'parent_question_id': None,
+                        'parent_question_text': None,
+                        'sub_questions': sub_questions
+                    },
+                    'user_answer': group_sub_answers,  # 子題答案陣列
+                    'answer_time_seconds': group_answer_time
+                }
+                
+                answered_questions.append(group_q_data)
+            else:
                 # 整個題組都沒有答案
                 unanswered_count += 1
                 unanswered_questions.append({
@@ -729,6 +841,7 @@ def submit_quiz():
             question = q_data['question']
             user_answer = q_data['user_answer']
             question_id = question.get('original_exam_id', '')
+            question_type = question.get('type', '')
             
             # 獲取AI評分結果
             ai_result = q_data.get('ai_result', {})
@@ -739,17 +852,24 @@ def submit_quiz():
             # 獲取作答時間（秒數）
             answer_time_seconds = q_data.get('answer_time_seconds', 0)
             
-            # 調試日誌
-            print(f"🔍 Debug: 保存題目 {i} - answer_time_seconds: {answer_time_seconds}")
+            # 處理 Group 題目的答案格式
+            if question_type == 'group':
+                # Group 題目的答案可能是陣列，需要轉換為字串
+                if isinstance(user_answer, list):
+                    user_answer_str = json.dumps(user_answer, ensure_ascii=False)
+                else:
+                    user_answer_str = str(user_answer)
+            else:
+                user_answer_str = str(user_answer)
             
             # 構建用戶答案資料
             answer_data = {
-                'answer': user_answer,
+                'answer': user_answer_str,
                 'feedback': feedback  # 使用AI批改的feedback
             }
             
             # 使用新的長答案存儲方法，保持數據完整性
-            stored_answer = _store_long_answer(user_answer, 'unknown', quiz_history_id, question_id, user_email)
+            stored_answer = _store_long_answer(user_answer_str, 'unknown', quiz_history_id, question_id, user_email)
             
             # 插入到 quiz_answers 表，包含feedback和作答時間
             conn.execute(text("""
@@ -889,6 +1009,17 @@ def get_progress_status(progress_id: str) -> dict:
     except Exception as e:
         print(f"❌ 獲取進度狀態失敗: {e}")
         return None
+
+def _parse_user_answer(user_answer):
+    """解析用戶答案，支援多種格式"""
+    if isinstance(user_answer, dict):
+        return user_answer.get('answer', '')
+    elif isinstance(user_answer, str) and user_answer.startswith('['):
+        try:
+            return json.loads(user_answer)
+        except json.JSONDecodeError:
+            return user_answer
+    return user_answer
 
 def _store_long_answer(user_answer: any, question_type: str, quiz_history_id: int, question_id: str, user_email: str) -> str:
     """
@@ -1120,6 +1251,9 @@ def get_quiz_result(result_id):
                         
                         micro_concepts = exam_question.get('micro_concepts', [])
                         key_points = exam_question.get('key-points', '')
+                        # 處理 key-points 可能是陣列或字串的情況
+                        if isinstance(key_points, list):
+                            key_points = ', '.join(key_points) if key_points else ''
                         parent_id = str(exam_question.get('_id', ''))
 
                         # 構建子題清單
@@ -1142,7 +1276,7 @@ def get_quiz_result(result_id):
                                 'answer_type': sub.get('answer_type', 'single-choice'),
                                 'image_file': sub_image,
                                 'detail_answer': sub.get('detail-answer', ''),
-                                'key_points': sub.get('key-points', ''),
+                                'key_points': ', '.join(sub.get('key-points', [])) if isinstance(sub.get('key-points', []), list) else sub.get('key-points', ''),
                                 'difficulty_level': sub.get('difficulty level', sub.get('difficulty_level', '')),
                                 'original_exam_id': parent_id
                             })
@@ -1171,7 +1305,7 @@ def get_quiz_result(result_id):
                             'options': exam_question.get('options', []),
                             'correct_answer': exam_question.get('answer', ''),
                             'image_file': exam_question.get('image_file', ''),
-                            'key_points': exam_question.get('key-points', ''),
+                            'key_points': ', '.join(exam_question.get('key-points', [])) if isinstance(exam_question.get('key-points', []), list) else exam_question.get('key-points', ''),
                             'original_exam_id': str(exam_question.get('_id', ''))
                         }
                 else:
@@ -1199,24 +1333,57 @@ def get_quiz_result(result_id):
             # 構建題目資訊
             if question_detail.get('type') == 'group':
                 # GROUP 題特殊處理
+                sub_questions = question_detail.get('sub_questions', [])
+                
+                # 處理子題答案
+                processed_sub_questions = []
+                for sub_idx, sub_question in enumerate(sub_questions):
+                    # 查找子題的答案（格式：主題ID_sub_子題索引）
+                    sub_question_id = f"{question_id_str}_{sub_idx}"
+                    sub_answer_info = answers_dict.get(sub_question_id, {})
+                    
+                    # 構建子題資訊
+                    processed_sub_question = {
+                        'question_number': sub_question.get('question_number', ''),
+                        'question_text': sub_question.get('question_text', ''),
+                        'answer_type': sub_question.get('answer_type', 'short-answer'),
+                        'options': sub_question.get('options', []),
+                        'correct_answer': sub_question.get('answer', ''),
+                        'image_file': sub_question.get('image_file', ''),
+                        'key_points': sub_question.get('key_points', ''),
+                        'difficulty_level': sub_question.get('difficulty_level', ''),
+                        'is_correct': sub_answer_info.get('is_correct', False),
+                        'user_answer': sub_answer_info.get('user_answer', ''),
+                        'score': sub_answer_info.get('score', 0),
+                        'answer_time_seconds': sub_answer_info.get('answer_time_seconds', 0),
+                        'feedback': sub_answer_info.get('feedback', {})
+                    }
+                    processed_sub_questions.append(processed_sub_question)
+                
+                # 處理 Group 題目的用戶答案
+                group_user_answer = _parse_user_answer(answer_info.get('user_answer', ''))
+                
                 question_info = {
                     'question_id': question_id_str,
                     'question_index': i,
                     'type': 'group',
+                    'question_text': question_detail.get('group_question_text', ''),  # 添加 question_text 欄位
                     'group_question_text': question_detail.get('group_question_text', ''),
                     'micro_concepts': question_detail.get('micro_concepts', []),
                     'key_points': question_detail.get('key_points', ''),
                     'image_file': question_detail.get('image_file', ''),
-                    'sub_questions': question_detail.get('sub_questions', []),
+                    'sub_questions': processed_sub_questions,
                     'is_correct': answer_info.get('is_correct', False),
                     'is_marked': False,  # 目前沒有標記功能
-                    'user_answer': answer_info.get('user_answer', {}).get('answer', ''),
+                    'user_answer': group_user_answer,
                     'score': answer_info.get('score', 0),
                     'answer_time_seconds': answer_info.get('answer_time_seconds', 0),
                     'answer_time': answer_info.get('answer_time')
                 }
             else:
                 # 單題處理
+                single_user_answer = _parse_user_answer(answer_info.get('user_answer', ''))
+                
                 question_info = {
                     'question_id': question_id_str,
                     'question_index': i,
@@ -1228,7 +1395,7 @@ def get_quiz_result(result_id):
                     'key_points': question_detail.get('key_points', ''),
                     'is_correct': answer_info.get('is_correct', False),
                     'is_marked': False,  # 目前沒有標記功能
-                    'user_answer': answer_info.get('user_answer', {}).get('answer', ''),
+                    'user_answer': single_user_answer,
                     'score': answer_info.get('score', 0),
                     'answer_time_seconds': answer_info.get('answer_time_seconds', 0),
                     'answer_time': answer_info.get('answer_time')
@@ -1365,6 +1532,9 @@ def create_quiz():
                 
                 micro_concepts = exam.get('micro_concepts', [])
                 key_points = exam.get('key-points', '')
+                # 處理 key-points 可能是陣列或字串的情況
+                if isinstance(key_points, list):
+                    key_points = ', '.join(key_points) if key_points else ''
                 parent_id = str(exam.get('_id', ''))
 
                 # 構建子題清單
@@ -1380,6 +1550,11 @@ def create_quiz():
                     sub_image = sub.get('image_file', '')
                     # 保留子題的 image_file 結構（有可能為 list 或 str），前端自行處理
 
+                    # 處理子題的 key-points
+                    sub_key_points = sub.get('key-points', '')
+                    if isinstance(sub_key_points, list):
+                        sub_key_points = ', '.join(sub_key_points) if sub_key_points else ''
+                    
                     sub_qs.append({
                         'question_number': sub.get('question_number', ''),
                         'question_text': sub.get('question_text', ''),
@@ -1388,7 +1563,7 @@ def create_quiz():
                         'answer_type': sub.get('answer_type', 'single-choice'),
                         'image_file': sub_image,
                         'detail_answer': sub.get('detail-answer', ''),
-                        'key_points': sub.get('key-points', ''),
+                        'key_points': sub_key_points,
                         'difficulty_level': sub.get('difficulty level', sub.get('difficulty_level', '')),
                         'original_exam_id': parent_id
                     })
@@ -1437,7 +1612,7 @@ def create_quiz():
                     'correct_answer': exam.get('answer', ''),
                     'original_exam_id': str(exam.get('_id', '')),
                     'image_file': exam.get('image_file'),
-                    'key_points': exam.get('key-points', ''),
+                    'key_points': ', '.join(exam.get('key-points', [])) if isinstance(exam.get('key-points', []), list) else exam.get('key-points', ''),
                     'answer_type': question_type,
                     'detail_answer': exam.get('detail-answer', '')
                 }
@@ -1683,7 +1858,7 @@ def get_exam():
                     'answer_type': exam.get('answer_type'),
                     'image_file': exam.get('image_file'),
                     'detail-answer': exam.get('detail-answer'),
-                    'key_points': exam.get('key-points'),
+                    'key_points': ', '.join(exam.get('key-points', [])) if isinstance(exam.get('key-points', []), list) else exam.get('key-points', ''),
                     'difficulty level': exam.get('difficulty level'),
         }
         
