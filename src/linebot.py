@@ -137,7 +137,7 @@ def check_line_binding():
         
         # 更新 MongoDB 中的用戶資料
         from accessories import mongo
-        result = mongo.db.students.update_one(
+        result = mongo.db.user.update_one(
             {"email": student_email},
             {"$set": {"lineId": line_user_id}}
         )
@@ -328,7 +328,7 @@ def handle_test_binding(user_id: str, reply_token: str):
         
         # 檢查用戶是否已綁定
         from accessories import mongo
-        user = mongo.db.students.find_one({"lineId": user_id})
+        user = mongo.db.user.find_one({"lineId": user_id})
         
         if user:
             # 用戶已綁定
@@ -549,7 +549,7 @@ def handle_follow_event(event):
         
         # 檢查用戶是否已經綁定
         from accessories import mongo
-        user = mongo.db.students.find_one({"lineId": user_id})
+        user = mongo.db.user.find_one({"lineId": user_id})
         
         if user:
             # 用戶已綁定

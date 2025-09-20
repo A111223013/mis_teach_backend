@@ -47,7 +47,6 @@ def initialize_mis_teach_db(uri="mongodb://localhost:27017/", db_name="MIS_Teach
         insert_mis_domain(db)
         insert_se_domain(db)
 
-        print("✅ 所有教材資料初始化完成")
         return db
 
     except Exception as e:
@@ -119,8 +118,6 @@ def insert_dl_domain(db):
                 {"_id": block_ids[block_idx]},
                 {"$push": {"subtopics": micro_ids[i]}}
             )
-
-        print("✅ 數位邏輯資料插入成功")
         return {
             "domain_id": domain_id,
             "block_ids": block_ids,
@@ -184,7 +181,6 @@ def insert_os_domain(db):
         for i, (block_idx, _) in enumerate(micro_map):
             blocks_col.update_one({"_id": block_ids[block_idx]}, {"$push": {"subtopics": micro_ids[i]}})
 
-        print("✅ 作業系統資料插入成功")
     except Exception as e:
         print(f"❌ 插入作業系統失敗：{e}")
 
@@ -236,7 +232,6 @@ def insert_ds_domain(db):
         for i, (block_idx, _) in enumerate(micro_map):
             blocks_col.update_one({"_id": block_ids[block_idx]}, {"$push": {"subtopics": micro_ids[i]}})
 
-        print("✅ 資料結構資料插入成功")
     except Exception as e:
         print(f"❌ 插入資料結構失敗：{e}")
 
@@ -287,7 +282,6 @@ def insert_cn_domain(db):
         for i, (block_idx, _) in enumerate(micro_map):
             blocks_col.update_one({"_id": block_ids[block_idx]}, {"$push": {"subtopics": micro_ids[i]}})
 
-        print("✅ 電腦網路資料插入成功")
     except Exception as e:
         print(f"❌ 插入電腦網路失敗：{e}")
 
@@ -339,7 +333,6 @@ def insert_db_domain(db):
         for i, (block_idx, _) in enumerate(micro_map):
             blocks_col.update_one({"_id": block_ids[block_idx]}, {"$push": {"subtopics": micro_ids[i]}})
 
-        print("✅ 資料庫資料插入成功")
     except Exception as e:
         print(f"❌ 插入資料庫失敗：{e}")
 
@@ -395,7 +388,6 @@ def insert_ai_domain(db):
         for i, (block_idx, _) in enumerate(micro_map):
             blocks_col.update_one({"_id": block_ids[block_idx]}, {"$push": {"subtopics": micro_ids[i]}})
 
-        print("✅ AI與機器學習資料插入成功")
     except Exception as e:
         print(f"❌ 插入 AI與機器學習失敗：{e}")
 
@@ -448,7 +440,6 @@ def insert_sec_domain(db):
         for i, (block_idx, _) in enumerate(micro_map):
             blocks_col.update_one({"_id": block_ids[block_idx]}, {"$push": {"subtopics": micro_ids[i]}})
 
-        print("✅ 資訊安全資料插入成功")
     except Exception as e:
         print(f"❌ 插入資訊安全失敗：{e}")
 
@@ -504,7 +495,6 @@ def insert_cloud_domain(db):
         for i, (block_idx, _) in enumerate(micro_map):
             blocks_col.update_one({"_id": block_ids[block_idx]}, {"$push": {"subtopics": micro_ids[i]}})
 
-        print("✅ 雲端與虛擬化資料插入成功")
     except Exception as e:
         print(f"❌ 插入雲端與虛擬化失敗：{e}")
 
@@ -556,7 +546,6 @@ def insert_mis_domain(db):
         for i, (block_idx, _) in enumerate(micro_map):
             blocks_col.update_one({"_id": block_ids[block_idx]}, {"$push": {"subtopics": micro_ids[i]}})
 
-        print("✅ 管理資訊系統資料插入成功")
     except Exception as e:
         print(f"❌ 插入管理資訊系統失敗：{e}")
 
@@ -615,7 +604,6 @@ def insert_se_domain(db):
         for i, (block_idx, _) in enumerate(micro_map):
             blocks_col.update_one({"_id": block_ids[block_idx]}, {"$push": {"subtopics": micro_ids[i]}})
 
-        print("✅ 軟體工程與系統開發資料插入成功")
     except Exception as e:
         print(f"❌ 插入軟體工程與系統開發失敗：{e}")
 

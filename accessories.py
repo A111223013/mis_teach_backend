@@ -55,7 +55,7 @@ def get_neo4j_driver():
 
 @login_manager.user_loader
 def load_user(user_id):
-    user_data = mongo.db.students.find_one({'_id': ObjectId(user_id)})
+    user_data = mongo.db.user.find_one({'_id': ObjectId(user_id)})
     return user_data
 
 class User(UserMixin):
@@ -330,7 +330,7 @@ def send_calendar_notification(student_email: str, event_title: str, event_conte
     """發送行事曆事件通知郵件"""
     try:
         # 從 MongoDB 獲取學生資料
-        student_data = mongo.db.students.find_one({"email": student_email})
+        student_data = mongo.db.user.find_one({"email": student_email})
         if not student_data:
             print(f"❌ 找不到學生資料: {student_email}")
             return False

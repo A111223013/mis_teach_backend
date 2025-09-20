@@ -15,7 +15,7 @@ def login():
     data = request.json
     email = data.get('email')
     password = data.get('password')
-    user_data = mongo.db.students.find_one({"email": email})
+    user_data = mongo.db.user.find_one({"email": email})
     if user_data and check_password_hash(user_data['password'], password):
         # 修復JWT token生成 - 使用標準Unix時間戳
         exp_time = datetime.now() + timedelta(hours=3)
