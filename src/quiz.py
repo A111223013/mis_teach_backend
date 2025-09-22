@@ -415,26 +415,16 @@ def submit_quiz():
                         elif not isinstance(question['options'], list):
                             question['options'] = []
                         
-                        # 處理圖片檔案（單題）
+                        # 處理圖片檔案（單題，放寬條件：允許直接透傳檔名/URL）
                         image_file = exam_question.get('image_file', '')
-                        image_filename = ''
-                        if image_file and image_file not in ['沒有圖片', '不需要圖片', '不須圖片', '不須照片', '沒有考卷', '']:
-                            if isinstance(image_file, list) and len(image_file) > 0:
-                                question['image_file'] = image_file[0]
-                            elif isinstance(image_file, str):
-                                image_filename = image_file
+                        negative_values = ['沒有圖片', '不需要圖片', '不須圖片', '不須照片', '沒有考卷', '']
+                        if image_file and image_file not in negative_values:
+                            if isinstance(image_file, list):
+                                # 保留第一張作為主要顯示
+                                question['image_file'] = image_file[0] if len(image_file) > 0 else ''
                             else:
-                                image_filename = ''
-
-                            if image_filename:
-                                current_dir = os.path.dirname(os.path.abspath(__file__))
-                                image_path = os.path.join(current_dir, 'picture', image_filename)
-                                if os.path.exists(image_path):
-                                    question['image_file'] = image_filename
-                                else:
-                                    question['image_file'] = ''
-                            else:
-                                question['image_file'] = ''
+                                # 字串可為檔名或 URL，直接透傳，不再強制檢查檔案存在
+                                question['image_file'] = str(image_file)
                         else:
                             question['image_file'] = ''
 

@@ -170,7 +170,7 @@ def _extract_user_answer(user_answer_raw: str) -> str:
     
     return user_answer_raw
     
-def chat_with_ai(question: str, conversation_type: str = "general", session_id: str = None) -> dict:
+def chat_with_ai(question: str, conversation_type: str = "general", session_id: str = None, request_data: dict = None, auth_token: str = None) -> dict:
     """AI 對話處理 - 簡化版本"""
     try:
         if not RAG_AVAILABLE:
@@ -182,8 +182,8 @@ def chat_with_ai(question: str, conversation_type: str = "general", session_id: 
 
         if conversation_type == "tutoring" and session_id:
             try:
-                # 從請求中獲取必要數據
-                data = request.get_json()
+                # 從傳入的數據中獲取必要數據
+                data = request_data or {}
                 correct_answer = data.get('correct_answer', '')
                 user_answer = data.get('user_answer', '')
                 
@@ -205,8 +205,7 @@ def chat_with_ai(question: str, conversation_type: str = "general", session_id: 
                         user_input = question
                 # 直接調用 verify_token 獲取用戶 email
                 from .api import verify_token
-                token = request.headers.get('Authorization', '').replace('Bearer ', '')
-                user_email = verify_token(token) if token else "anonymous_user"
+                user_email = verify_token(auth_token) if auth_token else "anonymous_user"
 
                 # 傳遞AI批改的評分反饋
                 response = handle_tutoring_conversation(user_email, actual_question, user_answer, correct_answer, user_input, grading_feedback)
@@ -389,18 +388,37 @@ def ai_tutoring():
         conversation_type = data.get('conversation_type', 'tutoring')
         
         
-        # 調用 AI 對話處理
-        result = chat_with_ai(user_input or "初始化會話", conversation_type, session_id)
+        # 調用 AI 對話處理，傳遞必要的數據
+        result = chat_with_ai(
+            user_input or "初始化會話", 
+            conversation_type, 
+            session_id,
+            request_data=data,
+            auth_token=token
+        )
         
-        return jsonify({'token': refresh_token(token), 'data': result})
+        # 確保返回正確的結構給前端
+        if isinstance(result, dict) and 'success' in result:
+            # 將 token 加入到結果中
+            result['token'] = refresh_token(token)
+            return jsonify(result)
+        else:
+            # 如果 result 不是期待的格式，建立一個標準回應
+            return jsonify({
+                'success': False,
+                'error': 'AI回應格式錯誤',
+                'response': '抱歉，AI教學對話處理失敗，請重試。',
+                'token': refresh_token(token)
+            })
         
     except Exception as e:
         logger.error(f"❌ AI教學對話端點錯誤: {e}")
         return jsonify({
             'success': False,
             'error': f'AI教學對話失敗：{str(e)}',
-            'response': '抱歉，AI教學對話處理失敗，請重試。'
-        })
+            'response': '抱歉，AI教學對話處理失敗，請重試。',
+            'token': None
+        }), 500
 
 @ai_teacher_bp.route('/get-quiz-result/<result_id>', methods=['GET', 'OPTIONS'])
 def get_quiz_result(result_id):

@@ -2533,3 +2533,161 @@ def submit_ai_quiz():
             'success': False,
             'message': f'AI測驗提交失敗：{str(e)}'
         }), 500
+
+@ai_quiz_bp.route('/track-learning-progress', methods=['POST', 'OPTIONS'])
+def track_learning_progress():
+    """追蹤學習進度"""
+    try:
+        if request.method == 'OPTIONS':
+            return jsonify({'success': True}), 204
+        
+        auth_header = request.headers.get('Authorization')
+        if not auth_header:
+            return jsonify({'success': False, 'message': '未提供認證token'}), 401
+        
+        token = auth_header.split(" ")[1]
+        user_email = verify_token(token)
+        if not user_email:
+            return jsonify({'success': False, 'message': '認證失敗，請重新登入'}), 401
+        
+        data = request.get_json()
+        if not data:
+            return jsonify({'success': False, 'message': '未提供數據'}), 400
+        
+        # 獲取學習進度數據
+        session_id = data.get('session_id', '')
+        question_id = data.get('question_id', '')
+        understanding_level = data.get('understanding_level', 0)
+        learning_stage = data.get('learning_stage', '')
+        learning_time = data.get('learning_time', 0)
+        
+        if not all([session_id, question_id]):
+            return jsonify({
+                'success': False, 
+                'message': '缺少必要參數 session_id 或 question_id'
+            }), 400
+        
+        # 準備學習進度記錄
+        progress_record = {
+            'user_email': user_email,
+            'session_id': session_id,
+            'question_id': question_id,
+            'understanding_level': understanding_level,
+            'learning_stage': learning_stage,
+            'learning_time': learning_time,
+            'timestamp': datetime.now(),
+            'created_at': datetime.now()
+        }
+        
+        # 檢查是否已有相同的進度記錄
+        existing_progress = mongo.db.learning_progress.find_one({
+            'user_email': user_email,
+            'session_id': session_id,
+            'question_id': question_id
+        })
+        
+        progress_updated = False
+        if existing_progress:
+            # 更新現有記錄
+            mongo.db.learning_progress.update_one(
+                {'_id': existing_progress['_id']},
+                {
+                    '$set': {
+                        'understanding_level': understanding_level,
+                        'learning_stage': learning_stage,
+                        'learning_time': learning_time,
+                        'updated_at': datetime.now()
+                    }
+                }
+            )
+            progress_updated = True
+            print(f"✅ 更新學習進度: {user_email} - {session_id} - {question_id}")
+        else:
+            # 創建新記錄
+            mongo.db.learning_progress.insert_one(progress_record)
+            progress_updated = True
+            print(f"✅ 創建學習進度: {user_email} - {session_id} - {question_id}")
+        
+        return jsonify({
+            'success': True,
+            'progress_updated': progress_updated,
+            'token': refresh_token(token)
+        })
+        
+    except Exception as e:
+        logger.error(f"❌ 追蹤學習進度失敗: {e}")
+        return jsonify({
+            'success': False,
+            'message': f'追蹤學習進度失敗：{str(e)}'
+        }), 500
+
+@ai_quiz_bp.route('/get-learning-recommendations', methods=['POST', 'OPTIONS'])
+def get_learning_recommendations():
+    """獲取學習建議"""
+    try:
+        if request.method == 'OPTIONS':
+            return jsonify({'success': True}), 204
+        
+        auth_header = request.headers.get('Authorization')
+        if not auth_header:
+            return jsonify({'success': False, 'message': '未提供認證token'}), 401
+        
+        token = auth_header.split(" ")[1]
+        user_email = verify_token(token)
+        if not user_email:
+            return jsonify({'success': False, 'message': '認證失敗，請重新登入'}), 401
+        
+        data = request.get_json()
+        if not data:
+            return jsonify({'success': False, 'message': '未提供數據'}), 400
+        
+        # 獲取推薦參數
+        topic = data.get('topic', '')
+        chapter = data.get('chapter', '')
+        current_level = data.get('current_level', 0)
+        
+        # 基於用戶的學習進度生成建議
+        user_progress = list(mongo.db.learning_progress.find({
+            'user_email': user_email
+        }).sort('timestamp', -1).limit(10))
+        
+        # 簡單的推薦邏輯
+        recommendations = []
+        
+        if current_level < 3:
+            recommendations.extend([
+                "建議從基礎概念開始複習",
+                "多做練習題加強理解",
+                "可以觀看相關教學影片"
+            ])
+        elif current_level < 7:
+            recommendations.extend([
+                "嘗試更有挑戰性的題目",
+                "複習相關的進階概念",
+                "與同學討論學習心得"
+            ])
+        else:
+            recommendations.extend([
+                "你的掌握度很好！",
+                "可以嘗試教導其他同學",
+                "挑戰更複雜的應用題目"
+            ])
+        
+        if topic:
+            recommendations.append(f"針對 {topic} 主題，建議多加練習")
+        
+        if chapter:
+            recommendations.append(f"複習 {chapter} 章節的重點概念")
+        
+        return jsonify({
+            'success': True,
+            'recommendations': recommendations,
+            'token': refresh_token(token)
+        })
+        
+    except Exception as e:
+        logger.error(f"❌ 獲取學習建議失敗: {e}")
+        return jsonify({
+            'success': False,
+            'message': f'獲取學習建議失敗：{str(e)}'
+        }), 500

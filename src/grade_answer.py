@@ -155,36 +155,120 @@ class AnswerGrader:
             prompt = self._build_grading_prompt(user_answer, question_text, correct_answer, options, question_type)
             
             if model:
-                # 如果是繪圖題，需要特殊處理base64圖片
-                if isinstance(user_answer, str) and user_answer.startswith('data:image/'):
+                print(f"🔍 [DEBUG] 開始 AI 評分，模型類型: {type(model)}")
+                print(f"🔍 [DEBUG] 模型是否為新版: {hasattr(model, 'sdk_version')}")
+                
+                # 強制使用新版 Google GenAI SDK 方式處理圖片
+                def _is_data_image(s: str) -> bool:
                     try:
+                        result = isinstance(s, str) and s.startswith('data:image/')
+                        if result:
+                            print(f"🔍 [DEBUG] 檢測到圖片數據: {s[:50]}...")
+                        return result
+                    except Exception:
+                        return False
+
+                image_parts = []
+                text_parts = []
+                
+                print(f"🔍 [DEBUG] 用戶答案類型: {type(user_answer)}")
+                
+                # 收集所有圖片，強制使用新版 types.Part.from_bytes
+                if isinstance(user_answer, list):
+                    print(f"🔍 [DEBUG] 處理列表答案，項目數: {len(user_answer)}")
+                    # 多圖片：收集所有 data:image/*
+                    for i, ua in enumerate(user_answer):
+                        print(f"🔍 [DEBUG] 處理項目 {i}: {type(ua)} - {str(ua)[:30]}...")
+                        if _is_data_image(ua):
+                            try:
+                                # 強制使用新版 SDK
+                                import base64
+                                try:
+                                    import google.genai
+                                    from google.genai import types
+                                except ImportError:
+                                    from google import genai as google_genai
+                                    from google.genai import types
+                                
+                                print(f"🔍 [DEBUG] 解析圖片 {i}...")
+                                header, b64 = ua.split(',', 1)
+                                mime = header.split(':', 1)[1].split(';', 1)[0]
+                                print(f"🔍 [DEBUG] 圖片 {i} MIME 類型: {mime}")
+                                
+                                image_data = base64.b64decode(b64)
+                                print(f"🔍 [DEBUG] 圖片 {i} 數據大小: {len(image_data)} bytes")
+                                
+                                image_part = types.Part.from_bytes(data=image_data, mime_type=mime)
+                                image_parts.append(image_part)
+                                print(f"✅ [DEBUG] 圖片 {i} 轉換成功")
+                            except Exception as e:
+                                print(f"❌ [DEBUG] 圖片 {i} 處理失敗: {e}")
+                                import traceback
+                                traceback.print_exc()
+                                continue
+                        else:
+                            text_parts.append(str(ua))
+                elif _is_data_image(user_answer):
+                    print("🔍 [DEBUG] 處理單張圖片答案")
+                    try:
+                        # 強制使用新版 SDK
                         import base64
-                        from google.generativeai.types import HarmCategory, HarmBlockThreshold
+                        try:
+                            import google.genai
+                            from google.genai import types
+                        except ImportError:
+                            from google import genai as google_genai
+                            from google.genai import types
                         
-                        # 提取base64數據部分
-                        base64_data = user_answer.split(',')[1] if ',' in user_answer else user_answer
+                        header, b64 = user_answer.split(',', 1)
+                        mime = header.split(':', 1)[1].split(';', 1)[0]
+                        print(f"🔍 [DEBUG] 單張圖片 MIME 類型: {mime}")
                         
-                        # 解碼base64數據
-                        image_data = base64.b64decode(base64_data)
+                        image_data = base64.b64decode(b64)
+                        print(f"🔍 [DEBUG] 單張圖片數據大小: {len(image_data)} bytes")
                         
-                        # 創建圖片內容
-                        image_content = {
-                            "mime_type": "image/png",
-                            "data": image_data
-                        }
+                        image_part = types.Part.from_bytes(data=image_data, mime_type=mime)
+                        image_parts.append(image_part)
+                        print("✅ [DEBUG] 單張圖片轉換成功")
+                    except Exception as e:
+                        print(f"❌ [DEBUG] 單張圖片解碼失敗: {e}")
+                        import traceback
+                        traceback.print_exc()
+                else:
+                    print("🔍 [DEBUG] 處理純文字答案")
+                    text_parts.append(str(user_answer))
+
+                # 統一處理：優先使用圖片模式
+                if image_parts:
+                    try:
+                        print(f"🔍 [DEBUG] 準備發送給 Gemini: {len(image_parts)} 張圖片")
                         
-                        # 使用圖片和文字提示
-                        response = model.generate_content([
-                            image_content,
-                            prompt
-                        ])
+                        # 組合內容：先放提示詞，後放圖片
+                        contents = [prompt] + image_parts
                         
-                        print(f"🔍 使用圖片分析模式")
+                        # 如果還有文字內容，也加入
+                        if text_parts:
+                            contents.append(f"額外文字內容: {' '.join(text_parts)}")
+                            print(f"🔍 [DEBUG] 同時包含文字內容: {len(text_parts)} 項")
+                        
+                        print(f"🔍 [DEBUG] 最終內容列表長度: {len(contents)}")
+                        for i, item in enumerate(contents):
+                            if hasattr(item, '__class__') and 'Part' in str(type(item)):
+                                print(f"🔍 [DEBUG] 內容 {i}: 圖片 (Part 物件)")
+                            else:
+                                print(f"🔍 [DEBUG] 內容 {i}: 文字 - {str(item)[:50]}...")
+                        
+                        response = model.generate_content(contents)
+                        print(f"✅ [DEBUG] 新版 SDK 圖片分析完成（{len(image_parts)} 張圖片）")
                         
                     except Exception as e:
-                        print(f"❌ 圖片處理失敗，使用文字模式: {e}")
+                        print(f"❌ [DEBUG] 新版 SDK 圖片處理失敗: {e}")
+                        import traceback
+                        traceback.print_exc()
+                        print("🔍 [DEBUG] 回退到文字模式")
                         response = model.generate_content(prompt)
                 else:
+                    print("🔍 [DEBUG] 無圖片，使用純文字模式")
                     response = model.generate_content(prompt)
                 
 
@@ -220,6 +304,11 @@ class AnswerGrader:
 
 **評分任務說明**：
 請記住你只需要評分學生的答案，不要評分正確答案。正確答案只是用來參考比較的標準。
+若學生以「圖片」作答：
+- 先對圖片進行 OCR/圖像理解，詳細列出你從圖片中「讀到的文字、公式、步驟與結果」。
+- 忽略簽名、姓名、日期、裝飾等與題目無關的內容，不可因為出現簽名就判定無關。
+- 只要圖片中有與題目相關的計算/公式/圖形元素，應給予相對應的分數（可給部分分）。
+- 手寫凌亂或拍攝角度不佳時，請盡力辨識並據此評分。
 
 **題目資訊**：
 題目類型：{question_type}
@@ -233,9 +322,9 @@ class AnswerGrader:
 選項：{options if options else '無'}
 
 **重要說明**：
-- 如果學生答案是base64編碼的圖片（以data:image/開頭），請直接分析圖片內容
-- 對於繪圖題，請根據圖片內容與題目要求的匹配度進行評分
-- 圖片內容應該與題目相關，包含必要的圖形元素和結構
+- 如果學生答案是圖片（data:image/... 或多張圖），請先列出你辨識到的內容，再進行評分。
+- 對於繪圖或手寫題，依據圖片內容與題目要求的匹配度評分，可給部分分。
+- 圖片中若同時包含簽名與作答，簽名須被忽略，不得因此判0分。
 
 {type_guidance}
 
