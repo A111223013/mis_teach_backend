@@ -359,6 +359,43 @@ def process_message(message: str, user_id: str = "default", platform: str = "web
         except Exception as e:
             logger.warning(f"添加用戶訊息到記憶失敗: {e}")
         
+        # 在進入代理前做快速意圖偵測：若為「解釋/說明」需求，直接產生解釋回覆，而非導師引導
+        def is_explain_request(text: str) -> bool:
+            try:
+                import re
+                pattern = r"(請?解釋|解釋以下|說明一下|請?說明|定義是什麼|介紹一下|幫我解釋)"
+                return re.search(pattern, text) is not None
+            except Exception:
+                return False
+
+        if is_explain_request(message):
+            try:
+                if llm is None:
+                    # 直接初始化簡短回答模型（沿用現有初始化）
+                    llm_local = init_llm()
+                else:
+                    llm_local = llm
+
+                explain_prompt = (
+                    "你是一位講解清晰的助教，任務是直接、完整地『解釋』使用者提出的概念或段落，不要反問、不要引導式教學。\n"
+                    "請用繁體中文，以條列與小節呈現：\n"
+                    "- 核心定義\n- 關鍵觀念/要點\n- 簡短例子或應用\n- 容易混淆之處與澄清（如有）\n"
+                    "若原句含英文名稱，保留並對齊中文術語。以下是要解釋的內容：\n\n{query}"
+                )
+
+                result_text = llm_local.invoke(explain_prompt.format(query=message))
+                response_text = result_text.content if hasattr(result_text, "content") else str(result_text)
+                return {
+                    'success': True,
+                    'content': response_text,
+                    'message': response_text,
+                    'timestamp': datetime.now().isoformat()
+                }
+            except Exception as e:
+                logger.error(f"❌ 解釋流程失敗: {e}")
+                # 若解釋流程失敗，退回主代理人
+                pass
+
         # 根據平台創建對應的主代理人
         platform_executor = create_platform_specific_agent(platform)
         

@@ -18,7 +18,15 @@ import json
 import os
 import google.generativeai as genai
 from tool.api_keys import get_api_key
-from neo4j import GraphDatabase
+# 條件性導入 neo4j 以避免環境相容性問題
+try:
+    from neo4j import GraphDatabase
+    NEO4J_AVAILABLE = True
+    print("✅ [DEBUG] Neo4j 導入成功")
+except Exception as e:
+    print(f"⚠️ [DEBUG] Neo4j 導入失敗（跳過相關功能）: {type(e).__name__}: {e}")
+    GraphDatabase = None
+    NEO4J_AVAILABLE = False
 
 sqldb = SQLAlchemy()
 mail = Mail()
@@ -35,6 +43,10 @@ def init_neo4j():
     """初始化 Neo4j 連接"""
     global neo4j_driver
     try:
+        if not NEO4J_AVAILABLE:
+            print("⚠️ Neo4j 不可用，跳過初始化")
+            return None
+            
         from config import Config
         neo4j_driver = GraphDatabase.driver(
             Config.NEO4J_URI, 
@@ -49,6 +61,8 @@ def init_neo4j():
 def get_neo4j_driver():
     """獲取 Neo4j 驅動程式"""
     global neo4j_driver
+    if not NEO4J_AVAILABLE:
+        return None
     if neo4j_driver is None:
         neo4j_driver = init_neo4j()
     return neo4j_driver
@@ -160,16 +174,117 @@ def refresh_token(old_token):
         return None
     
 def init_gemini(model_name = 'gemini-2.5-flash'):
-    """初始化主要的Gemini API（向後兼容）"""
+    """初始化主要的Gemini API（優先使用新版 SDK）"""
     try:
         api_key = get_api_key()  # 使用tool/api_keys.py
-        genai.configure(api_key=api_key)
-        # 使用正確的模型名稱
-        model = genai.GenerativeModel(model_name)
-        print("✅ Gemini API 初始化成功")
-        return model
+        print(f"🔍 [DEBUG] 開始初始化 Gemini，模型: {model_name}")
+        print(f"🔍 [DEBUG] API Key 前10字元: {api_key[:10]}...")
+        
+        # 強制優先使用新版 Google GenAI SDK
+        try:
+            # 嘗試多種導入方式
+            try:
+                import google.genai as new_genai
+                from google.genai import types
+                print("🔍 [DEBUG] 成功導入新版 Google GenAI SDK (方式1)")
+            except ImportError:
+                from google import genai as new_genai
+                from google.genai import types
+                print("🔍 [DEBUG] 成功導入新版 Google GenAI SDK (方式2)")
+            except ImportError:
+                raise ImportError("無法導入新版 SDK")
+            
+            client = new_genai.Client(api_key=api_key)
+            print("🔍 [DEBUG] 新版 Client 創建成功")
+            
+            # 創建一個包裝器以保持 API 兼容性
+            class GeminiWrapper:
+                def __init__(self, client, model_name):
+                    self.client = client
+                    self.model_name = model_name
+                    self.sdk_version = "new"
+                    print(f"🔍 [DEBUG] GeminiWrapper 初始化完成，模型: {model_name}")
+                
+                def generate_content(self, contents, generation_config=None):
+                    """兼容舊版 API 的 generate_content 方法，優化圖片處理"""
+                    print(f"🔍 [DEBUG] generate_content 被呼叫，contents 類型: {type(contents)}")
+                    if generation_config:
+                        print(f"🔍 [DEBUG] 包含 generation_config: {generation_config}")
+                    
+                    # 準備請求參數
+                    request_params = {
+                        'model': self.model_name,
+                        'contents': contents if isinstance(contents, list) else [contents]
+                    }
+                    
+                    # 新版 SDK 的 generation_config 參數名稱可能不同
+                    if generation_config:
+                        # 將舊版參數轉換為新版參數
+                        config = {}
+                        if 'max_output_tokens' in generation_config:
+                            config['max_output_tokens'] = generation_config['max_output_tokens']
+                        if 'temperature' in generation_config:
+                            config['temperature'] = generation_config['temperature']
+                        if 'top_p' in generation_config:
+                            config['top_p'] = generation_config['top_p']
+                        if 'top_k' in generation_config:
+                            config['top_k'] = generation_config['top_k']
+                        
+                        if config:
+                            request_params['config'] = config
+                    
+                    if isinstance(contents, str):
+                        print("🔍 [DEBUG] 處理純文字內容")
+                    elif isinstance(contents, list):
+                        print(f"🔍 [DEBUG] 處理列表內容，項目數: {len(contents)}")
+                        
+                        # 檢查是否包含圖片
+                        has_images = False
+                        for i, item in enumerate(contents):
+                            item_type = type(item).__name__
+                            if 'Part' in item_type:
+                                print(f"🔍 [DEBUG] 項目 {i}: {item_type} (圖片 Part 物件)")
+                                has_images = True
+                            else:
+                                print(f"🔍 [DEBUG] 項目 {i}: {item_type} - {str(item)[:50]}...")
+                        
+                        if has_images:
+                            print("🔍 [DEBUG] 檢測到圖片內容，使用新版 SDK 圖片處理")
+                    else:
+                        print(f"🔍 [DEBUG] 處理其他格式內容: {type(contents)}")
+                    
+                    try:
+                        response = self.client.models.generate_content(**request_params)
+                        print(f"🔍 [DEBUG] 新版 SDK 回應類型: {type(response)}")
+                        return response
+                    except Exception as e:
+                        print(f"⚠️ [DEBUG] 新版 SDK 參數失敗，嘗試簡化版本: {e}")
+                        # 如果參數有問題，回退到基本版本
+                        response = self.client.models.generate_content(
+                            model=self.model_name,
+                            contents=contents if isinstance(contents, list) else [contents]
+                        )
+                        print(f"🔍 [DEBUG] 簡化版本回應類型: {type(response)}")
+                        return response
+            
+            wrapper = GeminiWrapper(client, model_name)
+            print("✅ Gemini API 初始化成功 (新版 SDK - 圖片優化)")
+            return wrapper
+            
+        except ImportError as e:
+            print(f"⚠️ [DEBUG] 新版 SDK 導入失敗: {e}")
+            # 回退到舊版 SDK
+            print("🔍 [DEBUG] 回退到舊版 SDK")
+            genai.configure(api_key=api_key)
+            model = genai.GenerativeModel(model_name)
+            print("✅ Gemini API 初始化成功 (舊版 SDK)")
+            return model
+            
     except Exception as e:
         print(f"❌ Gemini API 初始化失敗: {e}")
+        import traceback
+        print(f"🔍 [DEBUG] 完整錯誤堆疊:")
+        traceback.print_exc()
         return None
 
 
