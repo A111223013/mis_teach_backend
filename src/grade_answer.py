@@ -148,9 +148,7 @@ class AnswerGrader:
                                     options: List[str], question_type: str) -> Tuple[bool, float, Dict[str, Any]]:
         """使用指定的模型進行AI評分"""
         try:
-            # 對於選擇題，先進行嚴格的正確答案比對
-            if question_type in ['single-choice', 'multiple-choice', 'true-false']:
-                return self._grade_choice_question_strict(user_answer, correct_answer, question_text, options, question_type)
+            # 所有題目都使用AI進行評分，包括選擇題
             
             prompt = self._build_grading_prompt(user_answer, question_text, correct_answer, options, question_type)
             
@@ -236,6 +234,9 @@ class AnswerGrader:
 - 如果學生答案是base64編碼的圖片（以data:image/開頭），請直接分析圖片內容
 - 對於繪圖題，請根據圖片內容與題目要求的匹配度進行評分
 - 圖片內容應該與題目相關，包含必要的圖形元素和結構
+- **對於選擇題**：比較學生答案與正確答案是否一致，不考慮大小寫差異
+- **對於多選題**：比較學生答案與正確答案的選項組合是否一致
+- **對於是非題**：比較學生答案與正確答案是否一致
 
 {type_guidance}
 
@@ -243,6 +244,7 @@ class AnswerGrader:
 1. **只評分學生答案的內容**，與正確答案進行比較
 2. **學生答案必須與題目內容相關**，不能是無意義的數字或符號
 3. 如果學生答案與題目要求完全無關，必須給0分
+4. **對於選擇題**：如果學生選擇的選項與正確答案相同，給100分；否則給0分
 
 **評分要求**：
 1. 仔細分析學生答案的內容和邏輯
@@ -284,68 +286,6 @@ class AnswerGrader:
 評分：85分，is_correct: true（因為學生答案包含了正確的核心概念）
 """
         return prompt
-    
-    def _grade_choice_question_strict(self, user_answer: Any, correct_answer: str, question_text: str, 
-                                     options: List[str], question_type: str) -> Tuple[bool, float, Dict[str, Any]]:
-        """嚴格評分選擇題 - 完全按照正確答案進行判斷"""
-        try:
-            # 處理用戶答案
-            if user_answer is None or user_answer == '':
-                user_answer_str = ''
-            else:
-                user_answer_str = str(user_answer).strip().upper()
-            
-            # 處理正確答案
-            correct_answer_str = str(correct_answer).strip().upper()
-            # 判斷是否正確
-            is_correct = False
-            score = 0
-            
-            if question_type == 'single-choice' or question_type == 'true-false':
-                # 單選題：必須完全匹配
-                is_correct = user_answer_str == correct_answer_str
-                score = 100 if is_correct else 0
-                
-            elif question_type == 'multiple-choice':
-                # 多選題：答案集合必須完全相同（順序無關）
-                if user_answer_str and correct_answer_str:
-                    # 將答案轉換為字符集合進行比較
-                    user_set = set(user_answer_str)
-                    correct_set = set(correct_answer_str)
-                    is_correct = user_set == correct_set
-                    score = 100 if is_correct else 0
-                else:
-                    is_correct = False
-                    score = 0
-            
-            # 生成反饋
-            if is_correct:
-                feedback = {
-                    "explanation": f"答案正確！您選擇了正確的選項。",
-                    "strengths": "答案完全正確，理解準確。",
-                    "weaknesses": "無",
-                    "suggestions": "繼續保持，您對這個概念掌握得很好。"
-                }
-            else:
-                feedback = {
-                    "explanation": f"答案錯誤。正確答案是 '{correct_answer}'，您選擇了 '{user_answer}'。",
-                    "strengths": "您嘗試回答了問題。",
-                    "weaknesses": f"答案不正確，正確答案是 '{correct_answer}'。",
-                    "suggestions": "請重新學習相關概念，確保理解正確後再作答。"
-                }
-            
-            print(f"   評分結果: {score}分, 正確: {is_correct}")
-            
-            return is_correct, score, feedback
-            
-        except Exception as e:
-            print(f"❌ 選擇題嚴格評分失敗: {e}")
-            return False, 0, {
-                "explanation": "評分過程中發生錯誤",
-                "strengths": "無",
-                "weaknesses": "評分系統錯誤",
-                "suggestions": "請聯繫管理員"
-            }
     
     def _get_type_specific_guidance(self, question_type: str) -> str:
         """根據題目類型返回特定的評分指導"""

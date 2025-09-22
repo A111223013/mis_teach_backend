@@ -139,8 +139,10 @@ def check_new_user():
     })
 
 
-@user_guide_bp.route('/trigger-guide', methods=['POST'])
+@user_guide_bp.route('/trigger-guide', methods=['POST', 'OPTIONS'])
 def trigger_guide():
+    if request.method == 'OPTIONS':
+        return jsonify({'success': True})
     """觸發導覽工作流"""
     try:
         data = request.get_json() or {}
@@ -170,8 +172,10 @@ def trigger_guide():
             'error': str(e)
         }), 500
 
-@user_guide_bp.route('/mark-guided', methods=['POST'])
+@user_guide_bp.route('/mark-guided', methods=['POST', 'OPTIONS'])
 def mark_guided():
+    if request.method == 'OPTIONS':
+        return jsonify({'success': True})
     """標記用戶已完成導覽"""
     try:
         user_id = user_guide_service.get_user_id()

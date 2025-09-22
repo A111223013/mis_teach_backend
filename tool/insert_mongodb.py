@@ -609,6 +609,6 @@ def insert_se_domain(db):
 
 
 # ---- 使用範例 ----
-if __name__ == "__main__":
-    initialize_mis_teach_db()
+#if __name__ == "__main__":
+#    initialize_mis_teach_db()
 

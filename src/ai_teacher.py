@@ -37,16 +37,12 @@ def get_quiz_from_database(quiz_ids: List[str]) -> dict:
         
         for quiz_id in quiz_ids:
             try:
-                
-                # 先嘗試直接查詢（支援時間戳格式的ID）
-                quiz_doc = mongo.db.quizzes.find_one({"_id": quiz_id})
+                # 優先使用 ObjectId 查詢（AI生成的測驗使用ObjectId）
+                quiz_doc = mongo.db.exam.find_one({"_id": ObjectId(quiz_id)})
                 
                 if not quiz_doc:
-                    # 如果直接查詢失敗，嘗試使用 ObjectId 查詢
-                    try:
-                        quiz_doc = mongo.db.quizzes.find_one({"_id": ObjectId(quiz_id)})
-                    except:
-                        pass
+                    # 如果 ObjectId 查詢失敗，嘗試直接查詢（支援字串格式ID）
+                    quiz_doc = mongo.db.exam.find_one({"_id": quiz_id})
                 
                 if quiz_doc:
                     break

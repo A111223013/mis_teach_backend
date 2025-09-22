@@ -7,6 +7,7 @@
 import logging
 from typing import Dict, List, Any, Optional
 from datetime import datetime
+from bson import ObjectId
 import json
 import random
 import time
@@ -160,39 +161,64 @@ class SmartQuizGenerator:
                 title = f"{requirements.get('topic', 'AI生成')}知識點測驗"
                 quiz_type = "knowledge"
             
-            quiz_doc = {
-                "_id": quiz_id,  # 直接使用quiz_id作為_id
-                "quiz_id": quiz_id,
-                "title": title,
-                "type": quiz_type,
-                "creator_email": "ai_system@mis_teach.com",
-                "create_time": datetime.now().isoformat(),
-                "time_limit": requirements.get('time_limit', 60),
-                "questions": questions,
-                "metadata": {
-                    "topic": requirements.get('topic', 'AI生成'),
-                    "difficulty": requirements.get('difficulty', 'medium'),
-                    "question_count": len(questions),
-                    "exam_type": requirements.get('exam_type', 'knowledge'),
-                    "selected_text": requirements.get('selected_text', '') if requirements.get('exam_type') == 'content-based' else None
+            # 轉換題目格式以符合exam文檔結構
+            formatted_questions = []
+            for i, question in enumerate(questions):
+                # 處理選項格式
+                options = question.get('options', [])
+                processed_options = []
+                if options and isinstance(options, list):
+                    for option in options:
+                        if ': ' in option:
+                            processed_options.append(option.split(': ', 1)[1])
+                        else:
+                            processed_options.append(option)
+                
+                # 確定答案類型
+                answer_type = "single" if question.get('type') == 'multiple-choice' else "short-answer"
+                
+                formatted_question = {
+                    "_id": ObjectId(),
+                    "type": answer_type,
+                    "school": "",
+                    "department": "",
+                    "year": "",
+                    "question_number": str(i + 1),
+                    "question_text": question.get('question_text', ''),
+                    "options": processed_options,
+                    "answer": question.get('correct_answer', ''),
+                    "answer_type": answer_type,
+                    "image_file": [],
+                    "detail-answer": question.get('explanation', ''),
+                    "key-points": question.get('key_points', requirements.get('topic', 'AI生成')),
+                    "micro_concepts": [requirements.get('topic', 'AI生成'), f"{requirements.get('topic', 'AI生成')}基礎", f"{requirements.get('topic', 'AI生成')}應用"],
+                    "difficulty_level": '中等' if requirements.get('difficulty', 'medium') == 'medium' else ('簡單' if requirements.get('difficulty', 'medium') == 'easy' else '困難'),
+                    "error_reason": "",
+                    "created_at": datetime.now()
                 }
-            }
+                formatted_questions.append(formatted_question)
             
-            # 插入到quizzes集合
-            result = mongo.db.quizzes.insert_one(quiz_doc)
-            
-            logger.info(f"💾 考卷已保存到數據庫，ID: {quiz_id}")
-            logger.info(f"✅ 成功保存考卷到數據庫，包含 {len(questions)} 道題目")
-            
-            return [quiz_id]  # 返回我們設置的quiz_id
+            # 直接保存題目作為獨立文檔，不需要測驗文檔
+            if formatted_questions:
+                question_results = mongo.db.exam.insert_many(formatted_questions)
+                
+                # 創建SQL template（使用所有題目的ID）
+                question_ids = [str(q_id) for q_id in question_results.inserted_ids]
+                template_id = create_sql_template_for_quiz(question_ids, {
+                    'title': title,
+                    'total_questions': len(formatted_questions),
+                    'difficulty': requirements.get('difficulty', 'medium'),
+                    'concept': requirements.get('topic', 'AI生成'),
+                    'domain': 'AI生成測驗'
+                })
+                
+                return [str(question_results.inserted_ids[0])]  # 返回第一個題目的ID
+            else:
+                return []
             
         except ImportError as e:
-            logger.warning(f"⚠️ 無法導入數據庫模組: {e}")
-            logger.info("📝 跳過數據庫保存，僅生成考卷")
             return []
         except Exception as e:
-            logger.error(f"❌ 保存考卷到數據庫失敗: {e}")
-            logger.info("📝 跳過數據庫保存，僅生成考卷")
             return []
     
     def _convert_to_database_format(self, question: Dict, requirements: Dict) -> Dict:
@@ -291,7 +317,8 @@ class SmartQuizGenerator:
                 topic=topic,
                 difficulty=difficulty,
                 question_type=question_type,
-                selected_text=requirements.get('selected_text')
+                selected_text=requirements.get('selected_text'),
+                requirements=requirements
             )
             
             if question:
@@ -309,7 +336,7 @@ class SmartQuizGenerator:
         return questions
     
     def _smart_generate_single_question(self, question_number: int, topic: str, 
-                                      difficulty: str, question_type: str, selected_text: str = None) -> Optional[Dict[str, Any]]:
+                                      difficulty: str, question_type: str, selected_text: str = None, requirements: Dict[str, Any] = None) -> Optional[Dict[str, Any]]:
         """智能生成單一題目 - 帶重試機制"""
         
         for attempt in range(self.max_retries):
@@ -343,7 +370,7 @@ class SmartQuizGenerator:
                 # LLM已經初始化完成
                 
                 # 構建動態提示詞
-                prompt = self._build_dynamic_prompt(topic, difficulty, question_type, selected_text)
+                prompt = self._build_dynamic_prompt(topic, difficulty, question_type, selected_text, requirements)
                 
                 # 調用AI生成
                 response = llm.invoke(prompt)
@@ -548,7 +575,7 @@ class SmartQuizGenerator:
         
         return prompt
     
-    def _build_dynamic_prompt(self, topic: str, difficulty: str, question_type: str, selected_text: str = None) -> str:
+    def _build_dynamic_prompt(self, topic: str, difficulty: str, question_type: str, selected_text: str = None, requirements: Dict[str, Any] = None) -> str:
         """構建動態AI提示詞"""
         
         # 根據題型調整提示詞
@@ -562,7 +589,15 @@ class SmartQuizGenerator:
             option_instruction = "提供4個選項"
             answer_format = '"A"'
         
-        prompt = f"""請為我創建一道關於{topic}的{self.difficulty_levels[difficulty]}程度{self.question_types[question_type]}。
+        # 構建更詳細的主題描述
+        if requirements and 'domain_name' in requirements and 'concept_name' in requirements:
+            domain_name = requirements['domain_name']
+            concept_name = requirements['concept_name']
+            detailed_topic = f"{domain_name}領域中的{concept_name}概念"
+        else:
+            detailed_topic = topic
+        
+        prompt = f"""請為我創建一道關於{detailed_topic}的{self.difficulty_levels[difficulty]}程度{self.question_types[question_type]}。
 
 要求：
 1. 題目要真實、有教育意義，符合大學課程標準
@@ -570,7 +605,8 @@ class SmartQuizGenerator:
 3. 答案要正確且有詳細解釋，解釋要清晰易懂
 4. 題目內容要符合{self.difficulty_levels[difficulty]}程度
 5. {option_instruction}
-6. 如果提供了參考內容，題目應該與參考內容相關且具有相似性
+6. 題目必須緊密圍繞{detailed_topic}的核心概念和知識點
+7. 如果提供了參考內容，題目應該與參考內容相關且具有相似性
 
 請務必以以下 JSON Schema 格式回傳（只生成一題）：
 
@@ -591,14 +627,15 @@ class SmartQuizGenerator:
 - 請確保JSON格式完整，不要中途截斷
 - 所有字符串都要用雙引號包圍，不要使用單引號
 - 選項數組必須包含4個元素，每個選項都要有標籤（A、B、C、D）
-- 題目內容要專業且準確，符合{topic}學科標準
+- 題目內容要專業且準確，符合{detailed_topic}學科標準
 - 請使用繁體中文撰寫所有內容
 - 請嚴格按照上述JSON Schema格式，不要添加任何其他文字或格式
 - 必須生成真實的題目內容，不要使用佔位符
-- 題目內容應該與{topic}相關，具有實際的教學價值
+- 題目內容應該與{detailed_topic}相關，具有實際的教學價值
 - 由於只生成一題，請確保JSON完整且不截斷
-- 請根據{topic}創建全新的真實題目，不要複製示例內容
-- 正確答案格式：{answer_format}"""
+- 請根據{detailed_topic}創建全新的真實題目，不要複製示例內容
+- 正確答案格式：{answer_format}
+- 特別注意：題目必須是關於{detailed_topic}的，不要生成其他不相關的主題（如網路、作業系統等）"""
         
         return prompt
     
@@ -1810,10 +1847,19 @@ class SimilarQuizGenerator:
             }
             
             # 保存到數據庫
-            result = mongo.db.quizzes.insert_one(quiz_doc)
-            logger.info(f"✅ 相似題目已保存到數據庫，ID: {result.inserted_id}")
+            result = mongo.db.exam.insert_one(quiz_doc)
             
-            return [quiz_id]  # 返回我們設置的quiz_id
+            if result.inserted_id:
+                logger.info(f"✅ 相似題目已保存到數據庫，ID: {result.inserted_id}")
+                
+                # 創建SQL template
+                template_id = create_sql_template_for_quiz(quiz_id, quiz_doc)
+                logger.info(f"📋 SQL template已創建: {template_id}")
+                
+                return [quiz_id]  # 返回我們設置的quiz_id
+            else:
+                logger.error("❌ 保存相似題目到數據庫失敗")
+                return []
             
         except Exception as e:
             logger.error(f"❌ 保存相似題目到數據庫失敗: {e}")
@@ -1940,3 +1986,52 @@ def _determine_difficulty_from_text(text: str) -> str:
         return 'medium'
     else:
         return 'hard'
+
+def create_sql_template_for_quiz(question_ids: List[str], quiz_info: Dict[str, Any], user_email: str = 'ai_system@mis_teach.com') -> str:
+    """為quiz_generator生成的測驗創建SQL template，參考學校考古題的創建方式"""
+    try:
+        from accessories import sqldb
+        from sqlalchemy import text
+        import json
+        
+        # 創建SQL template記錄
+        template_query = text("""
+            INSERT INTO quiz_templates (
+                user_email,
+                template_type,
+                question_ids,
+                school,
+                department,
+                year
+            ) VALUES (
+                :user_email,
+                :template_type,
+                :question_ids,
+                :school,
+                :department,
+                :year
+            )
+        """)
+        
+        # 準備數據
+        template_data = {
+            'user_email': user_email,
+            'template_type': 'knowledge',
+            'question_ids': json.dumps(question_ids),  # 使用傳入的question_ids
+            'school': '',
+            'department': '',
+            'year': ''
+        }
+        
+        # 執行SQL並獲取lastrowid作為template_id
+        with sqldb.engine.connect() as conn:
+            result = conn.execute(template_query, template_data)
+            conn.commit()
+            template_id = result.lastrowid
+            
+        logger.info(f"SQL template已創建: {template_id}")
+        return str(template_id)
+        
+    except Exception as e:
+        logger.error(f"創建SQL template失敗: {e}")
+        return f"temp_template_{int(time.time())}"

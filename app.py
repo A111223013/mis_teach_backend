@@ -25,8 +25,9 @@ from src.user_guide_api import user_guide_bp
 from src.web_ai_assistant import web_ai_bp
 from src.linebot import linebot_bp  # 新增 LINE Bot Blueprint
 from src.learning_analytics import analytics_bp  # 從統一模組導入學習分析 API Blueprint
-from src.unified_learning_analytics import learning_analytics_bp  # 統一學習分析 API Blueprint
 from tool.insert_mongodb import initialize_mis_teach_db # 引入教材資料庫
+from tool.init_neo4j_knowledge_graph import init_neo4j_knowledge_graph  # 引入Neo4j知識圖譜初始化
+from accessories import init_neo4j  # 引入Neo4j驅動初始化
 
 
 # 定義 BASE_DIR 為 backend 資料夾的絕對路徑
@@ -81,7 +82,7 @@ app.register_blueprint(user_guide_bp, url_prefix='/user-guide')
 app.register_blueprint(web_ai_bp, url_prefix='/web-ai')
 app.register_blueprint(linebot_bp, url_prefix='/linebot') # 註冊 LINE Bot Blueprint
 app.register_blueprint(materials_bp, url_prefix="/materials")
-app.register_blueprint(analytics_bp)  # 註冊學習分析 API Blueprint (已包含 /api/learning-analytics 前綴)
+app.register_blueprint(analytics_bp, url_prefix='/api/learning-analytics')  # 註冊學習分析 API Blueprint
 
 # 創建靜態文件服務路由 (用於圖片)
 @app.route('/static/images/<path:filename>')
@@ -182,8 +183,12 @@ with app.app_context():
     scheduler_thread = threading.Thread(target=run_scheduler, daemon=True)
     scheduler_thread.start()
     print("✅ 行事曆通知排程器已啟動")
-init_mongo_data()
-initialize_mis_teach_db()
+
+    # 初始化MongoDB數據
+    init_mongo_data()
+    initialize_mis_teach_db()
+    init_neo4j()  # 初始化Neo4j驅動
+    init_neo4j_knowledge_graph()
 
 if __name__ == '__main__':
     app.run(debug=True)

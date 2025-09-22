@@ -26,78 +26,102 @@ logger = logging.getLogger(__name__)
 def get_quiz_from_database(quiz_ids: List[str]) -> dict:
     """從資料庫獲取考卷數據"""
     try:
-        # 從 MongoDB 獲取考卷數據
-        # 根據你提供的數據結構，quiz_ids 應該是考卷的 _id，而不是題目的 _id
-        quiz_doc = None
-        
-        for quiz_id in quiz_ids:
-            try:
-                # 嘗試使用 ObjectId 查詢
-                quiz_doc = mongo.db.quizzes.find_one({"_id": ObjectId(quiz_id)})
-                if not quiz_doc:
-                    # 如果 ObjectId 查詢失敗，嘗試直接查詢
-                    quiz_doc = mongo.db.quizzes.find_one({"_id": quiz_id})
-                
-                if quiz_doc:
-                    logger.info(f"找到考卷: {quiz_doc.get('title', 'Unknown')}")
-                    break
-                    
-            except Exception as e:
-                logger.error(f"處理考卷ID {quiz_id} 時發生錯誤: {e}")
-                continue
-        
-        if not quiz_doc:
+        # quiz_ids 現在是 template_id 列表，取第一個作為 template_id
+        template_id = quiz_ids[0] if quiz_ids else None
+        if not template_id:
             return {
                 'success': False,
-                'message': '沒有找到有效的考卷數據'
+                'message': '沒有提供有效的template_id'
             }
         
-        # 從考卷文檔中提取題目數據
-        questions = quiz_doc.get('questions', [])
-        if not questions:
+        # 先查詢SQL template獲取所有題目ID
+        try:
+            from accessories import sqldb
+            from sqlalchemy import text
+            import json
+            
+            # 查詢SQL template獲取question_ids
+            template_query = text("""
+                SELECT question_ids FROM quiz_templates 
+                WHERE id = :template_id
+            """)
+            
+            with sqldb.engine.connect() as conn:
+                result = conn.execute(template_query, {'template_id': template_id})
+                template_row = result.fetchone()
+                
+                if not template_row:
+                    return {
+                        'success': False,
+                        'message': '找不到測驗模板'
+                    }
+                
+                question_ids_json = template_row[0]
+                question_ids = json.loads(question_ids_json)
+                
+                # 查詢所有題目
+                questions = []
+                for q_id in question_ids:
+                    try:
+                        object_id = ObjectId(q_id)
+                        question_doc = mongo.db.exam.find_one({"_id": object_id})
+                        if question_doc:
+                            questions.append(question_doc)
+                    except Exception as e:
+                        continue
+                
+                if not questions:
+                    return {
+                        'success': False,
+                        'message': '沒有找到任何題目數據'
+                    }
+                    
+        except Exception as e:
             return {
                 'success': False,
-                'message': '考卷中沒有題目數據'
+                'message': f'查詢題目時發生錯誤: {str(e)}'
             }
         
         # 轉換題目格式為前端需要的格式
         formatted_questions = []
         for i, question in enumerate(questions):
             formatted_question = {
-                'id': question.get('id', i + 1),
+                'id': str(question.get('_id', question.get('id', i + 1))),
                 'question_text': question.get('question_text', ''),
                 'type': question.get('type', 'single-choice'),
                 'options': question.get('options', []),
-                'correct_answer': question.get('correct_answer', ''),
-                'original_exam_id': question.get('original_exam_id', ''),
+                'correct_answer': question.get('answer', question.get('correct_answer', '')),
+                'original_exam_id': question.get('exam_id', question.get('original_exam_id', '')),
                 'image_file': question.get('image_file', ''),
-                'key_points': question.get('key_points', ''),
-                'explanation': question.get('explanation', ''),
+                'key_points': question.get('key-points', question.get('key_points', '')),
+                'explanation': question.get('detail-answer', question.get('explanation', '')),
                 'topic': question.get('topic', ''),
-                'difficulty': question.get('difficulty', 'medium')
+                'difficulty': question.get('difficulty_level', question.get('difficulty', 'medium')),
+                'micro_concepts': question.get('micro_concepts', []),
+                'difficulty_level': question.get('difficulty_level', '中等'),
+                'error_reason': question.get('error_reason', ''),
+                'created_at': str(question.get('created_at', '')) if question.get('created_at') else ''
             }
             formatted_questions.append(formatted_question)
         
-        # 構建考卷數據
+        # 構建考卷數據 (從單個題目中提取信息)
         quiz_data = {
-            'quiz_id': quiz_doc.get('quiz_id', f"ai_generated_{int(datetime.now().timestamp())}"),
-            'template_id': f"ai_template_{int(datetime.now().timestamp())}",
+            'quiz_id': str(template_id), # 使用template_id作為quiz_id
+            'template_id': str(template_id),
             'questions': formatted_questions,
-            'time_limit': quiz_doc.get('time_limit', 60),
+            'time_limit': 60, # Default time limit for single question
             'quiz_info': {
-                'title': quiz_doc.get('title', f'AI生成的考卷 ({len(formatted_questions)}題)'),
-                'exam_type': quiz_doc.get('type', 'knowledge'),
-                'topic': quiz_doc.get('metadata', {}).get('topic', '計算機概論'),
-                'difficulty': quiz_doc.get('metadata', {}).get('difficulty', 'medium'),
+                'title': f"AI生成題目 ({template_id})", # 可以從quiz_info中獲取更詳細的title
+                'exam_type': 'knowledge',
+                'topic': questions[0].get('key-points', '計算機概論') if questions else '計算機概論',
+                'difficulty': questions[0].get('difficulty_level', 'medium') if questions else 'medium',
                 'question_count': len(formatted_questions),
-                'time_limit': quiz_doc.get('time_limit', 60),
+                'time_limit': 60,
                 'total_score': len(formatted_questions) * 5,
-                'created_at': quiz_doc.get('create_time', datetime.now().isoformat())
+                'created_at': questions[0].get('created_at', datetime.now()).isoformat() if questions else datetime.now().isoformat()
             },
-            'database_ids': quiz_ids
+            'database_ids': [str(q_id) for q_id in question_ids] # 儲存所有題目ID，確保是字串
         }
-        
-        logger.info(f"成功載入考卷: {quiz_data['quiz_info']['title']}, 題目數量: {len(formatted_questions)}")
         
         return {
             'success': True,
@@ -105,7 +129,6 @@ def get_quiz_from_database(quiz_ids: List[str]) -> dict:
         }
         
     except Exception as e:
-        logger.error(f"獲取考卷數據時發生錯誤: {e}")
         return {
             'success': False,
             'message': f'獲取考卷數據失敗: {str(e)}'
@@ -2130,3 +2153,48 @@ def get_quiz_from_database_endpoint():
     result = get_quiz_from_database(quiz_ids)
     
     return jsonify({'token': refresh_token(token), 'data': result})
+
+@quiz_bp.route('/get-quiz/<quiz_id>', methods=['GET', 'OPTIONS'])
+def get_quiz(quiz_id):
+    """獲取單個測驗數據"""
+    if request.method == 'OPTIONS':
+        return jsonify({'success': True}), 204
+    
+    try:
+        logger.info(f"收到獲取測驗請求: {quiz_id}")
+        
+        # 直接調用get_quiz_from_database函數
+        result = get_quiz_from_database([quiz_id])
+        
+        logger.info(f"get_quiz_from_database結果: {result.get('success', False)}")
+        
+        if result.get('success'):
+            data = result.get('data', {})
+            questions = data.get('questions', [])
+            logger.info(f"找到測驗，題目數量: {len(questions)}")
+            
+            return jsonify({
+                'success': True,
+                'data': {
+                    'quiz_id': quiz_id,
+                    'template_id': quiz_id,
+                    'title': data.get('quiz_info', {}).get('title', ''),
+                    'questions': questions,
+                    'time_limit': data.get('time_limit', 60),
+                    'total_questions': len(questions),
+                    'quiz_info': data.get('quiz_info', {})
+                }
+            })
+        else:
+            logger.warning(f"找不到測驗: {result.get('message', '未知錯誤')}")
+            return jsonify({
+                'success': False,
+                'error': result.get('message', '找不到測驗')
+            }), 404
+            
+    except Exception as e:
+        logger.error(f"獲取測驗失敗: {e}")
+        return jsonify({
+            'success': False,
+            'error': f'獲取測驗失敗: {str(e)}'
+        }), 500

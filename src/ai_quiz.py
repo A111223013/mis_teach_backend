@@ -1913,7 +1913,7 @@ def generate_guided_learning_session():
             
             # 從考卷獲取題目詳情
             quiz_id = submission_doc.get('quiz_id')
-            quiz_doc = mongo.db.quizzes.find_one({"_id": quiz_id})
+            quiz_doc = mongo.db.exam.find_one({"_id": quiz_id})
             if not quiz_doc:
                 print(f"❌ 找不到對應的考卷: {quiz_id}")
                 return jsonify({
@@ -2326,7 +2326,7 @@ def submit_ai_quiz():
         if mongo is None or mongo.db is None:
             return jsonify({'success': False, 'error': '資料庫連接不可用'}), 500
         
-        quiz_doc = mongo.db.quizzes.find_one({"_id": quiz_id})
+        quiz_doc = mongo.db.exam.find_one({"_id": quiz_id})
         if not quiz_doc:
             return jsonify({'success': False, 'error': '找不到考卷'}), 404
         

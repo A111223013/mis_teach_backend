@@ -230,6 +230,6 @@ def test_group_switching():
         print(f"   📊 密鑰數量: {get_api_keys_count()}")
         print()
 
-if __name__ == "__main__":
-    test_api_groups()
-    test_group_switching()
+#if __name__ == "__main__":
+#    test_api_groups()
+#    test_group_switching()

@@ -10,9 +10,23 @@ class Config:
     }
     
     # 安全配置
-    with open('./security_key', 'r') as f:
-        SECRET_KEY = f.read().strip()
-    SECURITY_PASSWORD_SALT = open('./security_key','r').read()
+    def _get_security_key(self):
+        """獲取安全密鑰，自動處理路徑問題"""
+        import os
+        # 獲取當前文件所在目錄
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+        security_key_path = os.path.join(current_dir, 'security_key')
+        
+        with open(security_key_path, 'r') as f:
+            return f.read().strip()
+    
+    @property
+    def SECRET_KEY(self):
+        return self._get_security_key()
+    
+    @property 
+    def SECURITY_PASSWORD_SALT(self):
+        return self._get_security_key()
     
     # 郵件配置
     MAIL_SERVER = 'smtp.gmail.com'
