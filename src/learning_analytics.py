@@ -52,6 +52,19 @@ def get_student_quiz_records(user_email: str) -> List[Dict]:
                 # 從key-points獲取領域信息
                 key_points = question_doc.get('key-points', '')
                 
+                # 獲取難度信息，處理不同的字段名
+                difficulty = (question_doc.get('difficulty level') or 
+                            question_doc.get('difficulty') or 
+                            question_doc.get('level') or 
+                            '中等')
+                
+                # 獲取領域信息 - 嘗試多個字段
+                domain_name = (question_doc.get('domain') or 
+                             question_doc.get('subject') or 
+                             question_doc.get('field') or 
+                             key_points or 
+                             '未知領域')
+                
                 quiz_records.append({
                     'id': row.answer_id,
                     'question_id': row.question_id,
@@ -59,11 +72,19 @@ def get_student_quiz_records(user_email: str) -> List[Dict]:
                     'time_spent': row.time_spent or 0,
                     'is_correct': bool(row.is_correct),
                     'micro_concept_id': micro_concept_id,
-                    'domain_name': key_points,  # 使用key-points作為領域名稱
-                    'difficulty': question_doc.get('difficulty level', '中等')
+                    'domain_name': domain_name,  # 使用更準確的領域名稱
+                    'difficulty': difficulty,
+                    'key_points': key_points  # 保留原始key-points用於調試
                 })
         
         logger.info(f"獲取到 {len(quiz_records)} 條答題紀錄")
+        
+        # 調試信息：顯示領域分佈
+        domain_counts = {}
+        for record in quiz_records:
+            domain = record['domain_name']
+            domain_counts[domain] = domain_counts.get(domain, 0) + 1
+        
         return quiz_records
             
     except Exception as e:
@@ -81,133 +102,35 @@ def calculate_learning_metrics(quiz_records: List[Dict]) -> Dict[str, Any]:
             'overall_mastery': 0
         }
     
-    # 學習速度：每天學習的概念數
-    concept_days = set()
-    for record in quiz_records:
-        # 使用 UTC 時區來避免時間比較問題
-        from datetime import timezone
-        attempt_date = datetime.fromisoformat(record['attempt_time'].replace('Z', '+00:00')).date()
-        concept_days.add((attempt_date, record['micro_concept_id']))
+    # 學習速度：使用增強版演算法
+    learning_velocity = calculate_enhanced_learning_velocity(quiz_records)
     
-    total_days = len(set(record['attempt_time'][:10] for record in quiz_records))  # 學習天數
-    learning_velocity = len(concept_days) / max(total_days, 1)
+    # 保持率：使用增強版遺忘感知演算法
+    retention_rate = calculate_enhanced_retention_rate(quiz_records)
     
-    # 保持率：基於艾賓浩斯遺忘曲線的記憶保持率
-    retention_data = []
-    concept_attempts = defaultdict(list)
+    # 平均每概念時間：使用增強版時間分析演算法
+    avg_time_per_concept = calculate_enhanced_avg_time_per_concept(quiz_records)
     
-    for record in quiz_records:
-        concept_id = record['micro_concept_id']
-        # 使用 UTC 時區來避免時間比較問題
-        attempt_time = datetime.fromisoformat(record['attempt_time'].replace('Z', '+00:00'))
-        concept_attempts[concept_id].append({
-            'time': attempt_time,
-            'correct': record['is_correct']
-        })
-    
-    for concept_id, attempts in concept_attempts.items():
-        if len(attempts) < 2:
-            continue
-            
-        attempts.sort(key=lambda x: x['time'])
+    # 專注度：使用增強版專注度分析演算法
+    focus_score = calculate_enhanced_focus_score(quiz_records) * 10  # 轉換為10分制
         
-        for i in range(len(attempts) - 1):
-            current = attempts[i]
-            next_attempt = attempts[i + 1]
-            
-            time_diff = (next_attempt['time'] - current['time']).total_seconds() / (24 * 3600)
-            
-            if 1 <= time_diff <= 30:
-                expected_retention = math.exp(-time_diff)
-                actual_retention = 1.0 if next_attempt['correct'] else 0.0
-                
-                if expected_retention > 0:
-                    retention_ratio = actual_retention / expected_retention
-                    retention_data.append(min(1.0, retention_ratio))
-    
-    retention_rate = sum(retention_data) / len(retention_data) * 100 if retention_data else 0
-    
-    # 平均每概念時間
-    concept_times = defaultdict(list)
-    for record in quiz_records:
-        if record.get('time_spent', 0) > 0:
-            concept_times[record['micro_concept_id']].append(record['time_spent'])
-    
-    avg_times = [sum(times) / len(times) for times in concept_times.values() if times]
-    avg_time_per_concept = sum(avg_times) / len(avg_times) if avg_times else 0
-    
-    # 專注度：基於多維度學習行為分析
-    focus_indicators = []
-    
-    if len(quiz_records) > 1:
-        sorted_records = sorted(quiz_records, key=lambda x: x['attempt_time'])
-        
-        # 指標1：答題間隔一致性
-        time_intervals = []
-        for i in range(1, len(sorted_records)):
-            prev_time = datetime.fromisoformat(sorted_records[i-1]['attempt_time'].replace('Z', '+00:00'))
-            curr_time = datetime.fromisoformat(sorted_records[i]['attempt_time'].replace('Z', '+00:00'))
-            interval = (curr_time - prev_time).total_seconds() / 60  # 分鐘
-            time_intervals.append(interval)
-        
-        if time_intervals:
-            import statistics
-            mean_interval = sum(time_intervals) / len(time_intervals)
-            if mean_interval > 0:
-                interval_std = statistics.stdev(time_intervals) if len(time_intervals) > 1 else 0
-                interval_cv = interval_std / mean_interval
-                interval_consistency = max(0, 1 - interval_cv)
-                focus_indicators.append(interval_consistency)
-        
-        # 指標2：概念切換頻率
-        concept_switches = 0
-        prev_concept = None
-        for record in sorted_records:
-            if prev_concept and prev_concept != record['micro_concept_id']:
-                concept_switches += 1
-            prev_concept = record['micro_concept_id']
-        
-        switch_rate = concept_switches / len(quiz_records)
-        concept_focus = max(0, 1 - switch_rate)
-        focus_indicators.append(concept_focus)
-        
-        # 指標3：答題時間分佈
-        answer_times = [r.get('time_spent', 0) for r in quiz_records if r.get('time_spent', 0) > 0]
-        if answer_times:
-            mean_time = sum(answer_times) / len(answer_times)
-            if mean_time > 0:
-                time_std = statistics.stdev(answer_times) if len(answer_times) > 1 else 0
-                time_cv = time_std / mean_time
-                time_consistency = max(0, 1 - time_cv)
-                focus_indicators.append(time_consistency)
-        
-        # 指標4：正確率穩定性
-        if len(quiz_records) > 5:
-            recent_10 = quiz_records[-10:]
-            recent_accuracy = sum(1 for r in recent_10 if r.get('is_correct', False)) / len(recent_10)
-            focus_indicators.append(recent_accuracy)
-    
-    # 綜合專注度分數（限制在0-10範圍內）
-    if focus_indicators:
-        focus_score = sum(focus_indicators) / len(focus_indicators) * 10  # 改為10分制
-    else:
-        focus_score = 5  # 默認中等專注度
-        
-    # 計算整體掌握度
-    total_attempts = len(quiz_records)
-    correct_attempts = sum(1 for r in quiz_records if r.get('is_correct', False))
-    overall_mastery = correct_attempts / total_attempts if total_attempts > 0 else 0
+    # 使用混合演算法計算整體掌握度
+    overall_mastery = calculate_mixed_mastery(quiz_records)
+    difficulty_aware_mastery = overall_mastery
+    forgetting_aware_mastery = overall_mastery
     
     return {
         'learning_velocity': round(learning_velocity, 1),
-        'retention_rate': round(retention_rate, 1),
+        'retention_rate': round(retention_rate, 3),  # 保持0-1範圍，前端會轉換為百分比
         'avg_time_per_concept': round(avg_time_per_concept, 1),
         'focus_score': round(focus_score, 1),
-        'overall_mastery': round(overall_mastery, 2)
+        'overall_mastery': round(overall_mastery, 3),
+        'difficulty_aware_mastery': round(difficulty_aware_mastery, 3),
+        'forgetting_aware_mastery': round(forgetting_aware_mastery, 3)
     }
 
 def calculate_concept_mastery(quiz_records: List[Dict], concept_id: str) -> Dict[str, Any]:
-    """計算特定概念的掌握度"""
+    """計算特定概念的掌握度 - 使用新的Knowledge Tracing演算法"""
     concept_records = [r for r in quiz_records if r['micro_concept_id'] == concept_id]
     
     if not concept_records:
@@ -217,43 +140,204 @@ def calculate_concept_mastery(quiz_records: List[Dict], concept_id: str) -> Dict
             'correct': 0,
             'wrong_count': 0,
             'recent_accuracy': 0,
-            'trend': 'stable'
+            'trend': 'stable',
+            'difficulty_breakdown': {'簡單': 0, '中等': 0, '困難': 0},
+            'forgetting_analysis': {
+                'base_mastery': 0,
+                'current_mastery': 0,
+                'days_since_practice': 0,
+                'review_urgency': 'low'
+            }
         }
     
+    # 使用新的演算法計算掌握度
+    difficulty_data = calculate_difficulty_aware_mastery(quiz_records, concept_id)
+    forgetting_data = calculate_forgetting_aware_mastery(concept_records, concept_id)
+    
+    # 使用難度感知的掌握度作為主要掌握度
+    enhanced_mastery = difficulty_data['overall_mastery']
+    
+    # 計算基本統計數據
     total_attempts = len(concept_records)
     correct_attempts = sum(1 for r in concept_records if r['is_correct'])
     wrong_count = total_attempts - correct_attempts
-    mastery = correct_attempts / total_attempts if total_attempts > 0 else 0
     
     # 最近5次答題的正確率
     recent_records = concept_records[:5]
     recent_correct = sum(1 for r in recent_records if r['is_correct'])
     recent_accuracy = recent_correct / len(recent_records) if recent_records else 0
     
-    # 趨勢分析
-    if len(concept_records) >= 3:
-        first_half = concept_records[-3:]
-        second_half = concept_records[:3] if len(concept_records) >= 6 else concept_records[:len(concept_records)//2]
-        
-        first_accuracy = sum(1 for r in first_half if r['is_correct']) / len(first_half)
-        second_accuracy = sum(1 for r in second_half if r['is_correct']) / len(second_half)
-        
-        if second_accuracy - first_accuracy > 0.1:
+    # 趨勢分析（基於遺忘感知的掌握度變化）
+    base_mastery = forgetting_data['base_mastery']
+    current_mastery = forgetting_data['current_mastery']
+    
+    if current_mastery > base_mastery + 0.1:
             trend = 'improving'
-        elif first_accuracy - second_accuracy > 0.1:
+    elif current_mastery < base_mastery - 0.1:
             trend = 'declining'
-        else:
-            trend = 'stable'
     else:
         trend = 'stable'
     
     return {
-        'mastery': round(mastery, 2),
+        'mastery': round(enhanced_mastery, 2),  # 使用新演算法的掌握度
         'attempts': total_attempts,
         'correct': correct_attempts,
         'wrong_count': wrong_count,
         'recent_accuracy': round(recent_accuracy, 2),
-        'trend': trend
+        'trend': trend,
+        # 新演算法的詳細結果
+        'difficulty_breakdown': difficulty_data['difficulty_breakdown'],
+        'forgetting_analysis': {
+            'base_mastery': forgetting_data['base_mastery'],
+            'current_mastery': forgetting_data['current_mastery'],
+            'days_since_practice': forgetting_data['days_since_practice'],
+            'review_urgency': forgetting_data['review_urgency']
+        },
+        'difficulty_analysis': difficulty_data['difficulty_analysis']
+    }
+
+def calculate_difficulty_aware_mastery(quiz_records: List[Dict], concept_id: str) -> Dict[str, Any]:
+    """計算難度感知的掌握度 - Difficulty-aware KT"""
+    # 如果是領域ID，直接使用所有記錄；如果是微概念ID，則篩選
+    if len(concept_id) == 24:  # MongoDB ObjectId長度
+        # 可能是領域ID，直接使用所有記錄
+        concept_records = quiz_records
+    else:
+        # 微概念ID，按micro_concept_id篩選
+        concept_records = [r for r in quiz_records if r['micro_concept_id'] == concept_id]
+    
+    if not concept_records:
+        return {
+            'overall_mastery': 0,
+            'difficulty_breakdown': {'簡單': 0, '中等': 0, '困難': 0},
+            'difficulty_analysis': {
+                'easy_mastery': 0,
+                'medium_mastery': 0,
+                'hard_mastery': 0,
+                'bottleneck_level': 'none',
+                'recommended_difficulty': '簡單'
+            }
+        }
+    
+    # 按難度分組統計
+    difficulty_stats = {}
+    for record in concept_records:
+        difficulty = record.get('difficulty', '中等')
+        if difficulty not in difficulty_stats:
+            difficulty_stats[difficulty] = {'total': 0, 'correct': 0}
+        difficulty_stats[difficulty]['total'] += 1
+        if record['is_correct']:
+            difficulty_stats[difficulty]['correct'] += 1
+    # 計算各難度掌握度
+    difficulty_breakdown = {}
+    for difficulty in ['簡單', '中等', '困難']:
+        if difficulty in difficulty_stats:
+            stats = difficulty_stats[difficulty]
+            mastery = stats['correct'] / stats['total'] if stats['total'] > 0 else 0
+            difficulty_breakdown[difficulty] = round(mastery, 2)
+        else:
+            difficulty_breakdown[difficulty] = 0
+    
+    # 計算加權掌握度（困難題權重更高）
+    difficulty_weights = {'簡單': 1, '中等': 2, '困難': 3}
+    weighted_mastery = 0
+    total_weight = 0
+    
+    for difficulty, stats in difficulty_stats.items():
+        weight = difficulty_weights.get(difficulty, 2)
+        mastery = stats['correct'] / stats['total'] if stats['total'] > 0 else 0
+        weighted_mastery += mastery * weight
+        total_weight += weight
+    
+    overall_mastery = weighted_mastery / total_weight if total_weight > 0 else 0
+    
+    # 分析學習瓶頸
+    easy_mastery = difficulty_breakdown.get('簡單', 0)
+    medium_mastery = difficulty_breakdown.get('中等', 0)
+    hard_mastery = difficulty_breakdown.get('困難', 0)
+    
+    if easy_mastery < 0.6:
+        bottleneck_level = 'easy'
+        recommended_difficulty = '簡單'
+    elif medium_mastery < 0.6:
+        bottleneck_level = 'medium'
+        recommended_difficulty = '中等'
+    elif hard_mastery < 0.6:
+        bottleneck_level = 'hard'
+        recommended_difficulty = '困難'
+    else:
+        bottleneck_level = 'none'
+        recommended_difficulty = '困難'  # 可以挑戰更難的題目
+    
+    return {
+        'overall_mastery': round(overall_mastery, 2),
+        'difficulty_breakdown': difficulty_breakdown,
+        'difficulty_analysis': {
+            'easy_mastery': easy_mastery,
+            'medium_mastery': medium_mastery,
+            'hard_mastery': hard_mastery,
+            'bottleneck_level': bottleneck_level,
+            'recommended_difficulty': recommended_difficulty
+        }
+    }
+
+def calculate_forgetting_aware_mastery(concept_records: List[Dict], concept_id: str) -> Dict[str, Any]:
+    """計算遺忘感知的掌握度 - Forgetting-aware KT"""
+    if not concept_records:
+        return {
+            'base_mastery': 0,
+            'current_mastery': 0,
+            'forgetting_factor': 1.0,
+            'days_since_practice': 0,
+            'review_urgency': 'low',
+            'forgetting_curve_data': []
+        }
+    
+    # 計算基礎掌握度
+    total_attempts = len(concept_records)
+    correct_attempts = sum(1 for r in concept_records if r['is_correct'])
+    base_mastery = correct_attempts / total_attempts if total_attempts > 0 else 0
+    
+    # 獲取最後練習時間
+    last_practice = max(record['attempt_time'] for record in concept_records)
+    last_practice_time = datetime.fromisoformat(last_practice.replace('Z', '+00:00'))
+    
+    # 計算時間差（天）
+    from datetime import timezone
+    time_diff = (datetime.now(timezone.utc) - last_practice_time).days
+    
+    # 計算遺忘衰減因子（基於艾賓浩斯遺忘曲線）
+    forgetting_rate = 0.1  # 可調整參數，控制遺忘速度
+    forgetting_factor = math.exp(-forgetting_rate * time_diff)
+    
+    # 計算當前有效掌握度
+    current_mastery = base_mastery * forgetting_factor
+    
+    # 判斷複習緊急程度
+    if time_diff > 7:
+        review_urgency = 'high'
+    elif time_diff > 3:
+        review_urgency = 'medium'
+    else:
+        review_urgency = 'low'
+    
+    # 生成遺忘曲線數據（用於前端展示）
+    forgetting_curve_data = []
+    for days in range(0, 15):  # 生成15天的遺忘曲線
+        decay_factor = math.exp(-forgetting_rate * days)
+        predicted_mastery = base_mastery * decay_factor
+        forgetting_curve_data.append({
+            'days': days,
+            'mastery': round(predicted_mastery, 2)
+        })
+    
+    return {
+        'base_mastery': round(base_mastery, 2),
+        'current_mastery': round(current_mastery, 2),
+        'forgetting_factor': round(forgetting_factor, 2),
+        'days_since_practice': time_diff,
+        'review_urgency': review_urgency,
+        'forgetting_curve_data': forgetting_curve_data
     }
 
 def get_knowledge_structure():
@@ -272,124 +356,7 @@ def get_knowledge_structure():
         logger.error(f"獲取知識結構失敗: {str(e)}")
         return {'domains': [], 'blocks': [], 'concepts': []}
 
-@analytics_bp.route('/overview', methods=['POST', 'OPTIONS'])
-def get_overview():
-    if request.method == 'OPTIONS':
-        return jsonify({'success': True})
-    """獲取學習分析總覽"""
-    try:
-        # 獲取JWT token
-        auth_header = request.headers.get('Authorization')
-        if not auth_header or not auth_header.startswith('Bearer '):
-            return jsonify({'success': False, 'error': '缺少認證信息'}), 401
-        
-        token = auth_header.split(" ")[1]
-        logger.info(f"收到的 token: {token[:20]}...")
-        
-
-        user_email = get_user_info(token, 'email')
-        logger.info(f"解析出的用戶 email: {user_email}")
-        
-        # 獲取答題記錄
-        quiz_records = get_student_quiz_records(user_email)
-        
-        # 計算學習指標
-        learning_metrics = calculate_learning_metrics(quiz_records)
-        
-        # 計算總體掌握度
-        if quiz_records:
-            total_attempts = len(quiz_records)
-            correct_attempts = sum(1 for r in quiz_records if r['is_correct'])
-            overall_mastery = correct_attempts / total_attempts
-        else:
-            total_attempts = 0
-            overall_mastery = 0
-        
-        # 獲取領域數據
-        knowledge_structure = get_knowledge_structure()
-        domains = []
-        for domain in knowledge_structure.get('domains', []):
-            domain_id = str(domain['_id'])
-            domain_records = [r for r in quiz_records if r['domain_id'] == domain_id]
-            
-            if domain_records:
-                domain_mastery = sum(1 for r in domain_records if r['is_correct']) / len(domain_records)
-            else:
-                domain_mastery = 0
-            
-            domains.append({
-                'domain_id': domain_id,
-                'name': domain['name'],
-                'mastery': round(domain_mastery, 2)
-            })
-        
-        # 獲取弱點數據
-        weak_points = []
-        concept_stats = defaultdict(lambda: {'total': 0, 'correct': 0})
-        
-        for record in quiz_records:
-            concept_id = record['micro_concept_id']
-            concept_stats[concept_id]['total'] += 1
-            if record['is_correct']:
-                concept_stats[concept_id]['correct'] += 1
-        
-        for concept_id, stats in concept_stats.items():
-            if stats['total'] >= 2:  # 至少答過2題
-                mastery = stats['correct'] / stats['total']
-                if mastery < 0.6:  # 掌握度低於60%
-                    # 找到概念名稱
-                    concept_name = "未知概念"
-                    for concept in knowledge_structure.get('concepts', []):
-                        if str(concept['_id']) == concept_id:
-                            concept_name = concept['name']
-                            break
-                    
-                    weak_points.append({
-                        'micro_id': concept_id,
-                        'name': concept_name,
-                        'mastery': round(mastery, 2),
-                        'priority': 'high' if mastery < 0.3 else 'medium',
-                        'attempts': stats['total'],
-                        'wrong_count': stats['total'] - stats['correct'],
-                        'reason': '需要加強練習'
-                    })
-        
-        # 按掌握度排序
-        weak_points.sort(key=lambda x: x['mastery'])
-        
-        overview = {
-            'overall_mastery': round(overall_mastery, 2),
-            'domains': domains,
-            'top_weak_points': weak_points[:5],
-            'recent_trend': [],
-            'total_attempts': total_attempts,
-            'weak_points_count': len(weak_points),
-            'recent_activity': 0,
-            'class_ranking': 0,
-            'recent_improvements': [],
-            'needs_attention': weak_points[:3],
-            'ai_suggestions': [],
-            'ai_summary': {
-                'overall_performance': f"整體掌握度 {overall_mastery:.1%}",
-                'key_insights': ["需要加強練習", "建議專注於弱點"],
-                'recommendations': ["多做練習題", "複習基礎概念"]
-            },
-            **learning_metrics
-        }
-        
-        return jsonify({
-            'success': True,
-            'data': overview
-        })
-        
-    except Exception as e:
-        logger.error(f'獲取總覽失敗: {str(e)}')
-        return jsonify({
-            'success': False,
-            'error': f'獲取總覽失敗: {str(e)}'
-        })
-
-# 其他 API 端點...
+# 已移除 /overview API - 功能已整合到 /init-data
 @analytics_bp.route('/ai-diagnosis', methods=['POST', 'OPTIONS'])
 def ai_diagnosis():
     """AI診斷特定知識點"""
@@ -398,16 +365,11 @@ def ai_diagnosis():
     
     try:
         data = request.get_json()
-        print(f"AI診斷請求數據: {data}")
-        
         concept_id = data.get('concept_id')
         concept_name = data.get('concept_name', '未知概念')
         domain_name = data.get('domain_name', '未知領域')
-        
-        print(f"解析的參數 - concept_id: {concept_id}, concept_name: {concept_name}, domain_name: {domain_name}")
-        
         if not concept_id:
-            print("錯誤: 缺少概念ID")
+            logger.error("錯誤: 缺少概念ID")
             return jsonify({'error': '缺少概念ID'}), 400
         
         # 獲取用戶信息
@@ -424,19 +386,12 @@ def ai_diagnosis():
         # 獲取該概念的答題記錄
         quiz_records = get_student_quiz_records(user_email)
         
-        # 調試：檢查答題記錄的結構
-        print(f"答題記錄樣本（前3條）:")
-        for i, record in enumerate(quiz_records[:3]):
-            print(f"  記錄{i+1}: micro_concept_id='{record.get('micro_concept_id')}', micro_concept_name='{record.get('micro_concept_name')}'")
-        
         # 嘗試用ID和名稱匹配
         # 注意：micro_concept_id字段實際包含的是概念名稱，不是ObjectId
         concept_records = [r for r in quiz_records if 
                           r.get('micro_concept_id') == concept_name or  # 用concept_name匹配micro_concept_id
                           r.get('micro_concept_name') == concept_name or
                           str(r.get('micro_concept_id', '')) == str(concept_id)]  # 也嘗試ObjectId匹配
-        
-        print(f"找到 {len(concept_records)} 條該概念的答題記錄")
         
         # 獲取Neo4j知識點關聯數據
         knowledge_relations = get_knowledge_relations_from_neo4j(concept_name)
@@ -474,12 +429,19 @@ def ai_diagnosis():
             if record['is_correct']:
                 difficulty_stats[difficulty]['correct'] += 1
         
-        print(f"難易度統計: {difficulty_stats}")
-        
         # 分析錯誤模式
         wrong_records = [r for r in concept_records if not r['is_correct']]
         recent_records = concept_records[:5]  # 最近5次答題
         recent_accuracy = sum(1 for r in recent_records if r['is_correct']) / len(recent_records) if recent_records else 0
+        
+        # 獲取學習路徑推薦
+        learning_path_data = calculate_graph_based_mastery(user_email, concept_id)
+        
+        # 獲取難度分析數據
+        difficulty_aware_data = calculate_difficulty_aware_mastery(concept_records, concept_id)
+        
+        # 獲取遺忘分析數據
+        forgetting_aware_data = calculate_forgetting_aware_mastery(concept_records, concept_id)
         
         # 生成AI診斷
         diagnosis_result = generate_ai_diagnosis(
@@ -491,8 +453,19 @@ def ai_diagnosis():
             recent_accuracy=recent_accuracy,
             wrong_records=wrong_records,
             knowledge_relations=knowledge_relations,
-            difficulty_stats=difficulty_stats
+            difficulty_stats=difficulty_stats,
+            learning_path=learning_path_data['learning_path']
         )
+        
+        # 添加新演算法的數據到診斷結果
+        diagnosis_result['difficulty_breakdown'] = difficulty_aware_data['difficulty_breakdown']
+        diagnosis_result['forgetting_analysis'] = {
+            'base_mastery': forgetting_aware_data['base_mastery'],
+            'current_mastery': forgetting_aware_data['current_mastery'],
+            'days_since_practice': forgetting_aware_data['days_since_practice'],
+            'review_urgency': forgetting_aware_data['review_urgency'],
+            'forgetting_curve_data': forgetting_aware_data.get('forgetting_curve_data', [])
+        }
         
         return jsonify(diagnosis_result)
         
@@ -523,13 +496,11 @@ def init_data():
         
         # 計算學習指標
         learning_metrics = calculate_learning_metrics(quiz_records)
-        
         # 獲取知識結構
         knowledge_structure = get_knowledge_structure()
         
         # 從MongoDB獲取所有領域
         all_domains = list(mongo.db.domain.find({}, {'name': 1, '_id': 1}))
-        print(f"從MongoDB獲取到 {len(all_domains)} 個領域")
         
         # 基於答題記錄計算各領域掌握度
         domain_stats = {}
@@ -550,7 +521,6 @@ def init_data():
             else:
                 domain_stats[domain_name]['wrong'] += 1
         
-        print(f"domain_stats統計結果: {domain_stats}")
         
         # 構建領域數據 - 包含所有領域，即使沒有答題記錄
         domains = []
@@ -566,13 +536,11 @@ def init_data():
                     domain_name.split('（')[0] in stats_domain_name or
                     stats_domain_name in domain_name.split('（')[0]):
                     matched_stats = stats
-                    print(f"匹配成功: {domain_name} <-> {stats_domain_name}")
                     break
             
             # 如果沒有匹配到，使用默認值
             if matched_stats is None:
                 matched_stats = {'total': 0, 'correct': 0, 'wrong': 0}
-                print(f"未匹配: {domain_name}")
             
             stats = matched_stats.copy()  # 創建副本避免修改原始數據
             # 確保stats包含所有必要字段
@@ -581,10 +549,13 @@ def init_data():
             
             if stats['total'] > 0:
                 domain_mastery = stats['correct'] / stats['total']
-                print(f"領域 {domain_name}: {stats['correct']}/{stats['total']} = {domain_mastery:.3f}")
             else:
                 domain_mastery = 0.0  # 沒有答題記錄時設為0
-                print(f"領域 {domain_name}: 無答題記錄")
+            
+            # 計算該領域的難度感知掌握度
+            domain_records = [r for r in quiz_records if r.get('domain_name') == domain_name.split('（')[0]]
+            difficulty_aware_data = calculate_difficulty_aware_mastery(domain_records, domain_id)
+            
             
             # 從MongoDB獲取該領域下的小知識點（微概念）
             # 需要先通過block找到該領域下的微概念
@@ -598,13 +569,11 @@ def init_data():
             micro_concepts_query = {'block_id': {'$in': block_ids}} if block_ids else {}
             micro_concept_docs = list(mongo.db.micro_concept.find(micro_concepts_query, {'name': 1, '_id': 1, 'block_id': 1}))
             
-            print(f"領域 {domain_name} 找到 {len(micro_concept_docs)} 個微概念")
             
             # 統計每個微概念的答題情況
             # 需要匹配簡化的領域名稱
             simplified_domain_name = domain_name.split('（')[0]  # 取括號前的部分
             domain_records = [r for r in quiz_records if r.get('domain_name') == simplified_domain_name]
-            print(f"領域 {domain_name} -> 簡化名稱: {simplified_domain_name}, 找到 {len(domain_records)} 條答題記錄")
             micro_concept_stats = {}
             
             for record in domain_records:
@@ -629,7 +598,6 @@ def init_data():
                     else:
                         micro_concept_stats[concept_name]['wrong'] += 1
             
-            print(f"微概念統計結果: {micro_concept_stats}")
             
             # 構建小知識點數據
             concepts = []
@@ -639,7 +607,6 @@ def init_data():
                 
                 # 跳過沒有ID的概念
                 if not concept_id or concept_id == 'None' or concept_id == '':
-                    print(f"跳過無效的概念ID: {concept_doc}")
                     continue
                 
                 # 獲取該微概念的答題統計
@@ -666,7 +633,11 @@ def init_data():
                 'questionCount': stats['total'],
                 'wrongCount': stats['wrong'],
                 'concepts': concepts,  # 包含小知識點
-                'expanded': False  # 用於前端展開狀態
+                'expanded': False,  # 用於前端展開狀態
+                # 新增難度感知數據
+                'difficulty_aware_mastery': difficulty_aware_data['overall_mastery'],
+                'difficulty_breakdown': difficulty_aware_data['difficulty_breakdown'],
+                'difficulty_analysis': difficulty_aware_data['difficulty_analysis'],
             })
         
         # 按掌握度排序
@@ -676,20 +647,16 @@ def init_data():
         all_knowledge_points = []
         for domain in domains:
             # 判斷狀態：數據不足、需要加強、掌握良好
-            print(f"領域狀態判斷: {domain['name']} - questionCount: {domain['questionCount']}, mastery: {domain['mastery']}")
             
             if domain['questionCount'] == 0:
                 status = 'no_data'
                 status_text = '數據不足'
-                print(f"  -> 狀態: 數據不足 (無答題記錄)")
             elif domain['mastery'] < 0.6:
                 status = 'weak'
                 status_text = '需要加強'
-                print(f"  -> 狀態: 需要加強 (有{domain['questionCount']}題，掌握度{domain['mastery']:.1%})")
             else:
                 status = 'good'
                 status_text = '掌握良好'
-                print(f"  -> 狀態: 掌握良好 (掌握度{domain['mastery']:.1%})")
             
             all_knowledge_points.append({
                     'id': domain['id'],
@@ -755,18 +722,29 @@ def init_data():
         # 生成趨勢數據（使用傳入的天數）
         trends = generate_trend_data(quiz_records, trend_days)
         
+        # 生成按領域篩選的趨勢數據
+        domain_trends = {}
+        
+        for domain in domains:
+            domain_name = domain['name']
+            simplified_name = domain_name.split('（')[0]  # 取括號前的部分
+            # 篩選該領域的答題記錄
+            domain_records = [r for r in quiz_records if r.get('domain_name') == simplified_name]
+            
+            if domain_records:
+                domain_trends[domain_name] = generate_trend_data(domain_records, trend_days)
+            else:
+                pass
+        
+        for name, trends in domain_trends.items():
+            total_questions = sum(day['questions'] for day in trends)
+            pass
+        
         # 生成進步知識點數據
         improvement_items = generate_improvement_items(domains, quiz_records)
-        logger.info(f'生成進步知識點數據: {len(improvement_items)} 個')
-        
         # 生成需要關注的知識點數據
         attention_items = generate_attention_items(domains, quiz_records)
-        logger.info(f'生成關注知識點數據: {len(attention_items)} 個')
         
-        # 調試信息
-        logger.info(f'領域數據: {len(domains)} 個領域')
-        for domain in domains:
-            logger.info(f'領域 {domain.get("name", "未知")}: 掌握度 {domain.get("mastery", 0)}%, 題數 {domain.get("questionCount", 0)}')
         
         # 生成進度追蹤數據
         progress_tracking = generate_progress_tracking(quiz_records)
@@ -774,14 +752,22 @@ def init_data():
         # 生成雷達圖數據
         radar_data = generate_radar_data(domains, quiz_records)
         
+        # 生成AI教練分析
+        ai_coach_analysis = generate_ai_coach_analysis(overview_data, domains, quiz_records)
+        
+        # 生成學習趨勢數據（結合遺忘曲線）
+        learning_trends = generate_learning_trends_with_forgetting(domains, quiz_records, trend_days)
+        
         # 構建完整數據
         complete_data = {
             'overview': overview_data,
-            'trends': trends,
+            'trends': learning_trends,  # 使用新的學習趨勢
+            'domain_trends': domain_trends,  # 新增：按領域篩選的趨勢數據
             'improvement_items': improvement_items,
             'attention_items': attention_items,
             'progress_tracking': progress_tracking,
-            'radar_data': radar_data
+            'radar_data': radar_data,
+            'ai_coach_analysis': ai_coach_analysis  # 新增AI教練分析
         }
 
         return jsonify({
@@ -824,7 +810,6 @@ def ai_practice_parallel():
         difficulty = data.get('difficulty', 'medium')
         question_count = data.get('question_count', 20)
         
-        print(f"解析的參數 - concept_name: {concept_name}, domain_name: {domain_name}, difficulty: {difficulty}, user_email: {user_email}")
         
         # 使用並行生成
         quiz_result = generate_quiz_parallel(concept_name, domain_name, difficulty, question_count, user_email)
@@ -882,7 +867,6 @@ def generate_quiz_parallel(concept_name: str, domain_name: str, difficulty: str,
                 'error': '沒有可用的API密鑰'
             }
         
-        print(f"可用API密鑰數量: {len(available_keys)}")
         
         # 根據傳入的question_count參數分配任務
         # 優先使用1題1key模式，如果API key不足則平均分配
@@ -929,18 +913,6 @@ def generate_quiz_parallel(concept_name: str, domain_name: str, difficulty: str,
         # 最大化並行度：使用所有可用的API key
         max_workers = min(len(tasks), 20)  # 最多20個並行任務
         
-        print(f"🚀 並行任務數量: {len(tasks)}")
-        print(f"🎯 目標題目數量: {question_count}")
-        print(f"⚡ 並行線程數: {max_workers}")
-        print(f"🔑 使用API key數量: {len(used_keys)}")
-        
-        for i, task in enumerate(tasks):
-            print(f"任務{i+1}: {task['api_group']} - {task['question_count']}題")
-        
-        if len(available_keys) >= question_count:
-            print(f"✅ 理想模式：{question_count}個API key，每個生成1題")
-        else:
-            print(f"⚠️ 資源限制：{len(available_keys)}個API key，平均分配{question_count}題")
         
         # 並行執行任務
         all_questions = []
@@ -961,11 +933,10 @@ def generate_quiz_parallel(concept_name: str, domain_name: str, difficulty: str,
                         questions = result.get('questions', [])
                         all_questions.extend(questions)
                         successful_keys += 1
-                        print(f"✅ {task['api_group']} 成功生成 {len(questions)} 題，總計: {len(all_questions)} 題")
                     else:
-                        print(f"❌ {task['api_group']} 生成失敗: {result.get('error', '未知錯誤')}")
+                        logger.error(f"{task['api_group']} 生成失敗: {result.get('error', '未知錯誤')}")
                 except Exception as e:
-                    print(f"❌ {task['api_group']} 執行異常: {str(e)}")
+                    logger.error(f"{task['api_group']} 執行異常: {str(e)}")
         
         if not all_questions:
             return {
@@ -975,7 +946,7 @@ def generate_quiz_parallel(concept_name: str, domain_name: str, difficulty: str,
         
         # 如果題目數量不足，嘗試用剩餘的API key補充
         if len(all_questions) < question_count:
-            print(f"題目數量不足，當前: {len(all_questions)}, 需要: {question_count}")
+            logger.warning(f"題目數量不足，當前: {len(all_questions)}, 需要: {question_count}")
             # 這裡可以添加補充邏輯
         
         # 限制題目數量
@@ -1212,7 +1183,7 @@ def create_sql_template(question_ids: List[str], quiz_info: Dict[str, Any], user
         return f"ai_template_{int(time.time())}"
 
 def generate_trend_data(quiz_records: List[Dict], days: int = 7) -> List[Dict]:
-    """生成趨勢數據"""
+    """生成趨勢數據，包含遺忘曲線分析"""
     trends = []
     for i in range(days):
         from datetime import timezone
@@ -1220,32 +1191,824 @@ def generate_trend_data(quiz_records: List[Dict], days: int = 7) -> List[Dict]:
         # 計算該天的掌握度
         day_records = [r for r in quiz_records if r['attempt_time'].startswith(date)]
         if day_records:
-            mastery = sum(1 for r in day_records if r['is_correct']) / len(day_records)
+            correct_count = sum(1 for r in day_records if r['is_correct'])
+            total_count = len(day_records)
+            mastery = correct_count / total_count
         else:
             mastery = 0
+        
+        # 計算該天的遺忘曲線數據
+        forgetting_data = []
+        if day_records:
+            # 按概念分組計算遺忘率
+            concept_groups = {}
+            for record in day_records:
+                concept_id = record.get('micro_concept_id')
+                if concept_id:
+                    if concept_id not in concept_groups:
+                        concept_groups[concept_id] = []
+                    concept_groups[concept_id].append(record)
+            
+            # 計算每個概念的遺忘率
+            for concept_id, concept_records in concept_groups.items():
+                forgetting_info = calculate_forgetting_aware_mastery(concept_records, concept_id)
+                # 確保遺忘率是合理的數值
+                forgetting_rate = max(0, 1 - forgetting_info['current_mastery'])
+                forgetting_data.append({
+                    'concept_id': concept_id,
+                    'base_mastery': forgetting_info['base_mastery'],
+                    'current_mastery': forgetting_info['current_mastery'],
+                    'forgetting_rate': forgetting_rate,
+                    'days_since_practice': forgetting_info['days_since_practice']
+                })
+            if forgetting_data:
+                avg_forgetting = sum(item['forgetting_rate'] for item in forgetting_data) / len(forgetting_data)
         
         trends.append({
             'date': date,
             'mastery': mastery,
             'questions': len(day_records),
-            'accuracy': mastery
+            'accuracy': mastery,
+            'forgetting_data': forgetting_data
         })
     
     return trends
 
-@analytics_bp.route('/trends', methods=['POST', 'OPTIONS'])
-def get_trends():
-    if request.method == 'OPTIONS':
-        return jsonify({'success': True})
-    """獲取學習趨勢數據"""
-    return jsonify({'success': True, 'data': []})
+# 已移除 /trends API - 功能已整合到 /init-data
 
-@analytics_bp.route('/peer-comparison', methods=['POST', 'OPTIONS'])
-def get_peer_comparison():
+# 已移除 /peer-comparison API - 前端未使用
+
+@analytics_bp.route('/difficulty-analysis', methods=['POST', 'OPTIONS'])
+def get_difficulty_analysis():
     if request.method == 'OPTIONS':
         return jsonify({'success': True})
-    """獲取同儕比較數據"""
-    return jsonify({'success': True, 'data': {}})
+    """獲取難度分析數據 - Difficulty-aware KT"""
+    try:
+        # 獲取JWT token
+        auth_header = request.headers.get('Authorization')
+        if not auth_header or not auth_header.startswith('Bearer '):
+            return jsonify({'success': False, 'error': '缺少認證信息'}), 401
+        
+        token = auth_header.split(' ')[1]
+        user_email = get_user_info(token, 'email')
+        
+        if not user_email:
+            return jsonify({'success': False, 'error': '無法獲取用戶信息'}), 401
+        
+        # 獲取學生答題記錄
+        quiz_records = get_student_quiz_records(user_email)
+        
+        # 計算整體難度分析
+        overall_difficulty_stats = {}
+        for record in quiz_records:
+            difficulty = record.get('difficulty', '中等')
+            if difficulty not in overall_difficulty_stats:
+                overall_difficulty_stats[difficulty] = {'total': 0, 'correct': 0}
+            overall_difficulty_stats[difficulty]['total'] += 1
+            if record['is_correct']:
+                overall_difficulty_stats[difficulty]['correct'] += 1
+        
+        # 計算整體難度分佈
+        overall_difficulty_breakdown = {}
+        for difficulty in ['簡單', '中等', '困難']:
+            if difficulty in overall_difficulty_stats:
+                stats = overall_difficulty_stats[difficulty]
+                mastery = stats['correct'] / stats['total'] if stats['total'] > 0 else 0
+                overall_difficulty_breakdown[difficulty] = {
+                    'mastery': round(mastery, 2),
+                    'total_questions': stats['total'],
+                    'correct_questions': stats['correct']
+                }
+            else:
+                overall_difficulty_breakdown[difficulty] = {
+                    'mastery': 0,
+                    'total_questions': 0,
+                    'correct_questions': 0
+                }
+        
+        # 計算各領域的難度分析
+        domain_difficulty_analysis = []
+        domains = list(mongo.db.domain.find({}, {'name': 1, '_id': 1}))
+        
+        for domain_doc in domains:
+            domain_name = domain_doc.get('name', '未知領域')
+            domain_id = str(domain_doc.get('_id', ''))
+            
+            # 獲取該領域的答題記錄
+            domain_records = [r for r in quiz_records if r.get('domain_name') == domain_name.split('（')[0]]
+            
+            if domain_records:
+                difficulty_data = calculate_difficulty_aware_mastery(domain_records, domain_id)
+            else:
+                # 沒有答題記錄時，返回默認數據
+                difficulty_data = {
+                    'overall_mastery': 0,
+                    'difficulty_breakdown': {'簡單': 0, '中等': 0, '困難': 0},
+                    'difficulty_analysis': {
+                        'easy_mastery': 0,
+                        'medium_mastery': 0,
+                        'hard_mastery': 0,
+                        'bottleneck_level': 'none',
+                        'recommended_difficulty': '簡單'
+                    }
+                }
+            
+            domain_difficulty_analysis.append({
+                'domain_id': domain_id,
+                'domain_name': domain_name,
+                'overall_mastery': difficulty_data['overall_mastery'],
+                'difficulty_breakdown': difficulty_data['difficulty_breakdown'],
+                'difficulty_analysis': difficulty_data['difficulty_analysis']
+            })
+        
+        # 生成個人化難度推薦
+        personalized_recommendations = []
+        for domain_data in domain_difficulty_analysis:
+            analysis = domain_data['difficulty_analysis']
+            if analysis['bottleneck_level'] != 'none':
+                personalized_recommendations.append({
+                    'domain': domain_data['domain_name'],
+                    'bottleneck_level': analysis['bottleneck_level'],
+                    'recommended_difficulty': analysis['recommended_difficulty'],
+                    'reason': f"在{analysis['bottleneck_level']}難度題目上表現不佳，建議先練習{analysis['recommended_difficulty']}難度"
+                })
+        
+        return jsonify({
+            'success': True,
+            'data': {
+                'overall_difficulty_breakdown': overall_difficulty_breakdown,
+                'domain_difficulty_analysis': domain_difficulty_analysis,
+                'personalized_recommendations': personalized_recommendations
+            }
+        })
+        
+    except Exception as e:
+        logger.error(f'獲取難度分析數據失敗: {str(e)}')
+        return jsonify({
+            'success': False,
+            'error': f'獲取難度分析數據失敗: {str(e)}'
+        }), 500
+
+@analytics_bp.route('/forgetting-analysis', methods=['POST', 'OPTIONS'])
+def get_forgetting_analysis():
+    if request.method == 'OPTIONS':
+        return jsonify({'success': True})
+    """獲取遺忘分析數據 - Forgetting-aware KT"""
+    try:
+        # 獲取JWT token
+        auth_header = request.headers.get('Authorization')
+        if not auth_header or not auth_header.startswith('Bearer '):
+            return jsonify({'success': False, 'error': '缺少認證信息'}), 401
+        
+        token = auth_header.split(' ')[1]
+        user_email = get_user_info(token, 'email')
+        
+        if not user_email:
+            return jsonify({'success': False, 'error': '無法獲取用戶信息'}), 401
+        
+        # 獲取學生答題記錄
+        quiz_records = get_student_quiz_records(user_email)
+        
+        # 按概念分組計算遺忘分析
+        concept_forgetting_analysis = {}
+        for record in quiz_records:
+            concept_id = record['micro_concept_id']
+            if concept_id not in concept_forgetting_analysis:
+                concept_forgetting_analysis[concept_id] = []
+            concept_forgetting_analysis[concept_id].append(record)
+        
+        # 計算每個概念的遺忘分析
+        forgetting_results = []
+        review_recommendations = []
+        
+        for concept_id, concept_records in concept_forgetting_analysis.items():
+            forgetting_data = calculate_forgetting_aware_mastery(concept_records, concept_id)
+            
+            # 獲取概念名稱
+            concept_name = "未知概念"
+            for concept_doc in mongo.db.micro_concept.find({'_id': ObjectId(concept_id) if concept_id else None}):
+                concept_name = concept_doc.get('name', '未知概念')
+                break
+            
+            forgetting_results.append({
+                'concept_id': concept_id,
+                'concept_name': concept_name,
+                'base_mastery': forgetting_data['base_mastery'],
+                'current_mastery': forgetting_data['current_mastery'],
+                'forgetting_factor': forgetting_data['forgetting_factor'],
+                'days_since_practice': forgetting_data['days_since_practice'],
+                'review_urgency': forgetting_data['review_urgency'],
+                'forgetting_curve_data': forgetting_data['forgetting_curve_data']
+            })
+            
+            # 生成複習建議
+            if forgetting_data['review_urgency'] != 'low':
+                review_recommendations.append({
+                    'concept_id': concept_id,
+                    'concept_name': concept_name,
+                    'urgency': forgetting_data['review_urgency'],
+                    'days_since_practice': forgetting_data['days_since_practice'],
+                    'current_mastery': forgetting_data['current_mastery'],
+                    'suggested_review_time': _get_suggested_review_time(forgetting_data['review_urgency']),
+                    'review_method': _get_review_method(forgetting_data['current_mastery'])
+                })
+        
+        # 按緊急程度排序複習建議
+        review_recommendations.sort(key=lambda x: {'high': 3, 'medium': 2, 'low': 1}[x['urgency']], reverse=True)
+        
+        return jsonify({
+            'success': True,
+            'data': {
+                'concept_forgetting_analysis': forgetting_results,
+                'review_recommendations': review_recommendations,
+                'summary': {
+                    'total_concepts': len(forgetting_results),
+                    'high_urgency_count': len([r for r in review_recommendations if r['urgency'] == 'high']),
+                    'medium_urgency_count': len([r for r in review_recommendations if r['urgency'] == 'medium']),
+                    'low_urgency_count': len([r for r in review_recommendations if r['urgency'] == 'low'])
+                }
+            }
+        })
+        
+    except Exception as e:
+        logger.error(f'獲取遺忘分析數據失敗: {str(e)}')
+        return jsonify({
+            'success': False,
+            'error': f'獲取遺忘分析數據失敗: {str(e)}'
+        }), 500
+
+def generate_ai_coach_analysis(overview_data: Dict, domains: List[Dict], quiz_records: List[Dict]) -> Dict[str, Any]:
+    """生成AI教練分析"""
+    try:
+        # 初始化Gemini模型
+        model = init_gemini('gemini-2.5-flash')
+        
+        # 準備分析數據
+        total_attempts = overview_data.get('total_attempts', 0)
+        total_mastery = overview_data.get('total_mastery', 0)
+        learning_velocity = overview_data.get('learning_velocity', 0)
+        retention_rate = overview_data.get('retention_rate', 0)
+        
+        # 找出需要關注的領域
+        weak_domains = [d for d in domains if d.get('mastery', 0) < 0.3 and d.get('questionCount', 0) > 0]
+        strong_domains = [d for d in domains if d.get('mastery', 0) > 0.7 and d.get('questionCount', 0) > 0]
+        
+        # 分析遺忘情況
+        forgetting_analysis = []
+        for domain in domains:
+            if domain.get('forgetting_analysis'):
+                fa = domain['forgetting_analysis']
+                if fa.get('days_since_practice', 0) > 3:
+                    forgetting_analysis.append({
+                        'name': domain['name'],
+                        'days': fa['days_since_practice'],
+                        'mastery': fa['current_mastery']
+                    })
+        
+        # 構建Gemini提示詞
+        prompt = f"""
+你是學習分析AI教練。請基於以下學習數據生成簡潔的學習建議（不超過50字）：
+
+學習數據：
+- 總答題數：{total_attempts}
+- 整體掌握度：{total_mastery:.1%}
+- 學習速度：{learning_velocity:.1f} 概念/小時
+- 記憶保持率：{retention_rate:.1%}
+
+需要關注的領域：
+{', '.join([d['name'] for d in weak_domains[:3]]) if weak_domains else '無'}
+
+表現良好的領域：
+{', '.join([d['name'] for d in strong_domains[:3]]) if strong_domains else '無'}
+
+遺忘提醒：
+{', '.join([f"{fa['name']}已{fa['days']}天未複習" for fa in forgetting_analysis[:3]]) if forgetting_analysis else '無'}
+
+請生成：
+1. 簡潔的學習狀況總結
+2. 具體的學習建議
+3. 需要重點關注的領域
+4. 請使用繁體中文回答
+
+格式：直接輸出文字，不要使用markdown格式。
+"""
+
+        # 調用Gemini API
+        response = model.generate_content(prompt)
+        ai_analysis = response.text.strip()
+        
+        return {
+            'analysis': ai_analysis,
+            'last_updated': datetime.now().strftime('%m/%d %H:%M'),
+            'weak_domains': [d['name'] for d in weak_domains[:3]],
+            'strong_domains': [d['name'] for d in strong_domains[:3]],
+            'forgetting_reminders': forgetting_analysis[:3]
+        }
+        
+    except Exception as e:
+        logger.error(f"生成AI教練分析失敗: {e}")
+        return {
+            'analysis': '正在分析您的學習數據...',
+            'last_updated': datetime.now().strftime('%m/%d %H:%M'),
+            'weak_domains': [],
+            'strong_domains': [],
+            'forgetting_reminders': []
+        }
+
+def generate_learning_trends_with_forgetting(domains: List[Dict], quiz_records: List[Dict], trend_days: int) -> List[Dict]:
+    """生成結合遺忘曲線的學習趨勢數據"""
+    trends = []
+    
+    # 按日期分組答題記錄
+    from collections import defaultdict
+    daily_records = defaultdict(list)
+    
+    for record in quiz_records:
+        try:
+            date_str = record['attempt_time'][:10]  # 提取日期部分
+            daily_records[date_str].append(record)
+        except:
+            continue
+    
+    # 生成趨勢數據
+    for i in range(trend_days):
+        date = (datetime.now() - timedelta(days=trend_days-1-i)).strftime('%Y-%m-%d')
+        day_records = daily_records.get(date, [])
+        
+        if day_records:
+            # 計算當天的學習指標
+            total_questions = len(day_records)
+            correct_questions = sum(1 for r in day_records if r['is_correct'])
+            accuracy = correct_questions / total_questions if total_questions > 0 else 0
+            
+            # 計算遺忘曲線數據
+            forgetting_data = []
+            for domain in domains:
+                if domain.get('forgetting_analysis'):
+                    fa = domain['forgetting_analysis']
+                    forgetting_data.append({
+                        'domain': domain['name'],
+                        'current_mastery': fa.get('current_mastery', 0),
+                        'days_since_practice': fa.get('days_since_practice', 0)
+                    })
+            
+            trends.append({
+                'date': date,
+                'questions': total_questions,
+                'accuracy': accuracy,
+                'mastery': accuracy,  # 使用準確率作為掌握度
+                'forgetting_data': forgetting_data
+            })
+        else:
+            trends.append({
+                'date': date,
+                'questions': 0,
+                'accuracy': 0,
+                'mastery': 0,
+                'forgetting_data': []
+            })
+    
+    return trends
+
+def _get_suggested_review_time(urgency: str) -> str:
+    """根據緊急程度獲取建議複習時間"""
+    if urgency == 'high':
+        return '立即複習'
+    elif urgency == 'medium':
+        return '3天內複習'
+    else:
+        return '1週內複習'
+
+def calculate_enhanced_learning_velocity(quiz_records: List[Dict]) -> float:
+    """計算學習速度 - 基於Piech et al., 2015 Deep Knowledge Tracing文獻"""
+    if not quiz_records:
+        return 0.0
+    
+    # 只計算答對的題目，因為答錯不算學習
+    correct_records = [r for r in quiz_records if r.get('is_correct', False)]
+    if not correct_records:
+        return 0.0
+    
+    # 按照文獻演算法：計算學習的概念數量（去重）
+    concept_hours = set()
+    for record in correct_records:
+        concept_id = record.get('micro_concept_id')
+        if concept_id:
+            # 精確到小時，避免同一天多次答對同一概念重複計算
+            hour_key = record['attempt_time'][:13]  # YYYY-MM-DDTHH
+            concept_hours.add((hour_key, concept_id))
+    
+    # 計算總學習小時數（所有答題記錄的不同小時數）
+    total_hours = len(set(r['attempt_time'][:13] for r in quiz_records))
+    
+    if total_hours == 0:
+        return 0.0
+    
+    # 學習速度 = 掌握的概念數量 / 總學習小時數
+    velocity = len(concept_hours) / max(total_hours, 1)
+    
+
+    
+    return round(velocity, 1)
+
+def calculate_enhanced_retention_rate(quiz_records: List[Dict]) -> float:
+    """計算記憶保持率 - 基於混合演算法的時間衰減"""
+    if not quiz_records:
+        return 0.0
+    
+    # 使用混合演算法計算整體掌握度
+    overall_mastery = calculate_mixed_mastery(quiz_records)
+    
+    # 記憶保持率 = 混合掌握度（已包含時間衰減）
+    return overall_mastery
+
+def calculate_mixed_mastery(quiz_records: List[Dict], concept_id: str = None) -> float:
+    """計算混合掌握度 - 基於PFA + Forgetting-aware BKT + Difficulty-aware KT"""
+    if not quiz_records:
+        return 0.0
+    
+    import math
+    from datetime import datetime
+    
+    # 如果指定概念ID，只計算該概念的記錄
+    if concept_id:
+        concept_records = [r for r in quiz_records if r.get('micro_concept_id') == concept_id]
+    else:
+        concept_records = quiz_records
+    
+    if not concept_records:
+        return 0.0
+    
+    # 按時間排序
+    concept_records.sort(key=lambda x: x['attempt_time'])
+    
+    # 參數設定
+    theta = -1.0  # 基礎能力參數
+    w_s = 0.2    # 成功權重
+    w_f = 0.3    # 失敗權重
+    w_d = 0.5    # 難度權重
+    w_t = 0.5    # 時間衰減權重
+    lambda_decay = 0.1  # 遺忘率
+    
+    # 計算最近的成功和失敗次數（加權）
+    successes_recent = 0
+    failures_recent = 0
+    difficulty_sum = 0
+    time_decay_sum = 0
+    
+    current_time = datetime.now()
+    
+    for i, record in enumerate(concept_records):
+        # 時間權重：最近的答題權重更高
+        attempt_time = datetime.fromisoformat(record['attempt_time'].replace('Z', '+00:00'))
+        # 轉換為naive datetime
+        attempt_time = attempt_time.replace(tzinfo=None)
+        time_diff_hours = (current_time - attempt_time).total_seconds() / 3600
+        time_weight = math.exp(-lambda_decay * time_diff_hours / 24)  # 按天計算
+        
+        # 難度權重
+        difficulty = record.get('difficulty', '中等')
+        difficulty_weight = {'簡單': 1.0, '中等': 2.0, '困難': 3.0}.get(difficulty, 2.0)
+        
+        # 時間衰減
+        time_decay = math.exp(-lambda_decay * time_diff_hours / 24)
+        
+        if record.get('is_correct', False):
+            successes_recent += time_weight
+        else:
+            failures_recent += time_weight
+        
+        difficulty_sum += difficulty_weight * time_weight
+        time_decay_sum += time_decay * time_weight
+    
+    # 計算平均難度和時間衰減
+    total_attempts = len(concept_records)
+    avg_difficulty = difficulty_sum / total_attempts if total_attempts > 0 else 2.0
+    avg_time_decay = time_decay_sum / total_attempts if total_attempts > 0 else 1.0
+    
+    # 混合掌握度公式
+    mastery_raw = theta + w_s * successes_recent - w_f * failures_recent - w_d * avg_difficulty + w_t * avg_time_decay
+
+    
+    # Sigmoid函數壓縮到0-1
+    mastery = 1 / (1 + math.exp(-mastery_raw))
+    return round(mastery, 3)
+
+def calculate_enhanced_avg_time_per_concept(quiz_records: List[Dict]) -> float:
+    """計算平均掌握時間 - 基於混合演算法"""
+    if not quiz_records:
+        return 0.0
+    
+    # 只計算答對的題目
+    correct_records = [r for r in quiz_records if r.get('is_correct', False)]
+    if not correct_records:
+        return 0.0
+    
+    # 計算所有答對題目的平均時間
+    total_time = 0
+    count = 0
+    
+    for record in correct_records:
+        time_spent = record.get('time_spent', 0)
+        if time_spent > 0:
+            total_time += time_spent
+            count += 1
+    
+    if count == 0:
+        return 0.0
+    
+    # 返回平均時間（分鐘）
+    return (total_time / count) / 60
+
+def calculate_enhanced_focus_score(quiz_records: List[Dict]) -> float:
+    """計算增強版專注程度 - 基於專注度分析演算法"""
+    if not quiz_records:
+        return 0.0
+    
+    from collections import defaultdict
+    from datetime import datetime, timezone, timedelta
+    
+    # 按會話分組（30分鐘內的答題視為同一會話）
+    session_groups = defaultdict(list)
+    current_session = []
+    last_time = None
+    
+    for record in sorted(quiz_records, key=lambda x: x['attempt_time']):
+        attempt_time = datetime.fromisoformat(record['attempt_time'].replace('Z', '+00:00'))
+        
+        if last_time is None or (attempt_time - last_time).total_seconds() > 1800:  # 30分鐘
+            if current_session:
+                session_groups[len(session_groups)] = current_session
+            current_session = [record]
+        else:
+            current_session.append(record)
+        
+        last_time = attempt_time
+    
+    if current_session:
+        session_groups[len(session_groups)] = current_session
+    
+    if not session_groups:
+        return 0.0
+    
+    session_scores = []
+    
+    for session_id, session_records in session_groups.items():
+        if len(session_records) < 2:
+            continue
+            
+        # 計算會話專注度指標
+        total_questions = len(session_records)
+        correct_questions = sum(1 for r in session_records if r.get('is_correct', False))
+        accuracy = correct_questions / total_questions
+        
+        # 時間一致性（答題間隔是否穩定）
+        time_intervals = []
+        for i in range(1, len(session_records)):
+            prev_time = datetime.fromisoformat(session_records[i-1]['attempt_time'].replace('Z', '+00:00'))
+            curr_time = datetime.fromisoformat(session_records[i]['attempt_time'].replace('Z', '+00:00'))
+            interval = (curr_time - prev_time).total_seconds()
+            time_intervals.append(interval)
+        
+        # 計算時間間隔的變異係數（越小越專注）
+        if time_intervals:
+            avg_interval = sum(time_intervals) / len(time_intervals)
+            variance = sum((x - avg_interval) ** 2 for x in time_intervals) / len(time_intervals)
+            cv = (variance ** 0.5) / avg_interval if avg_interval > 0 else 1
+            time_consistency = max(0, 1 - cv)  # 變異係數越小，一致性越高
+        else:
+            time_consistency = 0
+        
+        # 難度適應性（能否處理不同難度的題目）
+        difficulties = [r.get('difficulty', '中等') for r in session_records]
+        difficulty_diversity = len(set(difficulties)) / 3  # 最多3種難度
+        
+        # 連續答對率（專注時更容易連續答對）
+        consecutive_correct = 0
+        max_consecutive = 0
+        for r in session_records:
+            if r.get('is_correct', False):
+                consecutive_correct += 1
+                max_consecutive = max(max_consecutive, consecutive_correct)
+            else:
+                consecutive_correct = 0
+        
+        consecutive_rate = max_consecutive / total_questions if total_questions > 0 else 0
+        
+        # 綜合專注度分數
+        focus_score = (
+            accuracy * 0.4 +           # 準確率權重40%
+            time_consistency * 0.3 +   # 時間一致性權重30%
+            difficulty_diversity * 0.2 + # 難度適應性權重20%
+            consecutive_rate * 0.1     # 連續答對率權重10%
+        )
+        
+        session_scores.append(focus_score)
+    
+    return sum(session_scores) / len(session_scores) if session_scores else 0.0
+
+def _get_review_method(current_mastery: float) -> str:
+    """根據當前掌握度獲取複習方法"""
+    if current_mastery < 0.3:
+        return '重新學習基礎概念'
+    elif current_mastery < 0.6:
+        return '重點練習相關題目'
+    else:
+        return '快速複習鞏固記憶'
+
+def calculate_graph_based_mastery(student_id: str, concept_id: str, knowledge_graph: Dict = None) -> Dict[str, Any]:
+    """計算圖基於的掌握度預測 - Graph-based KT"""
+    try:
+        # 獲取學生答題記錄
+        quiz_records = get_student_quiz_records(student_id)
+        
+        # 獲取知識點關聯關係 - 需要先獲取概念名稱
+        # 從概念ID獲取概念名稱（從MongoDB查詢）
+        concept_name = get_concept_name_by_id(concept_id)
+        logger.info(f"🔍 [DEBUG] 獲取概念名稱: {concept_id} -> {concept_name}")
+        
+        concept_relations = get_knowledge_relations_from_neo4j(concept_name)
+        logger.info(f"🔍 [DEBUG] Neo4j關聯關係: 前置={len(concept_relations.get('prerequisites', []))}, 相關={len(concept_relations.get('related_concepts', []))}")
+        
+        # 簡化的圖神經網絡預測（基於關聯知識點的掌握度）
+        related_concepts = concept_relations.get('prerequisites', []) + concept_relations.get('related_concepts', [])
+        
+        # 計算關聯知識點的平均掌握度
+        related_mastery_scores = []
+        for related_concept in related_concepts:
+            related_concept_id = related_concept.get('id', '')
+            related_records = [r for r in quiz_records if r['micro_concept_id'] == related_concept_id]
+            if related_records:
+                mastery = sum(1 for r in related_records if r['is_correct']) / len(related_records)
+                related_mastery_scores.append(mastery)
+        
+        # 預測當前知識點的掌握度
+        if related_mastery_scores:
+            predicted_mastery = sum(related_mastery_scores) / len(related_mastery_scores)
+            # 根據關聯強度調整預測
+            avg_relation_strength = sum(r.get('strength', 0.5) for r in related_concepts) / len(related_concepts) if related_concepts else 0.5
+            predicted_mastery *= avg_relation_strength
+        else:
+            predicted_mastery = 0.5  # 默認中等掌握度
+        
+        # 生成學習路徑推薦（基於Neo4j關聯關係）
+        learning_path = generate_learning_path_recommendations(concept_id, concept_relations, quiz_records)
+        
+        return {
+            'predicted_mastery': round(predicted_mastery, 2),
+            'confidence': min(0.9, len(related_mastery_scores) * 0.2),  # 基於關聯知識點數量
+            'related_concepts': related_concepts,
+            'learning_path': learning_path,
+            'prerequisites_analysis': analyze_prerequisites(concept_relations.get('prerequisites', []), quiz_records)
+        }
+        
+    except Exception as e:
+        logger.error(f"圖基於掌握度預測失敗: {e}")
+        return {
+            'predicted_mastery': 0.5,
+            'confidence': 0.1,
+            'related_concepts': [],
+            'learning_path': [],
+            'prerequisites_analysis': []
+        }
+
+def generate_learning_path_recommendations(concept_id: str, concept_relations: Dict, quiz_records: List[Dict]) -> List[Dict]:
+    """使用AI生成個性化學習路徑推薦"""
+    try:
+        # 獲取當前概念的掌握度
+        current_records = [r for r in quiz_records if r['micro_concept_id'] == concept_id]
+        current_mastery = sum(1 for r in current_records if r['is_correct']) / len(current_records) if current_records else 0
+        current_concept_name = get_concept_name_by_id(concept_id)
+        
+        # 分析學習歷史
+        total_attempts = len(current_records)
+        recent_attempts = len([r for r in current_records if r['attempt_time'] >= (datetime.now() - timedelta(days=7)).strftime('%Y-%m-%d')])
+        avg_time_per_question = sum(r.get('time_spent', 0) for r in current_records) / len(current_records) if current_records else 0
+        
+        # 分析錯誤模式
+        wrong_records = [r for r in current_records if not r['is_correct']]
+        common_errors = []
+        if wrong_records:
+            # 簡單的錯誤分析（實際可以更複雜）
+            common_errors = ['概念理解不足', '計算錯誤', '應用能力欠缺']
+        
+        # 分析前置知識點
+        prerequisites = concept_relations.get('prerequisites', [])
+        related_concepts = concept_relations.get('related_concepts', [])
+        
+        # 準備AI提示詞
+        prompt = f"""
+你是個性化學習路徑設計AI。請為學生設計3個具體的學習步驟，幫助他們系統性地掌握知識。
+
+學生資料：
+- 概念：{current_concept_name}
+- 當前掌握度：{current_mastery:.1%}
+- 總答題次數：{total_attempts}
+- 最近7天答題：{recent_attempts}次
+- 平均答題時間：{avg_time_per_question:.1f}分鐘
+- 常見錯誤：{', '.join(common_errors) if common_errors else '無'}
+- 前置知識點：{[p.get('name', '未知') for p in prerequisites[:3]]}
+- 相關概念：{[r.get('name', '未知') for r in related_concepts[:3]]}
+
+請返回JSON格式的學習路徑，包含3個步驟，每個步驟需要：
+- step_info: 學習任務描述（如"去課程觀看二維陣列基礎知識"）
+- estimated_time: 預估時間（分鐘，數字）
+- step_order: 步驟順序（1,2,3）
+
+要求：
+1. 根據掌握度設計適合的學習步驟（低掌握度<30%：基礎學習，中等30-70%：強化練習，高>70%：鞏固拓展）
+2. 每個步驟都要具體明確，使用簡單易懂的描述
+3. 步驟要有邏輯順序，循序漸進
+4. 考慮學生的學習歷史和錯誤模式
+5. 學習方式多樣化（觀看課程、練習題目、實際應用等）
+6. 時間分配合理（總計不超過60分鐘）
+7. 描述要簡潔明瞭，避免過於複雜的術語
+
+返回格式：
+{{
+  "learning_path": [
+    {{
+      "step_info": "去課程觀看二維陣列基礎知識",
+      "estimated_time": 15,
+      "step_order": 1
+    }},
+    {{
+      "step_info": "練習二維陣列基礎題目10題",
+      "estimated_time": 20,
+      "step_order": 2
+    }},
+    {{
+      "step_info": "解決3個二維陣列實際應用問題",
+      "estimated_time": 25,
+      "step_order": 3
+    }}
+  ]
+}}
+"""
+        
+        # 調用Gemini API
+        model = init_gemini('gemini-2.5-flash')
+        response = model.generate_content(prompt)
+        ai_response = response.text.strip()
+        
+        # 解析AI回應
+        import json
+        try:
+            # 清理回應，移除可能的markdown格式
+            if ai_response.startswith('```json'):
+                ai_response = ai_response[7:]
+            if ai_response.endswith('```'):
+                ai_response = ai_response[:-3]
+            
+            ai_data = json.loads(ai_response)
+            learning_path = ai_data.get('learning_path', [])
+            
+            # 確保learning_path是列表且不為None
+            if not learning_path or not isinstance(learning_path, list):
+                logger.warning("AI回傳的learning_path為空或格式錯誤，使用默認路徑")
+                learning_path = []
+            
+            # 確保每個步驟都有必要的字段
+            for step in learning_path:
+                if step and isinstance(step, dict):
+                    step.setdefault('step_order', 1)
+                    step.setdefault('estimated_time', 15)
+            
+            logger.info(f"AI生成學習路徑成功：{len(learning_path)}個步驟")
+            return learning_path
+            
+        except json.JSONDecodeError as e:
+            logger.error(f"AI回應JSON解析失敗: {e}")
+            logger.error(f"AI原始回應: {ai_response}")
+    except Exception as e:
+        logger.error(f"AI生成學習路徑失敗: {e}")
+
+def analyze_prerequisites(prerequisites: List[Dict], quiz_records: List[Dict]) -> List[Dict]:
+    """分析前置知識點掌握情況"""
+    analysis = []
+    
+    for prereq in prerequisites:
+        prereq_id = prereq.get('id', '')
+        prereq_records = [r for r in quiz_records if r['micro_concept_id'] == prereq_id]
+        
+        if prereq_records:
+            mastery = sum(1 for r in prereq_records if r['is_correct']) / len(prereq_records)
+            status = '已掌握' if mastery >= 0.8 else '部分掌握' if mastery >= 0.5 else '未掌握'
+        else:
+            mastery = 0
+            status = '未學習'
+        
+        analysis.append({
+            'concept_id': prereq_id,
+            'concept_name': prereq.get('name', '未知概念'),
+            'mastery': round(mastery, 2),
+            'status': status,
+            'is_ready': mastery >= 0.6
+        })
+    
+    return analysis
+
+# 已移除 /learning-path-prediction API - 前端未使用
 
 # 新增的統計計算函數
 def calculate_consecutive_days(quiz_records: List[Dict]) -> int:
@@ -1283,7 +2046,7 @@ def calculate_total_study_time(quiz_records: List[Dict]) -> float:
     if not quiz_records:
         return 0.0
     
-    # 使用實際記錄的答題時間
+    # 計算所有答題的時間（包括答對和答錯）
     total_seconds = sum(record.get('time_spent', 0) for record in quiz_records)
     total_hours = total_seconds / 3600  # 轉換為小時
     return round(total_hours, 1)
@@ -1416,13 +2179,34 @@ def generate_improvement_items(domains: List[Dict], quiz_records: List[Dict]) ->
     improvement_items.sort(key=lambda x: x['improvement'], reverse=True)
     return improvement_items[:5]  # 返回前5個
 
+def get_concept_name_by_id(concept_id: str) -> str:
+    """根據概念ID獲取概念名稱"""
+    try:
+        from accessories import mongo
+        
+        if not mongo:
+            logger.warning("MongoDB未初始化，返回默認概念名稱")
+            return f"概念_{concept_id[-6:]}"
+        
+        # 從MongoDB查詢概念名稱
+        concept_doc = mongo.db.micro_concept.find_one({'_id': ObjectId(concept_id)})
+        if concept_doc:
+            return concept_doc.get('name', f"概念_{concept_id[-6:]}")
+        else:
+            logger.warning(f"未找到概念ID {concept_id}，返回默認名稱")
+            return f"概念_{concept_id[-6:]}"
+            
+    except Exception as e:
+        logger.error(f"獲取概念名稱失敗: {e}")
+        return f"概念_{concept_id[-6:]}"
+
 def get_knowledge_relations_from_neo4j(concept_name: str) -> Dict[str, Any]:
     """從Neo4j獲取知識點關聯數據"""
     try:
         from accessories import neo4j_driver
         
         if not neo4j_driver:
-            print("Neo4j驅動未初始化，返回空關聯數據")
+            logger.warning("Neo4j驅動未初始化，返回空關聯數據")
             return {
                 'prerequisites': [],
                 'related_concepts': [],
@@ -1443,7 +2227,7 @@ def get_knowledge_relations_from_neo4j(concept_name: str) -> Dict[str, Any]:
             result = session.run(query, concept_name=concept_name)
             relations = []
             
-            print(f"Neo4j查詢結果: concept_name={concept_name}")
+            logger.debug(f"Neo4j查詢結果: concept_name={concept_name}")
             for record in result:
                 relation = {
                     'id': str(record['related_id']),  # 使用Neo4j的節點ID
@@ -1452,9 +2236,9 @@ def get_knowledge_relations_from_neo4j(concept_name: str) -> Dict[str, Any]:
                     'strength': 0.5  # 默認強度
                 }
                 relations.append(relation)
-                print(f"  找到關聯: {relation['name']} ({relation['type']})")
+                logger.debug(f"  找到關聯: {relation['name']} ({relation['type']})")
             
-            print(f"總共找到 {len(relations)} 個關聯知識點")
+            logger.debug(f"總共找到 {len(relations)} 個關聯知識點")
             
             return {
                 'prerequisites': [r for r in relations if r['type'] == 'PREREQUISITE'],
@@ -1473,7 +2257,7 @@ def get_knowledge_relations_from_neo4j(concept_name: str) -> Dict[str, Any]:
 def generate_ai_diagnosis(concept_name: str, domain_name: str, mastery: float, 
                          total_attempts: int, correct_attempts: int, recent_accuracy: float,
                          wrong_records: List[Dict], knowledge_relations: Dict[str, Any] = None,
-                         difficulty_stats: Dict[str, Dict] = None) -> Dict[str, Any]:
+                         difficulty_stats: Dict[str, Dict] = None, learning_path: List[Dict] = None) -> Dict[str, Any]:
     """使用Gemini API生成AI診斷結果"""
     
     try:
@@ -1517,6 +2301,15 @@ def generate_ai_diagnosis(concept_name: str, domain_name: str, mastery: float,
             for difficulty, stats in difficulty_stats.items():
                 accuracy = stats['correct'] / stats['total'] if stats['total'] > 0 else 0
                 difficulty_info += f"\n  * {difficulty}：{stats['correct']}/{stats['total']} 正確 ({accuracy:.1%})"
+        
+        # 準備學習路徑數據
+        learning_path_info = ""
+        if learning_path:
+            learning_path_info = "\n- 推薦學習路徑："
+            for i, step in enumerate(learning_path[:5]):  # 只顯示前5個步驟
+                step_info = step.get('step_info', step.get('concept_name', '未知步驟'))
+                estimated_time = step.get('estimated_time', 15)
+                learning_path_info += f"\n  {i+1}. {step_info} (預估時間: {estimated_time}分鐘)"
 
         # 構建Gemini提示詞 - 使用新的JSON schema
         import json
@@ -1537,7 +2330,9 @@ def generate_ai_diagnosis(concept_name: str, domain_name: str, mastery: float,
     "recent_wrong_questions": {json.dumps([{"q_id": f"q{i}", "err": r.get('error_reason', '未知錯誤'), "text": "題目內容"} for i, r in enumerate(wrong_records[:3])])},
     "dependency": {json.dumps([{"id": r['id'], "name": r['name'], "mastery": r['strength']} for r in knowledge_relations.get('prerequisites', [])])},
     "difficulty_stats": {json.dumps(difficulty_stats)},
-    "relations_info": "{relations_info if relations_info else '無關聯數據'}"
+    "relations_info": "{relations_info if relations_info else '無關聯數據'}",
+    "learning_path": {json.dumps(learning_path[:5]) if learning_path else '[]'},
+    "learning_path_info": "{learning_path_info if learning_path_info else '無學習路徑數據'}"
 }}
 
 請返回以下格式的JSON，top_actions的action字段必須使用以下標準化類型之一：
@@ -1568,6 +2363,7 @@ def generate_ai_diagnosis(concept_name: str, domain_name: str, mastery: float,
     ],
     "evidence": ["string1", "string2"],
     "confidence": "high/medium/low",
+    "learning_path": {json.dumps(learning_path[:5]) if learning_path else '[]'},
     "full_text": "string (<=500字)"
 }}
 
@@ -1610,6 +2406,7 @@ def generate_ai_diagnosis(concept_name: str, domain_name: str, mastery: float,
                 ]),
                 'evidence': ai_data.get('evidence', [f'答題{total_attempts}次', f'正確率{recent_accuracy:.1%}']),
                 'confidence': ai_data.get('confidence', 'medium'),
+                'learning_path': ai_data.get('learning_path', learning_path or []),  # 優先使用AI生成的學習路徑
                 'full_text': ai_data.get('full_text', f'''
 ## 詳細診斷分析
 
@@ -1641,63 +2438,9 @@ def generate_ai_diagnosis(concept_name: str, domain_name: str, mastery: float,
         except json.JSONDecodeError as e:
             logger.error(f"解析Gemini響應失敗: {e}")
             logger.error(f"原始響應: {ai_response}")
-            return _generate_fallback_diagnosis(concept_name, domain_name, mastery, total_attempts, recent_accuracy)
     except Exception as e:
         logger.error(f"Gemini API調用失敗: {e}")
-        return _generate_fallback_diagnosis(concept_name, domain_name, mastery, total_attempts, recent_accuracy)
 
-def _generate_fallback_diagnosis(concept_name: str, domain_name: str, mastery: float, 
-                                total_attempts: int, recent_accuracy: float) -> Dict[str, Any]:
-    """生成fallback診斷 - 當AI診斷失敗時使用"""
-    return {
-        'summary': f'{concept_name}掌握度{mastery:.1%}，需重點關注',
-        'metrics': {
-            'domain': domain_name,
-            'concept': concept_name,
-            'mastery': mastery,
-            'attempts': total_attempts,
-            'recent_accuracy': recent_accuracy
-        },
-        'root_causes': ['基礎概念不牢固', '練習不足', '需要更多時間理解'],
-        'top_actions': [
-            {"action": "REVIEW_BASICS", "detail": "AI導師進行基礎概念教學", "est_min": 15},
-            {"action": "PRACTICE", "detail": "AI生成相關練習題進行練習", "est_min": 25},
-            {"action": "SEEK_HELP", "detail": "觀看相關教材內容", "est_min": 10}
-        ],
-        'practice_examples': [
-            {"q_id": "q101", "difficulty": "easy", "text": "基礎概念理解題"},
-            {"q_id": "q102", "difficulty": "medium", "text": "應用練習題"},
-            {"q_id": "q103", "difficulty": "hard", "text": "綜合應用題"}
-        ],
-        'evidence': [f'答題{total_attempts}次', f'正確率{recent_accuracy:.1%}'],
-        'confidence': 'low',
-        'full_text': f'''
-## 基礎學習建議
-
-### 學習狀況
-- **概念名稱**：{concept_name}
-- **所屬領域**：{domain_name}
-- **掌握度**：{mastery:.1%}
-- **答題次數**：{total_attempts}次
-- **最近準確率**：{recent_accuracy:.1%}
-
-### 問題分析
-由於數據不足或AI服務暫時不可用，提供基礎學習建議：
-
-1. **掌握度偏低**：{mastery:.1%}的掌握度顯示需要加強學習
-2. **練習量不足**：僅{total_attempts}次答題，需要更多練習
-3. **理解深度不夠**：{recent_accuracy:.1%}的準確率說明概念理解還需深化
-
-### 學習建議
-1. **回歸基礎**：重新學習{concept_name}的基本定義和核心概念
-2. **循序漸進**：從簡單題目開始，逐步提高難度
-3. **大量練習**：建議完成至少10-15題相關練習
-4. **尋求幫助**：遇到困難時及時向老師或同學請教
-
-### 下一步行動
-建議您立即開始學習，從基礎概念開始，通過大量練習來提升對{concept_name}的理解和掌握。
-'''
-    }
 def generate_attention_items(domains: List[Dict], quiz_records: List[Dict]) -> List[Dict]:
     """生成需要關注的知識點數據 - 基於答題記錄分析退步情況"""
     attention_items = []

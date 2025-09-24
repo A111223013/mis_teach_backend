@@ -12,8 +12,6 @@ def create_courses(tx):
     
     for course_name in courses:
         tx.run("CREATE (:Course {name: $name})", name=course_name)
-        print(f"Created course: {course_name}")
-
 def create_chapters(tx):
     """
     Creates chapter nodes and links them to their respective courses.
@@ -63,8 +61,6 @@ def create_chapters(tx):
                 MATCH (c:Course {name: $course_name})
                 CREATE (c)-[:HAS_CHAPTER]->(:Chapter {name: $chapter_name})
             """, course_name=course_name, chapter_name=chapter_name)
-            print(f"Created chapter: {chapter_name} for course: {course_name}")
-
 def create_sections(tx):
     """
     Creates section nodes and links them to their respective chapters.
@@ -268,7 +264,6 @@ def create_sections(tx):
                     MATCH (ch:Chapter {name: $chapter_name})
                     CREATE (ch)-[:HAS_SECTION]->(:Section {name: $section_name})
                 """, chapter_name=chapter_name, section_name=section_name)
-                print(f"Created section: {section_name} for chapter: {chapter_name}")
             except Exception as e:
                 print(f"Failed to create section {section_name} for chapter {chapter_name}: {e}")
 
@@ -323,7 +318,6 @@ def create_prerequisite_relationships(tx):
                 MATCH (a:{prereq_type} {{name: $prereq}}), (b:{target_type} {{name: $target}})
                 CREATE (b)-[:PREREQUISITE]->(a)
             """, prereq=prereq, target=target)
-            print(f"Created prerequisite: {target} -> {prereq}")
         except Exception as e:
             print(f"Failed to create prerequisite {target} -> {prereq}: {e}")
 
@@ -357,7 +351,6 @@ def create_similar_relationships(tx):
                 MATCH (a:{node_type} {{name: $item1}}), (b:{node_type} {{name: $item2}})
                 CREATE (a)-[:SIMILAR_TO]->(b), (b)-[:SIMILAR_TO]->(a)
             """, item1=item1, item2=item2)
-            print(f"Created similar relationship: {item1} <-> {item2}")
         except Exception as e:
             print(f"Failed to create similar relationship {item1} <-> {item2}: {e}")
 
@@ -397,7 +390,6 @@ def create_common_misconception_relationships(tx):
                 MATCH (a:{node_type} {{name: $item1}}), (b:{node_type} {{name: $item2}})
                 CREATE (a)-[:COMMON_MISCONCEPTION_WITH]->(b)
             """, item1=item1, item2=item2)
-            print(f"Created misconception relationship: {item1} -> {item2}")
         except Exception as e:
             print(f"Failed to create misconception relationship {item1} -> {item2}: {e}")
 
@@ -474,7 +466,6 @@ def create_cross_domain_relationships(tx):
                 MATCH (a:{type1} {{name: $item1}}), (b:{type2} {{name: $item2}})
                 CREATE (a)-[:CROSS_DOMAIN_LINK]->(b), (b)-[:CROSS_DOMAIN_LINK]->(a)
             """, item1=item1, item2=item2)
-            print(f"Created cross-domain link: {item1} <-> {item2}")
         except Exception as e:
             print(f"Failed to create cross-domain link {item1} <-> {item2}: {e}")
 
@@ -501,36 +492,25 @@ def init_neo4j_knowledge_graph():
     driver = GraphDatabase.driver(uri, auth=(username, password))
 
     with driver.session() as session:
-        print("Creating nodes and relationships in Neo4j...")
-            
+
         # 清除舊的資料，以便重新建立
-        print("Clearing existing data...")
         session.run("MATCH (n) DETACH DELETE n")
 
-        # 按順序執行創建函數
-        print("Creating courses...")
+
         session.execute_write(create_courses)
-            
-        print("Creating chapters...")
+
         session.execute_write(create_chapters)
-            
-        print("Creating sections...")
+
         session.execute_write(create_sections)
-            
-        print("Creating prerequisite relationships...")
+
         session.execute_write(create_prerequisite_relationships)
-            
-        print("Creating similar relationships...")
+
         session.execute_write(create_similar_relationships)
-            
-        print("Creating misconception relationships...")
+
         session.execute_write(create_common_misconception_relationships)
-            
-        print("Creating cross-domain relationships...")
+
         session.execute_write(create_cross_domain_relationships)
-            
-        print("Knowledge graph initialization complete.")
-            
+
     driver.close()
 
 

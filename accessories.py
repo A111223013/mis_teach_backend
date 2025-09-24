@@ -177,9 +177,6 @@ def init_gemini(model_name = 'gemini-2.5-flash'):
     """初始化主要的Gemini API（優先使用新版 SDK）"""
     try:
         api_key = get_api_key()  # 使用tool/api_keys.py
-        print(f"🔍 [DEBUG] 開始初始化 Gemini，模型: {model_name}")
-        print(f"🔍 [DEBUG] API Key 前10字元: {api_key[:10]}...")
-        
         # 強制優先使用新版 Google GenAI SDK
         try:
             # 嘗試多種導入方式
@@ -195,8 +192,6 @@ def init_gemini(model_name = 'gemini-2.5-flash'):
                 raise ImportError("無法導入新版 SDK")
             
             client = new_genai.Client(api_key=api_key)
-            print("🔍 [DEBUG] 新版 Client 創建成功")
-            
             # 創建一個包裝器以保持 API 兼容性
             class GeminiWrapper:
                 def __init__(self, client, model_name):
