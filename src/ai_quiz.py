@@ -928,7 +928,8 @@ def create_quiz():
                 return jsonify({'message': '缺少知識點參數'}), 400
             
             # 從MongoDB獲取符合條件的考題
-            query = {"主要學科": topic}
+            # 使用正確的欄位名稱：key-points
+            query = {"key-points": topic}
             available_exams = list(mongo.db.exam.find(query).limit(count * 2))
             
             if len(available_exams) < count:
@@ -1735,7 +1736,7 @@ def get_user_submissions_analysis():
                         if exam_question:
                             question_detail = {
                                 'question_text': exam_question.get('question_text', ''),
-                                'topic': exam_question.get('主要學科', 'unknown'),
+                                'topic': exam_question.get('key-points', 'unknown'),
                                 'chapter': exam_question.get('章節', 'unknown'),
                                 'options': exam_question.get('options', []),
                                 'correct_answer': exam_question.get('answer', ''),
@@ -2018,7 +2019,7 @@ def generate_guided_learning_session():
                     if exam_question:
                         question_detail = {
                             'question_text': exam_question.get('question_text', ''),
-                            'topic': exam_question.get('主要學科', 'unknown'),
+                            'topic': exam_question.get('key-points', 'unknown'),
                             'chapter': exam_question.get('章節', 'unknown'),
                             'options': exam_question.get('options', []),
                             'correct_answer': exam_question.get('answer', ''),
@@ -2077,7 +2078,7 @@ def generate_guided_learning_session():
                     if exam_question:
                         question_detail = {
                             'question_text': exam_question.get('question_text', ''),
-                            'topic': exam_question.get('主要學科', 'unknown'),
+                            'topic': exam_question.get('key-points', 'unknown'),
                             'chapter': exam_question.get('章節', 'unknown'),
                             'options': exam_question.get('options', []),
                             'correct_answer': exam_question.get('answer', ''),

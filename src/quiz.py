@@ -85,13 +85,31 @@ def get_quiz_from_database(quiz_ids: List[str]) -> dict:
         # 轉換題目格式為前端需要的格式
         formatted_questions = []
         for i, question in enumerate(questions):
+            # 處理題目類型映射
+            question_type = question.get('type', 'single')
+            answer_type = question.get('answer_type', 'single-choice')
+            
+            # 根據題目類型設置正確的type字段
+            if question_type == 'group':
+                formatted_type = 'group'
+            else:
+                # 單題：使用answer_type作為type
+                formatted_type = answer_type
+            
+            # 處理選項格式
+            options = question.get('options', [])
+            if isinstance(options, str):
+                options = [opt.strip() for opt in options.split(',') if opt.strip()]
+            elif not isinstance(options, list):
+                options = []
+            
             formatted_question = {
-                'id': str(question.get('_id', question.get('id', i + 1))),
+                'id': i + 1,  # 使用數字ID，從1開始
                 'question_text': question.get('question_text', ''),
-                'type': question.get('type', 'single-choice'),
-                'options': question.get('options', []),
+                'type': formatted_type,
+                'options': options,
                 'correct_answer': question.get('answer', question.get('correct_answer', '')),
-                'original_exam_id': question.get('exam_id', question.get('original_exam_id', '')),
+                'original_exam_id': str(question.get('_id', question.get('id', ''))),
                 'image_file': question.get('image_file', ''),
                 'key_points': question.get('key-points', question.get('key_points', '')),
                 'explanation': question.get('detail-answer', question.get('explanation', '')),
@@ -104,22 +122,68 @@ def get_quiz_from_database(quiz_ids: List[str]) -> dict:
             }
             formatted_questions.append(formatted_question)
         
-        # 構建考卷數據 (從單個題目中提取信息)
-        quiz_data = {
-            'quiz_id': str(template_id), # 使用template_id作為quiz_id
-            'template_id': str(template_id),
-            'questions': formatted_questions,
-            'time_limit': 60, # Default time limit for single question
-            'quiz_info': {
-                'title': f"AI生成題目 ({template_id})", # 可以從quiz_info中獲取更詳細的title
+        # 從SQL模板獲取測驗信息
+        template_info = {}
+        try:
+            with sqldb.engine.connect() as conn:
+                template_query = text("""
+                    SELECT template_type, school, department, year, created_at
+                    FROM quiz_templates 
+                    WHERE id = :template_id
+                """)
+                
+                result = conn.execute(template_query, {'template_id': template_id})
+                template_row = result.fetchone()
+                
+                if template_row:
+                    template_type = template_row[0]
+                    school = template_row[1] or ''
+                    department = template_row[2] or ''
+                    year = template_row[3] or ''
+                    created_at = template_row[4]
+                    
+                    # 根據測驗類型生成標題
+                    if template_type == 'pastexam':
+                        quiz_title = f"{school} - {year}年 - {department}"
+                    else:  # knowledge
+                        topic = questions[0].get('key-points', '計算機概論') if questions else '計算機概論'
+                        quiz_title = f"{topic} - 知識測驗"
+                    
+                    template_info = {
+                        'title': quiz_title,
+                        'exam_type': template_type,
+                        'school': school,
+                        'department': department,
+                        'year': year,
+                        'topic': questions[0].get('key-points', '計算機概論') if questions else '計算機概論',
+                        'difficulty': questions[0].get('difficulty_level', 'medium') if questions else 'medium',
+                        'question_count': len(formatted_questions),
+                        'time_limit': 60,
+                        'total_score': len(formatted_questions) * 5,
+                        'created_at': created_at.isoformat() if created_at else datetime.now().isoformat()
+                    }
+        except Exception as e:
+            print(f"⚠️ 獲取模板信息失敗: {e}")
+            # 使用默認信息
+            template_info = {
+                'title': f"測驗 ({template_id})",
                 'exam_type': 'knowledge',
                 'topic': questions[0].get('key-points', '計算機概論') if questions else '計算機概論',
                 'difficulty': questions[0].get('difficulty_level', 'medium') if questions else 'medium',
                 'question_count': len(formatted_questions),
                 'time_limit': 60,
                 'total_score': len(formatted_questions) * 5,
-                'created_at': questions[0].get('created_at', datetime.now()).isoformat() if questions else datetime.now().isoformat()
-            },
+                'created_at': datetime.now().isoformat()
+            }
+        
+        # 構建考卷數據 (從單個題目中提取信息)
+        quiz_data = {
+            'quiz_id': str(template_id), # 使用template_id作為quiz_id
+            'template_id': str(template_id),
+            'title': template_info.get('title', f"測驗 ({template_id})"),
+            'questions': formatted_questions,
+            'time_limit': 60, # Default time limit for single question
+            'quiz_info': template_info,
             'database_ids': [str(q_id) for q_id in question_ids] # 儲存所有題目ID，確保是字串
         }
         
@@ -1491,7 +1555,8 @@ def create_quiz():
                 return jsonify({'token': None, 'message': '缺少知識點參數'}), 400
             
             # 從MongoDB獲取符合條件的考題
-            query = {"主要學科": topic}
+            # 使用正確的欄位名稱：key-points
+            query = {"key-points": topic}
             available_exams = list(mongo.db.exam.find(query).limit(count * 2))
             
             if len(available_exams) < count:
@@ -1533,10 +1598,14 @@ def create_quiz():
         
         # 轉換為標準化的題目格式
         questions = []
+        print(f"🔍 調試：開始處理 {len(selected_exams)} 個題目")
         for i, exam in enumerate(selected_exams):
-            # 正確讀取題目類型
-            exam_type = exam.get('type', 'single')
-            if exam_type == 'group':
+            # 正確讀取題目類型 - type用來判斷單一/題組，answer_type用來判斷單選/多選
+            exam_type = exam.get('type', 'single')  # type: single/group
+            answer_type = exam.get('answer_type', 'single-choice')  # answer_type: single-choice/multiple-choice等
+            print(f"🔍 調試：題目 {i+1} - type: {exam.get('type')}, answer_type: {exam.get('answer_type')}")
+            print(f"🔍 調試：題目 {i+1} - key-points: {exam.get('key-points')}, question_text: {exam.get('question_text', '')[:100]}...")
+            if exam_type == 'group':  # 使用type欄位判斷是否為題組
                 # 題組：保留群組題外層資訊，展開子題但一併回傳
                 group_question_text = exam.get('group_question_text') or exam.get('question_text', '')
                 if not group_question_text:
@@ -1603,7 +1672,7 @@ def create_quiz():
                 questions.append(group_question)
             else:
                 # 單題：保持原有行為
-                question_type = exam.get('answer_type', 'single-choice')
+                question_type = answer_type  # 使用answer_type作為question_type
                 
                 # 調試信息：檢查題目文字
                 question_text = exam.get('question_text', '')
@@ -1617,16 +1686,18 @@ def create_quiz():
                     else:
                         question_text = f"題目 {i+1} (無題目文字)"
                 
+                print(f"🔍 調試：單題 {i+1} - 使用question_type: {question_type}")
+                
                 question = {
                     'id': i + 1,
                     'question_text': question_text,
-                    'type': question_type,
+                    'type': question_type,  # 這裡應該是answer_type的值
                     'options': exam.get('options'),
                     'correct_answer': exam.get('answer', ''),
                     'original_exam_id': str(exam.get('_id', '')),
                     'image_file': exam.get('image_file'),
                     'key_points': ', '.join(exam.get('key-points', [])) if isinstance(exam.get('key-points', []), list) else exam.get('key-points', ''),
-                    'answer_type': question_type,
+                    'answer_type': question_type,  # 這裡也使用answer_type
                     'detail_answer': exam.get('detail-answer', '')
                 }
 
