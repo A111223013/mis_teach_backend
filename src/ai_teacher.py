@@ -283,7 +283,7 @@ def get_quiz_result_data(result_id: str) -> dict:
                 question_id = str(answer[0])  # 確保ID為字符串格式
                 user_answer = answer[1]
                 is_correct = bool(answer[2])  # 確保為 boolean 類型
-                score = float(answer[3]) if answer[3] else 0
+                score = float(answer[3]) if answer[3] is not None else 0.0
                 feedback = json.loads(answer[4]) if answer[4] else {}  # 將JSON字符串轉換回Python字典
                 created_at = answer[5]
                 
@@ -329,7 +329,7 @@ def get_quiz_result_data(result_id: str) -> dict:
                     'is_correct': is_correct,
                     'is_marked': False,
                     'topic': question_obj.get('topic', '計算機概論'),
-                    'difficulty': question_obj.get('difficulty', 2),
+                    'difficulty': int(question_obj.get('difficulty', 2)),
                     'options': question_obj.get('options', []),
                     'image_file': question_obj.get('image_file', ''),
                     'key_points': question_obj.get('key_points', ''),
@@ -338,21 +338,21 @@ def get_quiz_result_data(result_id: str) -> dict:
                 
                 questions.append(question_data)
             
-            # 構建返回結果
+            # 構建返回結果 - 確保所有數值字段都是 JSON 可序列化的
             result = {
-                'quiz_history_id': history_result[0],
-                'quiz_template_id': history_result[1],
-                'user_email': history_result[2],
-                'quiz_type': history_result[3],
-                'total_questions': history_result[4],
-                'answered_questions': history_result[5],
-                'correct_count': history_result[6],
-                'wrong_count': history_result[7],
-                'accuracy_rate': history_result[8],
-                'average_score': history_result[9],
-                'total_time_taken': history_result[10],
+                'quiz_history_id': int(history_result[0]) if history_result[0] is not None else 0,
+                'quiz_template_id': int(history_result[1]) if history_result[1] is not None else 0,
+                'user_email': str(history_result[2]) if history_result[2] else '',
+                'quiz_type': str(history_result[3]) if history_result[3] else '',
+                'total_questions': int(history_result[4]) if history_result[4] is not None else 0,
+                'answered_questions': int(history_result[5]) if history_result[5] is not None else 0,
+                'correct_count': int(history_result[6]) if history_result[6] is not None else 0,
+                'wrong_count': int(history_result[7]) if history_result[7] is not None else 0,
+                'accuracy_rate': float(history_result[8]) if history_result[8] is not None else 0.0,
+                'average_score': float(history_result[9]) if history_result[9] is not None else 0.0,
+                'total_time_taken': int(history_result[10]) if history_result[10] is not None else 0,
                 'submit_time': history_result[11].isoformat() if history_result[11] else None,
-                'status': history_result[12],
+                'status': str(history_result[12]) if history_result[12] else '',
                 'created_at': history_result[13].isoformat() if history_result[13] else None,
                 'questions': questions,
                 'errors': [q for q in questions if not q['is_correct']]
