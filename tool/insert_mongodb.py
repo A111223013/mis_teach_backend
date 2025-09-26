@@ -75,10 +75,10 @@ def insert_dl_domain(db):
 
         # Block 資料
         block_titles = [
-            "Chapter 1 數位邏輯基本概念",
-            "Chapter 2 基本邏輯閘",
-            "Chapter 3 布林代數與第摩根定理",
-            "Chapter 4 布林代數化簡"
+            "數位邏輯基本概念",
+            "基本邏輯閘",
+            "布林代數與第摩根定理",
+            "布林代數化簡"
         ]
         block_docs = [{"domain_id": domain_id, "title": title, "subtopics": []} for title in block_titles]
         block_ids = blocks_col.insert_many(block_docs).inserted_ids
@@ -148,11 +148,11 @@ def insert_os_domain(db):
 
         # Blocks
         block_titles = [
-            "Chapter 1 作業系統基本概念",
-            "Chapter 2 行程管理",
-            "Chapter 3 行程同步",
-            "Chapter 4 記憶體管理",
-            "Chapter 5 儲存管理"
+            "作業系統基本概念",
+            "行程管理",
+            "行程同步",
+            "記憶體管理",
+            "儲存管理"
         ]
         block_docs = [{"domain_id": domain_id, "title": title, "subtopics": []} for title in block_titles]
         block_ids = blocks_col.insert_many(block_docs).inserted_ids
@@ -202,11 +202,11 @@ def insert_ds_domain(db):
         domain_id = domains_col.insert_one(domain_data).inserted_id
 
         block_titles = [
-            "Chapter 1 資料結構簡介",
-            "Chapter 2 陣列",
-            "Chapter 3 鏈結串列",
-            "Chapter 4 佇列與堆疊",
-            "Chapter 5 樹狀結構"
+            "資料結構簡介",
+            "陣列",
+            "鏈結串列",
+            "佇列與堆疊",
+            "樹狀結構"
         ]
         block_docs = [{"domain_id": domain_id, "title": t, "subtopics": []} for t in block_titles]
         block_ids = blocks_col.insert_many(block_docs).inserted_ids
@@ -253,11 +253,11 @@ def insert_cn_domain(db):
         domain_id = domains_col.insert_one(domain_data).inserted_id
 
         block_titles = [
-            "Chapter 1 概論",
-            "Chapter 2 訊號調變與編碼",
-            "Chapter 3 區域網路",
-            "Chapter 4 區域網路之元件及連線",
-            "Chapter 5 網際網路應用"
+            "概論",
+            "訊號調變與編碼",
+            "區域網路",
+            "區域網路之元件及連線",
+            "網際網路應用"
         ]
         block_docs = [{"domain_id": domain_id, "title": t, "subtopics": []} for t in block_titles]
         block_ids = blocks_col.insert_many(block_docs).inserted_ids
@@ -303,28 +303,28 @@ def insert_db_domain(db):
         domain_id = domains_col.insert_one(domain_data).inserted_id
 
         block_titles = [
-            "Chapter 1 資料庫概念",
-            "Chapter 2 資料庫設計",
-            "Chapter 3 SQL Server 使用",
-            "Chapter 4 建立資料表"
+            "資料庫概念",
+            "資料庫設計",
+            "SQL Server 使用",
+            "建立資料表"
         ]
         block_docs = [{"domain_id": domain_id, "title": t, "subtopics": []} for t in block_titles]
         block_ids = blocks_col.insert_many(block_docs).inserted_ids
         domains_col.update_one({"_id": domain_id}, {"$set": {"blocks": block_ids}})
 
         micro_map = [
-            (0, "1-1 資料庫由來"),
-            (0, "1-2 資料庫管理系統"),
-            (0, "1-3 資料模型"),
-            (0, "1-4 三層式架構"),
-            (1, "2-1 設計流程"),
-            (1, "2-2 個體關係模型"),
-            (1, "2-3 主鍵與外部鍵"),
-            (1, "2-4 正規化"),
-            (2, "3-1 SQL 語言"),
-            (2, "3-2 SSMS 操作"),
-            (3, "4-1 資料型別"),
-            (3, "4-2 使用 SQL 敘述新增資料表")
+            (0, "資料庫由來"),
+            (0, "資料庫管理系統"),
+            (0, "資料模型"),
+            (0, "三層式架構"),
+            (1, "設計流程"),
+            (1, "個體關係模型"),
+            (1, "主鍵與外部鍵"),
+            (1, "正規化"),
+            (2, "SQL 語言"),
+            (2, "SSMS 操作"),
+            (3, "資料型別"),
+            (3, "使用 SQL 敘述新增資料表")
         ]
         micro_ids = micro_col.insert_many(
             [{"block_id": block_ids[idx], "name": name, "dependencies": []} for idx, name in micro_map]
@@ -354,32 +354,32 @@ def insert_ai_domain(db):
         domain_id = domains_col.insert_one(domain_data).inserted_id
 
         block_titles = [
-            "Chapter 1 使用基礎模型建構 AI 應用導論",
-            "Chapter 2 理解基礎模型",
-            "Chapter 3 評估方法",
-            "Chapter 4 評估 AI 系統",
-            "Chapter 5 提示工程",
-            "Chapter 6 RAG 與代理",
-            "Chapter 7 微調",
-            "Chapter 8 數據集工程"
+            "使用基礎模型建構 AI 應用導論",
+            "理解基礎模型",
+            "評估方法",
+            "評估 AI 系統",
+            "提示工程",
+            "RAG 與代理",
+            "微調",
+            "數據集工程"
         ]
         block_docs = [{"domain_id": domain_id, "title": t, "subtopics": []} for t in block_titles]
         block_ids = blocks_col.insert_many(block_docs).inserted_ids
         domains_col.update_one({"_id": domain_id}, {"$set": {"blocks": block_ids}})
 
         micro_map = [
-            (0, "1-1 AI 工程崛起"),
-            (0, "1-2 基礎模型使用案例"),
-            (0, "1-3 AI 應用規劃"),
-            (1, "2-1 訓練數據與建模"),
-            (1, "2-2 後訓練與取樣"),
-            (2, "3-1 語言建模指標與精確評估"),
-            (3, "4-1 模型選擇與設計評估管道"),
-            (4, "5-1 提示工程最佳實例"),
-            (5, "6-1 RAG 與代理"),
-            (5, "6-2 記憶管理"),
-            (6, "7-1 微調概述與技術"),
-            (7, "8-1 數據調理與增強")
+            (0, "AI 工程崛起"),
+            (0, "基礎模型使用案例"),
+            (0, "AI 應用規劃"),
+            (1, "訓練數據與建模"),
+            (1, "後訓練與取樣"),
+            (2, "語言建模指標與精確評估"),
+            (3, "模型選擇與設計評估管道"),
+            (4, "提示工程最佳實例"),
+            (5, "RAG 與代理"),
+            (5, "記憶管理"),
+            (6, "微調概述與技術"),
+            (7, "數據調理與增強")
         ]
         micro_ids = micro_col.insert_many(
             [{"block_id": block_ids[idx], "name": name, "dependencies": []} for idx, name in micro_map]
@@ -409,29 +409,29 @@ def insert_sec_domain(db):
         domain_id = domains_col.insert_one(domain_data).inserted_id
 
         block_titles = [
-            "Chapter 1 資訊安全認知與風險識別",
-            "Chapter 2 信任與安全架構",
-            "Chapter 3 數位邊界與防禦部署",
-            "Chapter 4 資訊安全管理與未來挑戰"
+            "資訊安全認知與風險識別",
+            "信任與安全架構",
+            "數位邊界與防禦部署",
+            "資訊安全管理與未來挑戰"
         ]
         block_docs = [{"domain_id": domain_id, "title": t, "subtopics": []} for t in block_titles]
         block_ids = blocks_col.insert_many(block_docs).inserted_ids
         domains_col.update_one({"_id": domain_id}, {"$set": {"blocks": block_ids}})
 
         micro_map = [
-            (0, "1-1 資訊安全概論"),
-            (0, "1-2 資訊法律與事件處理"),
-            (0, "1-3 資訊安全威脅"),
-            (1, "2-1 認證、授權與存取控制"),
-            (1, "2-2 資訊安全架構與設計"),
-            (1, "2-3 基礎密碼學"),
-            (1, "2-4 資訊系統與網路模型"),
-            (2, "3-1 防火牆與使用政策"),
-            (2, "3-2 入侵偵測與防禦系統"),
-            (2, "3-3 惡意程式與防毒"),
-            (2, "3-4 多層次防禦"),
-            (3, "4-1 資訊安全營運與管理"),
-            (3, "4-2 開發維運安全")
+            (0, "資訊安全概論"),
+            (0, "資訊法律與事件處理"),
+            (0, "資訊安全威脅"),
+            (1, "認證、授權與存取控制"),
+            (1, "資訊安全架構與設計"),
+            (1, "基礎密碼學"),
+            (1, "資訊系統與網路模型"),
+            (2, "防火牆與使用政策"),
+            (2, "入侵偵測與防禦系統"),
+            (2, "惡意程式與防毒"),
+            (2, "多層次防禦"),
+            (3, "資訊安全營運與管理"),
+            (3, "開發維運安全")
         ]
         micro_ids = micro_col.insert_many(
             [{"block_id": block_ids[idx], "name": name, "dependencies": []} for idx, name in micro_map]
@@ -461,32 +461,32 @@ def insert_cloud_domain(db):
         domain_id = domains_col.insert_one(domain_data).inserted_id
 
         block_titles = [
-            "Chapter 1 虛擬化技術",
-            "Chapter 2 Qemu-KVM",
-            "Chapter 3 Libvirt",
-            "Chapter 4 Virt-Manager",
-            "Chapter 5 網路虛擬化",
-            "Chapter 6 傳統存儲技術與 RAID"
+            "虛擬化技術",
+            "Qemu-KVM",
+            "Libvirt",
+            "Virt-Manager",
+            "網路虛擬化",
+            "傳統存儲技術與 RAID"
         ]
         block_docs = [{"domain_id": domain_id, "title": t, "subtopics": []} for t in block_titles]
         block_ids = blocks_col.insert_many(block_docs).inserted_ids
         domains_col.update_one({"_id": domain_id}, {"$set": {"blocks": block_ids}})
 
         micro_map = [
-            (0, "1-1 CPU、伺服器、存儲、網路虛擬化"),
-            (0, "1-2 Xen、KVM、RHEV 簡介"),
-            (0, "1-3 VMware / VirtualBox / Hyper-V"),
-            (1, "2-1 KVM 原理與架構"),
-            (1, "2-2 Qemu 架構與運行模式"),
-            (1, "2-3 Qemu 工具介紹"),
-            (2, "3-1 Libvirt 架構與 API"),
-            (2, "3-2 XML 配置文件"),
-            (3, "4-1 安裝與使用介紹"),
-            (3, "4-2 WebVirtMgr 管理平臺"),
-            (4, "5-1 軟件 Overlay SDN"),
-            (4, "5-2 硬件 Underlay SDN"),
-            (5, "6-1 RAID 技術與硬盤接口"),
-            (5, "6-2 邏輯卷管理")
+            (0, "CPU、伺服器、存儲、網路虛擬化"),
+            (0, "Xen、KVM、RHEV 簡介"),
+            (0, "VMware / VirtualBox / Hyper-V"),
+            (1, "KVM 原理與架構"),
+            (1, "Qemu 架構與運行模式"),
+            (1, "Qemu 工具介紹"),
+            (2, "Libvirt 架構與 API"),
+            (2, "XML 配置文件"),
+            (3, "安裝與使用介紹"),
+            (3, "WebVirtMgr 管理平臺"),
+            (4, "軟件 Overlay SDN"),
+            (4, "硬件 Underlay SDN"),
+            (5, "RAID 技術與硬盤接口"),
+            (5, "邏輯卷管理")
         ]
         micro_ids = micro_col.insert_many(
             [{"block_id": block_ids[idx], "name": name, "dependencies": []} for idx, name in micro_map]
@@ -516,28 +516,28 @@ def insert_mis_domain(db):
         domain_id = domains_col.insert_one(domain_data).inserted_id
 
         block_titles = [
-            "Chapter 1 組織、管理與連網企業",
-            "Chapter 2 資訊科技基礎建設",
-            "Chapter 3 數位時代的關鍵系統應用",
-            "Chapter 4 建立與維護系統"
+            "組織、管理與連網企業",
+            "資訊科技基礎建設",
+            "數位時代的關鍵系統應用",
+            "建立與維護系統"
         ]
         block_docs = [{"domain_id": domain_id, "title": t, "subtopics": []} for t in block_titles]
         block_ids = blocks_col.insert_many(block_docs).inserted_ids
         domains_col.update_one({"_id": domain_id}, {"$set": {"blocks": block_ids}})
 
         micro_map = [
-            (0, "1-1 現今全球企業的資訊系統"),
-            (0, "1-2 全球電子化企業與協同合作"),
-            (0, "1-3 資訊系統、組織與策略"),
-            (1, "2-1 資訊科技基礎建設與新興科技"),
-            (1, "2-2 資料庫與資訊管理"),
-            (1, "2-3 電傳通訊、網際網路與無線科技"),
-            (1, "2-4 資訊系統安全"),
-            (2, "3-1 企業系統應用"),
-            (2, "3-2 電子商務與數位市場"),
-            (2, "3-3 知識管理與 AI"),
-            (3, "4-1 建立資訊系統"),
-            (3, "4-2 管理專案與全球系統")
+            (0, "現今全球企業的資訊系統"),
+            (0, "全球電子化企業與協同合作"),
+            (0, "資訊系統、組織與策略"),
+            (1, "資訊科技基礎建設與新興科技"),
+            (1, "資料庫與資訊管理"),
+            (1, "電傳通訊、網際網路與無線科技"),
+            (1, "資訊系統安全"),
+            (2, "企業系統應用"),
+            (2, "電子商務與數位市場"),
+            (2, "知識管理與 AI"),
+            (3, "建立資訊系統"),
+            (3, "管理專案與全球系統")
         ]
         micro_ids = micro_col.insert_many(
             [{"block_id": block_ids[idx], "name": name, "dependencies": []} for idx, name in micro_map]
@@ -567,32 +567,32 @@ def insert_se_domain(db):
         domain_id = domains_col.insert_one(domain_data).inserted_id
 
         block_titles = [
-            "Chapter 1 軟體工程簡介",
-            "Chapter 2 軟體系統需求工程",
-            "Chapter 3 系統規格到架構設計",
-            "Chapter 4 物件導向軟體工程",
-            "Chapter 5 系統測試與部署安裝",
-            "Chapter 6 軟體系統管理與維護",
-            "Chapter 7 軟體系統品質管理",
-            "Chapter 8 設計模式與軟體重構",
-            "Chapter 9 資料庫系統開發",
-            "Chapter 10 跨平台可移植性開發"
+            "軟體工程簡介",
+            "軟體系統需求工程",
+            "系統規格到架構設計",
+            "物件導向軟體工程",
+            "系統測試與部署安裝",
+            "軟體系統管理與維護",
+            "軟體系統品質管理",
+            "設計模式與軟體重構",
+            "資料庫系統開發",
+            "跨平台可移植性開發"
         ]
         block_docs = [{"domain_id": domain_id, "title": t, "subtopics": []} for t in block_titles]
         block_ids = blocks_col.insert_many(block_docs).inserted_ids
         domains_col.update_one({"_id": domain_id}, {"$set": {"blocks": block_ids}})
 
         micro_map = [
-            (0, "1-1 軟體工程定義與流程"),
-            (0, "1-2 軟體系統與開發程序"),
-            (1, "2-1 需求工程與系統模型"),
-            (2, "3-1 軟體系統架構設計"),
-            (3, "4-1 物件導向設計與實務"),
-            (4, "5-1 系統測試流程"),
-            (5, "6-1 軟體系統管理"),
-            (5, "6-2 軟體維護"),
-            (6, "7-1 品質管理原則"),
-            (7, "8-1 設計模式應用"),
+            (0, "軟體工程定義與流程"),
+            (0, "軟體系統與開發程序"),
+            (1, "需求工程與系統模型"),
+            (2, "軟體系統架構設計"),
+            (3, "物件導向設計與實務"),
+            (4, "系統測試流程"),
+            (5, "軟體系統管理"),
+            (5, "軟體維護"),
+            (6, "品質管理原則"),
+            (7, "設計模式應用"),
             (7, "8-2 軟體重構原則"),
             (8, "9-1 資料庫系統開發流程"),
             (9, "10-1 跨平台開發概念")

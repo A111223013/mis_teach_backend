@@ -10,7 +10,7 @@ from datetime import datetime, timedelta
 from collections import defaultdict
 from flask import Blueprint, request, jsonify
 from sqlalchemy import text
-from accessories import sqldb, mongo, init_gemini
+from accessories import sqldb, mongo, init_gemini, redis_client
 from bson import ObjectId
 from src.api import get_user_info
 from src.quiz_generator import generate_quiz_by_ai
@@ -91,6 +91,94 @@ def get_student_quiz_records(user_email: str) -> List[Dict]:
         logger.error(f"獲取學生答題紀錄失敗: {str(e)}")
         return []
 
+def calculate_difficulty_statistics(quiz_records: List[Dict]) -> Dict[str, Any]:
+    """計算各難度的統計數據"""
+    if not quiz_records:
+        return {
+            'easy': {'total': 0, 'correct': 0, 'accuracy': 0.0, 'mastery': 0.0},
+            'medium': {'total': 0, 'correct': 0, 'accuracy': 0.0, 'mastery': 0.0},
+            'hard': {'total': 0, 'correct': 0, 'accuracy': 0.0, 'mastery': 0.0}
+        }
+    
+    difficulty_stats = {
+        'easy': {'total': 0, 'correct': 0, 'records': []},
+        'medium': {'total': 0, 'correct': 0, 'records': []},
+        'hard': {'total': 0, 'correct': 0, 'records': []}
+    }
+    
+    # 統計各難度的答題情況
+    for record in quiz_records:
+        difficulty = record.get('difficulty', '中等')
+        if difficulty == '簡單':
+            key = 'easy'
+        elif difficulty == '困難':
+            key = 'hard'
+        else:
+            key = 'medium'
+        
+        difficulty_stats[key]['total'] += 1
+        difficulty_stats[key]['records'].append(record)
+        if record.get('is_correct', False):
+            difficulty_stats[key]['correct'] += 1
+    
+    # 計算準確率和掌握度
+    result = {}
+    for key, stats in difficulty_stats.items():
+        total = stats['total']
+        correct = stats['correct']
+        accuracy = correct / total if total > 0 else 0.0
+        
+        # 計算該難度的掌握度
+        mastery = calculate_mixed_mastery(stats['records']) if stats['records'] else 0.0
+        
+        result[key] = {
+            'total': total,
+            'correct': correct,
+            'accuracy': round(accuracy, 3),
+            'mastery': round(mastery, 3)
+        }
+    
+    return result
+
+def calculate_historical_metrics(quiz_records: List[Dict], trend_days: int) -> Dict[str, Any]:
+    """計算歷史數據用於趨勢分析"""
+    if not quiz_records:
+        return {
+            'learning_velocity': 0,
+            'retention_rate': 0,
+            'avg_time_per_concept': 0,
+            'focus_score': 0
+        }
+    
+    # 計算歷史期間（前一個週期）
+    from datetime import datetime, timedelta
+    current_time = datetime.now()
+    historical_start = current_time - timedelta(days=trend_days*2)
+    historical_end = current_time - timedelta(days=trend_days)
+    
+    # 篩選歷史期間的記錄
+    historical_records = []
+    for record in quiz_records:
+        try:
+            record_time = datetime.fromisoformat(record['attempt_time'].replace('Z', '+00:00'))
+            if historical_start <= record_time < historical_end:
+                historical_records.append(record)
+        except:
+            continue
+    
+    # 如果沒有歷史數據，返回當前數據的80%作為基準
+    if not historical_records:
+        current_metrics = calculate_learning_metrics(quiz_records)
+        return {
+            'learning_velocity': current_metrics['learning_velocity'] * 0.8,
+            'retention_rate': current_metrics['retention_rate'] * 0.8,
+            'avg_time_per_concept': current_metrics['avg_time_per_concept'] * 1.2,  # 時間越少越好
+            'focus_score': current_metrics['focus_score'] * 0.8
+        }
+    
+    # 計算歷史指標
+    return calculate_learning_metrics(historical_records)
+
 def calculate_learning_metrics(quiz_records: List[Dict]) -> Dict[str, Any]:
     """計算學習效率指標"""
     if not quiz_records:
@@ -119,6 +207,16 @@ def calculate_learning_metrics(quiz_records: List[Dict]) -> Dict[str, Any]:
     difficulty_aware_mastery = overall_mastery
     forgetting_aware_mastery = overall_mastery
     
+    # 計算額外的統計數據
+    total_questions = len(quiz_records)
+    correct_questions = sum(1 for r in quiz_records if r.get('is_correct', False))
+    wrong_questions = total_questions - correct_questions
+    accuracy_rate = correct_questions / total_questions if total_questions > 0 else 0
+    error_rate = wrong_questions / total_questions if total_questions > 0 else 0
+    
+    # 計算各難度的統計
+    difficulty_stats = calculate_difficulty_statistics(quiz_records)
+    
     return {
         'learning_velocity': round(learning_velocity, 1),
         'retention_rate': round(retention_rate, 3),  # 保持0-1範圍，前端會轉換為百分比
@@ -126,7 +224,14 @@ def calculate_learning_metrics(quiz_records: List[Dict]) -> Dict[str, Any]:
         'focus_score': round(focus_score, 1),
         'overall_mastery': round(overall_mastery, 3),
         'difficulty_aware_mastery': round(difficulty_aware_mastery, 3),
-        'forgetting_aware_mastery': round(forgetting_aware_mastery, 3)
+        'forgetting_aware_mastery': round(forgetting_aware_mastery, 3),
+        # 新增統計數據
+        'total_questions': total_questions,
+        'correct_questions': correct_questions,
+        'wrong_questions': wrong_questions,
+        'accuracy_rate': round(accuracy_rate, 3),
+        'error_rate': round(error_rate, 3),
+        'difficulty_stats': difficulty_stats
     }
 
 def calculate_concept_mastery(quiz_records: List[Dict], concept_id: str) -> Dict[str, Any]:
@@ -383,6 +488,13 @@ def ai_diagnosis():
         if not user_email:
             return jsonify({'error': '無法獲取用戶信息'}), 401
         
+        # 檢查Redis快取
+        cache_key = f"ai_diagnosis:{user_email}:{concept_id}"
+        cached_data = redis_client.get(cache_key)
+        if cached_data:
+            logger.info(f"使用AI診斷快取: {cache_key}")
+            return json.loads(cached_data)
+        
         # 獲取該概念的答題記錄
         quiz_records = get_student_quiz_records(user_email)
         
@@ -466,6 +578,10 @@ def ai_diagnosis():
             'review_urgency': forgetting_aware_data['review_urgency'],
             'forgetting_curve_data': forgetting_aware_data.get('forgetting_curve_data', [])
         }
+        
+        # 快取診斷結果到Redis（30分鐘）
+        redis_client.setex(cache_key, 30 * 60, json.dumps(diagnosis_result, ensure_ascii=False))
+        logger.info(f"AI診斷已快取: {cache_key}")
         
         return jsonify(diagnosis_result)
         
@@ -575,10 +691,11 @@ def init_data():
             simplified_domain_name = domain_name.split('（')[0]  # 取括號前的部分
             domain_records = [r for r in quiz_records if r.get('domain_name') == simplified_domain_name]
             micro_concept_stats = {}
-            
             for record in domain_records:
                 concept_id = record.get('micro_concept_id', '')
-                if concept_id and concept_id != 'None':
+                concept_name = record.get('micro_concept_name', '')
+                # 使用概念ID作為主要匹配方式
+                if concept_id and concept_id != 'None' and concept_id != '':
                     if concept_id not in micro_concept_stats:
                         micro_concept_stats[concept_id] = {'total': 0, 'correct': 0, 'wrong': 0}
                     micro_concept_stats[concept_id]['total'] += 1
@@ -587,9 +704,8 @@ def init_data():
                     else:
                         micro_concept_stats[concept_id]['wrong'] += 1
                 
-                # 也嘗試用概念名稱匹配
-                concept_name = record.get('micro_concept_name', '')
-                if concept_name and concept_name != 'None':
+                # 也嘗試用概念名稱匹配（作為備選）
+                elif concept_name and concept_name != 'None' and concept_name != '':
                     if concept_name not in micro_concept_stats:
                         micro_concept_stats[concept_name] = {'total': 0, 'correct': 0, 'wrong': 0}
                     micro_concept_stats[concept_name]['total'] += 1
@@ -597,7 +713,6 @@ def init_data():
                         micro_concept_stats[concept_name]['correct'] += 1
                     else:
                         micro_concept_stats[concept_name]['wrong'] += 1
-            
             
             # 構建小知識點數據
             concepts = []
@@ -610,8 +725,9 @@ def init_data():
                     continue
                 
                 # 獲取該微概念的答題統計
-                # 先嘗試用ID匹配，再用名稱匹配
-                concept_stats = micro_concept_stats.get(concept_id, micro_concept_stats.get(concept_name, {'total': 0, 'correct': 0, 'wrong': 0}))
+                # 優先使用概念名稱匹配（因為答題記錄中的concept_id實際上是概念名稱）
+                concept_stats = micro_concept_stats.get(concept_name, micro_concept_stats.get(concept_id, {'total': 0, 'correct': 0, 'wrong': 0}))
+                
                 
                 if concept_stats['total'] > 0:
                     concept_mastery = concept_stats['correct'] / concept_stats['total']
@@ -698,6 +814,9 @@ def init_data():
         longest_session = calculate_longest_session(quiz_records)
         study_intensity = calculate_study_intensity(quiz_records)
         
+        # 計算歷史數據用於趨勢分析
+        historical_metrics = calculate_historical_metrics(quiz_records, trend_days)
+        
         overview_data = {
             'total_mastery': learning_metrics['overall_mastery'],
             'learning_velocity': learning_metrics['learning_velocity'],
@@ -716,7 +835,12 @@ def init_data():
             'total_study_time': total_study_time,
             'avg_daily_time': avg_daily_time,
             'longest_session': longest_session,
-            'study_intensity': study_intensity
+            'study_intensity': study_intensity,
+            # 歷史數據用於趨勢計算
+            'previous_learning_velocity': historical_metrics['learning_velocity'],
+            'previous_retention_rate': historical_metrics['retention_rate'],
+            'previous_avg_time_per_concept': historical_metrics['avg_time_per_concept'],
+            'previous_focus_score': historical_metrics['focus_score']
         }
         
         # 生成趨勢數據（使用傳入的天數）
@@ -753,7 +877,7 @@ def init_data():
         radar_data = generate_radar_data(domains, quiz_records)
         
         # 生成AI教練分析
-        ai_coach_analysis = generate_ai_coach_analysis(overview_data, domains, quiz_records)
+        ai_coach_analysis = generate_ai_coach_analysis(overview_data, domains, quiz_records, user_email)
         
         # 生成學習趨勢數據（結合遺忘曲線）
         learning_trends = generate_learning_trends_with_forgetting(domains, quiz_records, trend_days)
@@ -1437,9 +1561,20 @@ def get_forgetting_analysis():
             'error': f'獲取遺忘分析數據失敗: {str(e)}'
         }), 500
 
-def generate_ai_coach_analysis(overview_data: Dict, domains: List[Dict], quiz_records: List[Dict]) -> Dict[str, Any]:
-    """生成AI教練分析"""
+def generate_ai_coach_analysis(overview_data: Dict, domains: List[Dict], quiz_records: List[Dict], user_email: str = None) -> Dict[str, Any]:
+    """生成AI教練分析（使用Redis快取）"""
     try:
+        # 生成快取鍵
+        total_attempts = overview_data.get('total_attempts', 0)
+        total_mastery = overview_data.get('total_mastery', 0)
+        cache_key = f"ai_coach_analysis:{user_email or 'anonymous'}:{total_attempts}:{total_mastery:.2f}"
+        
+        # 檢查Redis快取
+        cached_data = redis_client.get(cache_key)
+        if cached_data:
+            logger.info(f"使用AI教練分析快取: {cache_key}")
+            return json.loads(cached_data)
+        
         # 初始化Gemini模型
         model = init_gemini('gemini-2.5-flash')
         
@@ -1497,13 +1632,19 @@ def generate_ai_coach_analysis(overview_data: Dict, domains: List[Dict], quiz_re
         response = model.generate_content(prompt)
         ai_analysis = response.text.strip()
         
-        return {
+        result = {
             'analysis': ai_analysis,
             'last_updated': datetime.now().strftime('%m/%d %H:%M'),
             'weak_domains': [d['name'] for d in weak_domains[:3]],
             'strong_domains': [d['name'] for d in strong_domains[:3]],
             'forgetting_reminders': forgetting_analysis[:3]
         }
+        
+        # 快取結果到Redis（2小時）
+        redis_client.setex(cache_key, 2 * 60 * 60, json.dumps(result, ensure_ascii=False))
+        logger.info(f"AI教練分析已快取: {cache_key}")
+        
+        return result
         
     except Exception as e:
         logger.error(f"生成AI教練分析失敗: {e}")
@@ -1623,7 +1764,7 @@ def calculate_enhanced_retention_rate(quiz_records: List[Dict]) -> float:
     return overall_mastery
 
 def calculate_mixed_mastery(quiz_records: List[Dict], concept_id: str = None) -> float:
-    """計算混合掌握度 - 基於PFA + Forgetting-aware BKT + Difficulty-aware KT"""
+    """計算混合掌握度 - 基於PFA + Forgetting-aware BKT + Difficulty-aware KT，添加難度上限限制"""
     if not quiz_records:
         return 0.0
     
@@ -1642,13 +1783,13 @@ def calculate_mixed_mastery(quiz_records: List[Dict], concept_id: str = None) ->
     # 按時間排序
     concept_records.sort(key=lambda x: x['attempt_time'])
     
-    # 參數設定
-    theta = -1.0  # 基礎能力參數
-    w_s = 0.2    # 成功權重
-    w_f = 0.3    # 失敗權重
-    w_d = 0.5    # 難度權重
-    w_t = 0.5    # 時間衰減權重
-    lambda_decay = 0.1  # 遺忘率
+    # 參數設定（調整為更合理的值）
+    theta = 0.0   # 基礎能力參數（調整為0）
+    w_s = 0.4    # 成功權重（增加）
+    w_f = 0.2    # 失敗權重（減少）
+    w_d = 0.2    # 難度權重（減少）
+    w_t = 0.2    # 時間衰減權重（減少）
+    lambda_decay = 0.05  # 遺忘率（減少）
     
     # 計算最近的成功和失敗次數（加權）
     successes_recent = 0
@@ -1686,12 +1827,33 @@ def calculate_mixed_mastery(quiz_records: List[Dict], concept_id: str = None) ->
     avg_difficulty = difficulty_sum / total_attempts if total_attempts > 0 else 2.0
     avg_time_decay = time_decay_sum / total_attempts if total_attempts > 0 else 1.0
     
-    # 混合掌握度公式
+    # 混合掌握度公式（保持原本的計算方式）
     mastery_raw = theta + w_s * successes_recent - w_f * failures_recent - w_d * avg_difficulty + w_t * avg_time_decay
-
     
     # Sigmoid函數壓縮到0-1
     mastery = 1 / (1 + math.exp(-mastery_raw))
+    
+    # 添加難度上限限制
+    difficulty_limits = {
+        '簡單': 0.6,  # 簡單題最多60%
+        '中等': 0.8,  # 中等題最多80%
+        '困難': 1.0   # 困難題最多100%
+    }
+    
+    # 根據答題記錄中主要難度設定上限
+    difficulty_counts = {'簡單': 0, '中等': 0, '困難': 0}
+    for record in concept_records:
+        difficulty = record.get('difficulty', '中等')
+        if difficulty in difficulty_counts:
+            difficulty_counts[difficulty] += 1
+    
+    # 找出主要難度（答題次數最多的）
+    main_difficulty = max(difficulty_counts, key=difficulty_counts.get)
+    max_mastery = difficulty_limits.get(main_difficulty, 1.0)
+    
+    # 應用上限限制
+    mastery = min(mastery, max_mastery)
+    
     return round(mastery, 3)
 
 def calculate_enhanced_avg_time_per_concept(quiz_records: List[Dict]) -> float:
@@ -2149,13 +2311,13 @@ def generate_improvement_items(domains: List[Dict], quiz_records: List[Dict]) ->
         if len(records) < 3:
             continue
             
-        # 按時間排序
-        records.sort(key=lambda x: x['attempt_time'])
+        # 按時間排序（最新的在前）
+        records.sort(key=lambda x: x['attempt_time'], reverse=True)
         
         # 計算最近和之前的正確率
         mid_point = len(records) // 2
-        recent_records = records[:mid_point]  # 前半部分
-        older_records = records[mid_point:]   # 後半部分
+        recent_records = records[:mid_point]  # 最近的一半
+        older_records = records[mid_point:]   # 較早的一半
         
         if len(older_records) == 0:
             continue
@@ -2165,14 +2327,20 @@ def generate_improvement_items(domains: List[Dict], quiz_records: List[Dict]) ->
         
         improvement = (recent_accuracy - older_accuracy) * 100
         
+        
         # 降低進步要求，只要有進步就顯示
         if improvement > 0:  # 只要有進步就顯示
+            # 計算該領域的掌握度
+            domain_mastery = recent_accuracy  # 使用最近準確率作為掌握度
+            
             improvement_items.append({
                 'name': domain_name,
                 'improvement': round(improvement, 1),
                 'priority': 'high' if improvement > 30 else 'medium' if improvement > 10 else 'low',
                 'current_accuracy': round(recent_accuracy * 100, 1),
-                'previous_accuracy': round(older_accuracy * 100, 1)
+                'previous_accuracy': round(older_accuracy * 100, 1),
+                'mastery': round(domain_mastery, 3),  # 添加掌握度字段
+                'questions': len(records)  # 添加題目數量字段
             })
     
     # 按進步幅度排序
@@ -2557,3 +2725,5 @@ def generate_radar_data(domains: List[Dict], quiz_records: List[Dict]) -> Dict:
         'labels': labels,
         'data': mastery_data
     }
+
+# AI教練分析現在使用Redis快取服務

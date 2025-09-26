@@ -401,7 +401,7 @@ def search_knowledge(query: str, top_k: int = 5) -> List[Dict[str, Any]]:
 
 def translate_to_english(text: str) -> str:
     # 使用Gemini進行翻譯
-    model = init_gemini(model_name = 'gemini-1.5-flash')
+    model = init_gemini(model_name = 'gemini-2.5-flash')
     prompt = f"""請將以下中文問題翻譯成英文，保持專業術語的準確性：
 
 中文問題：{text}
@@ -781,7 +781,7 @@ def init_vector_database():
 def call_gemini_api(prompt: str) -> str:
     """調用Gemini API"""
     try:
-        model = init_gemini(model_name = 'gemini-1.5-flash')
+        model = init_gemini(model_name = 'gemini-2.5-flash')
         if not model:
             return "抱歉，AI服務暫時不可用，請稍後再試。"
         

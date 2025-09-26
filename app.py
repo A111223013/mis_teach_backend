@@ -24,7 +24,7 @@ from src.ai_teacher import ai_teacher_bp
 from src.user_guide_api import user_guide_bp
 from src.web_ai_assistant import web_ai_bp
 from src.linebot import linebot_bp  # 新增 LINE Bot Blueprint
-from src.learning_analytics import analytics_bp  # 從統一模組導入學習分析 API Blueprint
+from src.learning_analytics import analytics_bp
 from tool.insert_mongodb import initialize_mis_teach_db # 引入教材資料庫
 from tool.init_neo4j_knowledge_graph import init_neo4j_knowledge_graph  # 引入Neo4j知識圖譜初始化
 from accessories import init_neo4j  # 引入Neo4j驅動初始化
