@@ -344,11 +344,6 @@ def submit_quiz():
     frontend_questions = data.get('questions', [])  # 新增：提取前端發送的題目數據
     
     # 調試日誌
-    print(f"🔍 Debug: 接收到的數據 - template_id: {template_id}")
-    print(f"🔍 Debug: 接收到的數據 - answers keys: {list(answers.keys())}")
-    print(f"🔍 Debug: 接收到的數據 - time_taken: {time_taken}")
-    print(f"🔍 Debug: 接收到的數據 - question_answer_times: {question_answer_times}")
-    print(f"🔍 Debug: 接收到的數據 - frontend_questions length: {len(frontend_questions) if frontend_questions else 0}")
     
     if not template_id:
         return jsonify({
@@ -392,10 +387,8 @@ def submit_quiz():
         
         # 優先使用前端發送的題目數據，如果沒有則從MongoDB獲取
         if frontend_questions and len(frontend_questions) > 0:
-            print("✅ 使用前端發送的題目數據")
             questions = frontend_questions
         else:
-            print("🔄 從MongoDB獲取題目數據")
             # 從MongoDB exam集合獲取題目詳情
             questions = []
             for i, question_id in enumerate(question_ids):
@@ -534,7 +527,6 @@ def submit_quiz():
         # 成功獲取題目詳情
     
     # 階段2: 計算分數 - 分類題目
-    print("🔄 階段2: 計算分數 - 分類題目")
     
     # 更新進度狀態為第2階段
     update_progress_status(progress_id, False, 2, "正在分類題目...")
@@ -718,7 +710,6 @@ def submit_quiz():
                 answer_time_seconds = question_answer_times.get(str(i), 0)
                 
                 # 調試日誌
-                print(f"🔍 Debug: 題目 {i} - answer_time_seconds: {answer_time_seconds}")
                 
                 # 構建題目資料
                 q_data = {
@@ -1598,13 +1589,10 @@ def create_quiz():
         
         # 轉換為標準化的題目格式
         questions = []
-        print(f"🔍 調試：開始處理 {len(selected_exams)} 個題目")
         for i, exam in enumerate(selected_exams):
             # 正確讀取題目類型 - type用來判斷單一/題組，answer_type用來判斷單選/多選
             exam_type = exam.get('type', 'single')  # type: single/group
             answer_type = exam.get('answer_type', 'single-choice')  # answer_type: single-choice/multiple-choice等
-            print(f"🔍 調試：題目 {i+1} - type: {exam.get('type')}, answer_type: {exam.get('answer_type')}")
-            print(f"🔍 調試：題目 {i+1} - key-points: {exam.get('key-points')}, question_text: {exam.get('question_text', '')[:100]}...")
             if exam_type == 'group':  # 使用type欄位判斷是否為題組
                 # 題組：保留群組題外層資訊，展開子題但一併回傳
                 group_question_text = exam.get('group_question_text') or exam.get('question_text', '')
@@ -1686,7 +1674,6 @@ def create_quiz():
                     else:
                         question_text = f"題目 {i+1} (無題目文字)"
                 
-                print(f"🔍 調試：單題 {i+1} - 使用question_type: {question_type}")
                 
                 question = {
                     'id': i + 1,

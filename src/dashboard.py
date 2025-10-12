@@ -51,7 +51,6 @@ def init_calendar_tables():
                 )
             '''))
             conn.commit()        
-        print("行事曆資料表初始化完成")
     except Exception as e:
         print(f"初始化行事曆資料表失敗: {e}")
 
@@ -382,7 +381,6 @@ def setup_event_notification(student_email: str, event_id: int, title: str, cont
     
     # 使用 Redis List 儲存通知
     redis_client.lpush('event_notification', json.dumps(notification_data))
-    print(f"✅ 已設置事件 {event_id} 的通知，將在 {notify_time_str} 發送")
 
 def add_notification_to_redis(student_email: str, event_id: int, title: str, content: str, event_date: str, notify_time: str):
     """將通知加入 Redis 列表"""
@@ -414,7 +412,6 @@ def remove_notification_from_redis(event_id: int):
             if data.get('event_id') == event_id:
                 # 移除這個通知
                 redis_client.lrem('event_notification', 1, notification)
-                print(f"已從 Redis List 移除事件 {event_id} 的通知")
                 break
         except json.JSONDecodeError:
             continue

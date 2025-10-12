@@ -283,19 +283,27 @@ def get_platform_specific_system_prompt(platform: str = "web") -> str:
 2. 使用完整時間計算：完整時間 + 5分鐘 = "2025-10-12 21:59"
 3. 調用 linebot_calendar_update_tool(line_id, 7, "123", "456", "2025-10-12 21:59")
 
+當用戶說「學習分析」時：
+1. 調用 linebot_learning_analysis_tool(完整的 input_text)
+2. 不要只傳遞「學習分析」，要傳遞完整的 input_text
+
+範例：
+- 用戶：「學習分析」
+- 調用：linebot_learning_analysis_tool("用戶ID: line_U3fae4f436edf551db5f5c6773c98f8c7\n當前日期: 2025年10月12日\n當前時間: 22:23\n完整時間: 2025-10-12 22:23\n\n學習分析")
+
 【你的工具】
-1️⃣ linebot_quiz_generator_tool - AI測驗生成（選擇題/知識問答題）
-2️⃣ linebot_knowledge_tool - 隨機知識點
-3️⃣ linebot_grade_tool - 答案批改和解釋
-4️⃣ linebot_tutor_tool - AI導師教學指導
-5️⃣ linebot_learning_analysis_tool - 學習分析（已實現）
-6️⃣ linebot_goal_setting_tool - 目標設定（已實現）
-7️⃣ linebot_news_exam_tool - 最新消息/考試資訊（開發中）
-8️⃣ linebot_calendar_view_tool - 查看行事曆（已實現）
-9️⃣ linebot_calendar_add_tool - 新增行事曆事件（已實現）
-🔟 linebot_calendar_update_tool - 修改行事曆事件（已實現）
-1️⃣1️⃣ linebot_calendar_delete_tool - 刪除行事曆事件（已實現）
-1️⃣2️⃣ memory_tool - 記憶管理
+1️⃣ linebot_quiz_generator_tool(requirements) - AI測驗生成
+2️⃣ linebot_knowledge_tool(query) - 隨機知識點
+3️⃣ linebot_grade_tool(answer, correct_answer, question) - 答案批改和解釋
+4️⃣ linebot_tutor_tool(query) - AI導師教學指導
+5️⃣ linebot_learning_analysis_tool(input_text) - 學習分析（傳遞完整 input_text）
+6️⃣ linebot_goal_setting_tool(input_text) - 目標設定（傳遞完整 input_text）
+7️⃣ linebot_news_exam_tool(query) - 最新消息/考試資訊
+8️⃣ linebot_calendar_view_tool(line_id) - 查看行事曆
+9️⃣ linebot_calendar_add_tool(line_id, title, content, event_date) - 新增行事曆事件
+🔟 linebot_calendar_update_tool(line_id, event_id, title, content, event_date) - 修改行事曆事件
+1️⃣1️⃣ linebot_calendar_delete_tool(line_id, event_id) - 刪除行事曆事件
+1️⃣2️⃣ memory_tool(action, user_id) - 記憶管理
 
 ---
 重要：記憶管理是核心功能！
@@ -490,22 +498,15 @@ def process_message(message: str, user_id: str = "default", platform: str = "web
         })
         
         # 調試：打印主代理人的完整回應
-        print(f"🔍 主代理人完整回應：{result}")
-        print(f"🔍 回應類型：{type(result)}")
-        print(f"🔍 回應鍵值：{list(result.keys()) if isinstance(result, dict) else 'Not a dict'}")
         
         # 格式化回應
         response = result.get("output", "抱歉，我無法理解您的請求。")
-        print(f"🔍 提取的回應內容：{response}")
-        print(f"🔍 回應內容長度：{len(response) if response else 0}")
         
         # 如果 output 為空，嘗試其他可能的字段
         if not response or response.strip() == "":
-            print("🔍 output 為空，嘗試其他字段...")
             
             # 嘗試從 intermediate_steps 中提取工具結果
             if "intermediate_steps" in result:
-                print(f"🔍 找到 intermediate_steps 字段")
                 intermediate_steps = result["intermediate_steps"]
                 if intermediate_steps and len(intermediate_steps) > 0:
                     # 獲取最後一個工具調用的結果
@@ -518,11 +519,9 @@ def process_message(message: str, user_id: str = "default", platform: str = "web
                             response = tool_result['content']
                         elif isinstance(tool_result, str):
                             response = tool_result
-                        print(f"🔍 從 intermediate_steps 提取的內容：{response[:100]}...")
             
             # 如果還是沒有，嘗試 messages 字段
             if (not response or response.strip() == "") and "messages" in result:
-                print(f"🔍 找到 messages 字段：{result['messages']}")
                 # 嘗試從 messages 中提取最後一條消息
                 if isinstance(result["messages"], list) and len(result["messages"]) > 0:
                     last_message = result["messages"][-1]
@@ -530,14 +529,12 @@ def process_message(message: str, user_id: str = "default", platform: str = "web
                         response = last_message.content
                     elif isinstance(last_message, dict) and 'content' in last_message:
                         response = last_message['content']
-                    print(f"🔍 從 messages 提取的內容：{response}")
         
         # 檢查回應是否為 JSON 格式，如果是則提取實際內容
         if isinstance(response, str) and response.strip().startswith('{') and response.strip().endswith('}'):
             try:
                 import json
                 response_data = json.loads(response)
-                print(f"🔍 解析 JSON 回應，鍵值: {list(response_data.keys())}")
                 
                 # 遞歸提取所有可能的 output 內容
                 def extract_output(data):
@@ -980,7 +977,6 @@ def chat():
         
         # 檢查是否為 LINE Bot 請求（不需要認證）
         if platform == 'linebot':
-            print(f"🤖 收到 LINE Bot 請求：用戶={user_id}, 平台={platform}")
             # 處理訊息
             result = process_message(message, user_id, platform)
         else:

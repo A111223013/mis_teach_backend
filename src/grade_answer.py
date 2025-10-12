@@ -153,30 +153,24 @@ class AnswerGrader:
             prompt = self._build_grading_prompt(user_answer, question_text, correct_answer, options, question_type)
             
             if model:
-                print(f"🔍 [DEBUG] 開始 AI 評分，模型類型: {type(model)}")
-                print(f"🔍 [DEBUG] 模型是否為新版: {hasattr(model, 'sdk_version')}")
                 
                 # 強制使用新版 Google GenAI SDK 方式處理圖片
                 def _is_data_image(s: str) -> bool:
                     try:
                         result = isinstance(s, str) and s.startswith('data:image/')
                         if result:
-                            print(f"🔍 [DEBUG] 檢測到圖片數據: {s[:50]}...")
-                        return result
+                            return result
                     except Exception:
                         return False
 
                 image_parts = []
                 text_parts = []
                 
-                print(f"🔍 [DEBUG] 用戶答案類型: {type(user_answer)}")
                 
                 # 收集所有圖片，強制使用新版 types.Part.from_bytes
                 if isinstance(user_answer, list):
-                    print(f"🔍 [DEBUG] 處理列表答案，項目數: {len(user_answer)}")
                     # 多圖片：收集所有 data:image/*
                     for i, ua in enumerate(user_answer):
-                        print(f"🔍 [DEBUG] 處理項目 {i}: {type(ua)} - {str(ua)[:30]}...")
                         if _is_data_image(ua):
                             try:
                                 # 強制使用新版 SDK
@@ -188,26 +182,20 @@ class AnswerGrader:
                                     from google import genai as google_genai
                                     from google.genai import types
                                 
-                                print(f"🔍 [DEBUG] 解析圖片 {i}...")
                                 header, b64 = ua.split(',', 1)
                                 mime = header.split(':', 1)[1].split(';', 1)[0]
-                                print(f"🔍 [DEBUG] 圖片 {i} MIME 類型: {mime}")
                                 
                                 image_data = base64.b64decode(b64)
-                                print(f"🔍 [DEBUG] 圖片 {i} 數據大小: {len(image_data)} bytes")
                                 
                                 image_part = types.Part.from_bytes(data=image_data, mime_type=mime)
                                 image_parts.append(image_part)
-                                print(f"✅ [DEBUG] 圖片 {i} 轉換成功")
                             except Exception as e:
-                                print(f"❌ [DEBUG] 圖片 {i} 處理失敗: {e}")
                                 import traceback
                                 traceback.print_exc()
                                 continue
                         else:
                             text_parts.append(str(ua))
                 elif _is_data_image(user_answer):
-                    print("🔍 [DEBUG] 處理單張圖片答案")
                     try:
                         # 強制使用新版 SDK
                         import base64
@@ -220,26 +208,20 @@ class AnswerGrader:
                         
                         header, b64 = user_answer.split(',', 1)
                         mime = header.split(':', 1)[1].split(';', 1)[0]
-                        print(f"🔍 [DEBUG] 單張圖片 MIME 類型: {mime}")
                         
                         image_data = base64.b64decode(b64)
-                        print(f"🔍 [DEBUG] 單張圖片數據大小: {len(image_data)} bytes")
                         
                         image_part = types.Part.from_bytes(data=image_data, mime_type=mime)
                         image_parts.append(image_part)
-                        print("✅ [DEBUG] 單張圖片轉換成功")
                     except Exception as e:
-                        print(f"❌ [DEBUG] 單張圖片解碼失敗: {e}")
                         import traceback
                         traceback.print_exc()
                 else:
-                    print("🔍 [DEBUG] 處理純文字答案")
                     text_parts.append(str(user_answer))
 
                 # 統一處理：優先使用圖片模式
                 if image_parts:
                     try:
-                        print(f"🔍 [DEBUG] 準備發送給 Gemini: {len(image_parts)} 張圖片")
                         
                         # 組合內容：先放提示詞，後放圖片
                         contents = [prompt] + image_parts
@@ -247,26 +229,20 @@ class AnswerGrader:
                         # 如果還有文字內容，也加入
                         if text_parts:
                             contents.append(f"額外文字內容: {' '.join(text_parts)}")
-                            print(f"🔍 [DEBUG] 同時包含文字內容: {len(text_parts)} 項")
                         
-                        print(f"🔍 [DEBUG] 最終內容列表長度: {len(contents)}")
                         for i, item in enumerate(contents):
                             if hasattr(item, '__class__') and 'Part' in str(type(item)):
-                                print(f"🔍 [DEBUG] 內容 {i}: 圖片 (Part 物件)")
+                                print(f"🔍 [DEBUG] 項目 {i}: {item.__class__.__name__} (圖片 Part 物件)")
                             else:
-                                print(f"🔍 [DEBUG] 內容 {i}: 文字 - {str(item)[:50]}...")
+                                print(f"🔍 [DEBUG] 項目 {i}: {item.__class__.__name__} - {str(item)[:50]}...")
                         
                         response = model.generate_content(contents)
-                        print(f"✅ [DEBUG] 新版 SDK 圖片分析完成（{len(image_parts)} 張圖片）")
                         
                     except Exception as e:
-                        print(f"❌ [DEBUG] 新版 SDK 圖片處理失敗: {e}")
                         import traceback
                         traceback.print_exc()
-                        print("🔍 [DEBUG] 回退到文字模式")
                         response = model.generate_content(prompt)
                 else:
-                    print("🔍 [DEBUG] 無圖片，使用純文字模式")
                     response = model.generate_content(prompt)
                 
 
@@ -278,13 +254,11 @@ class AnswerGrader:
                     is_correct = score >= 85
                     # 如果AI的判斷與我們的標準不一致，進行修正
                     if result.get('is_correct') != is_correct:
-                        print(f"⚠️ AI判斷與系統標準不一致，進行修正")
                         result['is_correct'] = is_correct
                     
                     return result['is_correct'], result['score'], result['feedback']
                 else:
-                    print(f"❌ AI回應解析失敗")
-            
+                    print(f"🔍 [DEBUG] AI評分失敗: {response.text}")
             return False, 0, {'error': 'AI評分失敗'}
             
         except Exception as e:
@@ -499,10 +473,8 @@ class AnswerGrader:
                     result['feedback'] = feedback
                     return result
                 else:
-                    print("⚠️ AI回應缺少必要字段")
                     return None
             else:
-                print("⚠️ 無法從AI回應中提取JSON")
                 return None
                 
         except Exception as e:

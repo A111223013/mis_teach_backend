@@ -62,7 +62,6 @@ def submit_quiz():
         if isinstance(template_id, str) and template_id.startswith('ai_template_'):
             # 如果是AI模板，嘗試從前端發送的題目數據中獲取信息
             if frontend_questions and len(frontend_questions) > 0:
-                print("✅ 使用AI模板，從前端題目數據獲取信息")
                 # 創建一個模擬的模板對象
                 template = type('Template', (), {
                     'question_ids': json.dumps([q.get('original_exam_id', '') for q in frontend_questions if q.get('original_exam_id')]),
@@ -104,10 +103,8 @@ def submit_quiz():
         
         # 優先使用前端發送的題目數據，如果沒有則從MongoDB獲取
         if frontend_questions and len(frontend_questions) > 0:
-            print("✅ 使用前端發送的題目數據")
             questions = frontend_questions
         else:
-            print("🔄 從MongoDB獲取題目數據")
             # 從MongoDB exam集合獲取題目詳情
             questions = []
             for i, question_id in enumerate(question_ids):
@@ -161,7 +158,6 @@ def submit_quiz():
         # 成功獲取題目詳情
     
     # 階段2: 計算分數 - 分類題目
-    print("🔄 階段2: 計算分數 - 分類題目")
     
     # 更新進度狀態為第2階段
     update_progress_status(progress_id, False, 2, "正在分類題目...")
@@ -187,7 +183,6 @@ def submit_quiz():
             answer_time_seconds = question_answer_times.get(str(i), 0)
             
             # 調試日誌
-            print(f"🔍 Debug: 題目 {i} - answer_time_seconds: {answer_time_seconds}")
             
             # 構建題目資料
             q_data = {
@@ -378,7 +373,6 @@ def submit_quiz():
             answer_time_seconds = q_data.get('answer_time_seconds', 0)
             
             # 調試日誌
-            print(f"🔍 Debug: 保存題目 {i} - answer_time_seconds: {answer_time_seconds}")
             
             # 構建用戶答案資料
             answer_data = {
@@ -1668,7 +1662,6 @@ def get_user_submissions_analysis():
         if not user_email:
             return jsonify({'error': '無效的token'}), 401
         
-        print(f"🔍 開始獲取用戶 {user_email} 的提交分析數據")
         
         # 從SQL資料庫獲取用戶的測驗歷史記錄
         with sqldb.engine.connect() as conn:
@@ -1684,7 +1677,6 @@ def get_user_submissions_analysis():
                 'user_email': user_email
             }).fetchall()
             
-            print(f"🔍 從SQL找到 {len(history_results)} 條測驗記錄")
             
             # 處理每條測驗記錄
             processed_submissions = []
@@ -1793,9 +1785,7 @@ def get_user_submissions_analysis():
                 
                 processed_submissions.append(processed_submission)
                 
-                print(f"🔍 處理測驗記錄 {quiz_history_id}: {quiz_type}, 正確率: {accuracy_rate:.1f}%")
         
-        print(f"✅ 成功處理 {len(processed_submissions)} 條提交記錄")
         
         return jsonify({
             'token': refresh_token(token),
@@ -1816,25 +1806,20 @@ def get_user_submissions_analysis():
 def generate_guided_learning_session():
     """生成AI引導學習會話 API"""
     print(f"🚀 進入 generate-guided-learning-session 函數")
-    print(f"🔍 請求方法: {request.method}")
     
     if request.method == 'OPTIONS':
-        print(f"✅ 處理 OPTIONS 請求，返回 CORS 預檢響應")
         return jsonify({'token': None, 'message': 'CORS preflight'}), 200
     
     try:
-        print(f"🔍 開始處理 POST 請求")
         
         # 驗證用戶身份
         token = request.headers.get('Authorization')
-        print(f"🔍 Authorization header: {token}")
         
         if not token:
             print(f"❌ 缺少授權token")
             return jsonify({'error': '缺少授權token'}), 401
         
         user_email = verify_token(token.split(" ")[1])
-        print(f"🔍 驗證後的 user_email: {user_email}")
         
         if not user_email:
             print(f"❌ 無效的token")
@@ -1842,13 +1827,10 @@ def generate_guided_learning_session():
         
         # 獲取請求數據
         data = request.get_json()
-        print(f"🔍 請求數據: {data}")
         
         submission_id = data.get('question_id')  # 實際上是 submission_id
         session_type = data.get('session_type', 'general')  # general, mistake_review, concept_explanation
         
-        print(f"🔍 提取的 submission_id: {submission_id}")
-        print(f"🔍 提取的 session_type: {session_type}")
         
         if not submission_id:
             print(f"❌ 缺少提交記錄ID")
@@ -1857,14 +1839,12 @@ def generate_guided_learning_session():
                 'message': '缺少提交記錄ID'
             }), 400
         
-        print(f"🔍 開始查找 submission_id: {submission_id}")
         
         # 檢查 submission_id 格式，支援 AI 測驗的 MongoDB ObjectId
         if submission_id.startswith('quiz_'):
             # 如果是 quiz_ 格式，提取 quiz_history_id (傳統測驗)
             try:
                 quiz_history_id = int(submission_id.replace('quiz_', ''))
-                print(f"🔍 提取的 quiz_history_id: {quiz_history_id}")
                 is_ai_quiz = False
             except ValueError:
                 print(f"❌ 無效的 quiz_history_id 格式: {submission_id}")
@@ -1874,13 +1854,11 @@ def generate_guided_learning_session():
                 }), 400
         elif len(submission_id) == 24 and submission_id.isalnum():
             # 如果是 24 位十六進制字符串，視為 MongoDB ObjectId (AI 測驗)
-            print(f"🔍 檢測到 MongoDB ObjectId 格式: {submission_id}")
             is_ai_quiz = True
         else:
             # 嘗試直接作為 quiz_history_id 使用 (傳統測驗)
             try:
                 quiz_history_id = int(submission_id)
-                print(f"🔍 直接使用 quiz_history_id: {quiz_history_id}")
                 is_ai_quiz = False
             except ValueError:
                 print(f"❌ 無效的提交記錄ID格式: {submission_id}")
@@ -1892,7 +1870,6 @@ def generate_guided_learning_session():
         # 根據測驗類型選擇不同的數據源
         if is_ai_quiz:
             # AI 測驗：從 MongoDB 獲取提交記錄
-            print(f"🔍 從 MongoDB 查詢 AI 測驗提交記錄: {submission_id}")
             
             if mongo is None or mongo.db is None:
                 print(f"❌ MongoDB 連接不可用")
@@ -1910,7 +1887,6 @@ def generate_guided_learning_session():
                     'message': f'測驗記錄不存在，ID: {submission_id}'
                 }), 404
             
-            print(f"✅ 找到 AI 測驗提交記錄: {submission_doc.get('quiz_id', 'Unknown')}")
             
             # 從考卷獲取題目詳情
             quiz_id = submission_doc.get('quiz_id')
@@ -1949,11 +1925,9 @@ def generate_guided_learning_session():
                 }
                 answer_objects.append(answer_obj)
             
-            print(f"✅ 成功處理 {len(answer_objects)} 個 AI 測驗答案")
             
         else:
             # 傳統測驗：從 SQL 資料庫獲取測驗記錄
-            print(f"🔍 從SQL資料庫查詢 quiz_history_id: {quiz_history_id}")
             
             with sqldb.engine.connect() as conn:
                 # 獲取測驗歷史記錄
@@ -1975,7 +1949,6 @@ def generate_guided_learning_session():
                     'message': f'測驗記錄不存在，ID: {submission_id}'
                 }), 404
             
-            print(f"✅ 找到測驗記錄: {history_result[2]} (類型: {history_result[2]})")
             
             # 獲取該測驗的詳細答案信息
             answers_result = conn.execute(text("""
@@ -1988,7 +1961,6 @@ def generate_guided_learning_session():
                 'quiz_history_id': quiz_history_id
             }).fetchall()
             
-            print(f"🔍 找到 {len(answers_result)} 個答案記錄")
             
             if not answers_result:
                 print(f"❌ 測驗記錄中沒有答案數據")
@@ -2054,7 +2026,6 @@ def generate_guided_learning_session():
                 }
                 answers.append(answer_obj)
             
-            print(f"✅ 成功處理 {len(answer_objects)} 個傳統測驗答案")
             
             # 將傳統測驗的答案轉換為統一格式
             answer_objects = []
@@ -2116,13 +2087,11 @@ def generate_guided_learning_session():
         # 使用第一個題目作為學習會話的基礎
         if answer_objects:
             first_answer = answer_objects[0]
-            print(f"🔍 第一個答案的結構: {first_answer}")
             
             question_text = first_answer.get('question_text', '')
             question_topic = first_answer.get('topic', 'unknown')
             question_chapter = first_answer.get('chapter', 'unknown')
             
-            print(f"🔍 提取的題目信息:")
             print(f"  - question_text: {question_text}")
             print(f"  - question_topic: {question_topic}")
             print(f"  - question_chapter: {question_chapter}")
@@ -2333,10 +2302,8 @@ def submit_ai_quiz():
         
         # 優先使用前端發送的題目數據，如果沒有則從MongoDB獲取
         if frontend_questions and len(frontend_questions) > 0:
-            print("✅ AI測驗：使用前端發送的題目數據")
             questions = frontend_questions
         else:
-            print("🔄 AI測驗：從MongoDB獲取題目數據")
             questions = quiz_doc.get('questions', [])
             
         if not questions:
@@ -2602,12 +2569,10 @@ def track_learning_progress():
                 }
             )
             progress_updated = True
-            print(f"✅ 更新學習進度: {user_email} - {session_id} - {question_id}")
         else:
             # 創建新記錄
             mongo.db.learning_progress.insert_one(progress_record)
             progress_updated = True
-            print(f"✅ 創建學習進度: {user_email} - {session_id} - {question_id}")
         
         return jsonify({
             'success': True,

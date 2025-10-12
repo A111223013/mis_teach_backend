@@ -1579,10 +1579,9 @@ def get_learning_analysis_for_linebot(line_id: str) -> str:
         learning_metrics = calculate_learning_metrics(quiz_records)
         
         # 計算整體掌握度
-        total_questions = learning_metrics.get('totalQuestions', 0)
-        correct_answers = learning_metrics.get('correctAnswers', 0)
+        total_questions = learning_metrics.get('total_questions', 0)
+        correct_answers = learning_metrics.get('correct_questions', 0)
         overall_accuracy = (correct_answers / total_questions * 100) if total_questions > 0 else 0
-        
         # 獲取領域數據
         all_domains = list(mongo.db.domain.find({}, {'name': 1, '_id': 1}))
         domain_stats = {}
@@ -1622,7 +1621,6 @@ def get_learning_analysis_for_linebot(line_id: str) -> str:
 🎯 整體表現：
 • 總答題數：{total_questions} 題
 • 正確率：{overall_accuracy:.1f}%
-• 學習天數：{learning_metrics.get('studyDays', 0)} 天
 
 💪 強項領域："""
         
