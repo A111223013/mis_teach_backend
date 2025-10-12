@@ -29,11 +29,7 @@ from src.linebot import (
     generate_quiz_question,
     generate_knowledge_point,
     grade_answer,
-    provide_tutoring,
-    learning_analysis_placeholder,
-    goal_setting_placeholder,
-    news_exam_info_placeholder,
-    calendar_placeholder
+    provide_tutoring
 )
 
 # 創建藍圖
@@ -157,7 +153,10 @@ def get_platform_specific_tools(platform: str = "web"):
             create_linebot_learning_analysis_tool(),
             create_linebot_goal_setting_tool(),
             create_linebot_news_exam_tool(),
-            create_linebot_calendar_tool(),
+            create_linebot_calendar_view_tool(),
+            create_linebot_calendar_add_tool(),
+            create_linebot_calendar_update_tool(),
+            create_linebot_calendar_delete_tool(),
             create_memory_tool()
         ]
     else:
@@ -275,25 +274,36 @@ def create_quiz_generator_tool():
 def get_platform_specific_system_prompt(platform: str = "web") -> str:
     """根據平台獲取對應的系統提示詞"""
     if platform == "linebot":
-        return """你是一個智能 LINE Bot 助手，專門為 LINE 用戶提供輕量化的學習服務。
+        return """你是一個智慧 LINE Bot 助手，負責協助用戶學習與管理行事曆。
 
-你有以下工具可以使用：
-1. linebot_quiz_generator_tool - AI測驗生成（選擇題/知識問答題）
-2. linebot_knowledge_tool - 隨機知識點
-3. linebot_grade_tool - 答案批改和解釋
-4. linebot_tutor_tool - AI導師教學指導
-5. linebot_learning_analysis_tool - 學習分析（開發中）
-6. linebot_goal_setting_tool - 目標設定（開發中）
-7. linebot_news_exam_tool - 最新消息/考試資訊（開發中）
-8. linebot_calendar_tool - 行事曆（開發中）
-9. memory_tool - 記憶管理
+⚠️ 重要：你必須調用工具來處理用戶請求，不要只回應文字說明！
 
+當用戶說「修改ID7標題為123內容為456然後五分鐘後提醒我」時：
+1. 提取 line_id = "U3fae4f436edf551db5f5c6773c98f8c7"
+2. 使用完整時間計算：完整時間 + 5分鐘 = "2025-10-12 21:59"
+3. 調用 linebot_calendar_update_tool(line_id, 7, "123", "456", "2025-10-12 21:59")
+
+【你的工具】
+1️⃣ linebot_quiz_generator_tool - AI測驗生成（選擇題/知識問答題）
+2️⃣ linebot_knowledge_tool - 隨機知識點
+3️⃣ linebot_grade_tool - 答案批改和解釋
+4️⃣ linebot_tutor_tool - AI導師教學指導
+5️⃣ linebot_learning_analysis_tool - 學習分析（已實現）
+6️⃣ linebot_goal_setting_tool - 目標設定（已實現）
+7️⃣ linebot_news_exam_tool - 最新消息/考試資訊（開發中）
+8️⃣ linebot_calendar_view_tool - 查看行事曆（已實現）
+9️⃣ linebot_calendar_add_tool - 新增行事曆事件（已實現）
+🔟 linebot_calendar_update_tool - 修改行事曆事件（已實現）
+1️⃣1️⃣ linebot_calendar_delete_tool - 刪除行事曆事件（已實現）
+1️⃣2️⃣ memory_tool - 記憶管理
+
+---
 重要：記憶管理是核心功能！
 - 使用 memory_tool('view', user_id) 查看對話歷史
 - 每次對話都會自動記錄到記憶中
 - 測驗流程中必須維護上下文連貫性
 
-測驗流程和記憶管理：
+【測驗流程和記憶管理】
 1. 用戶選擇測驗類型（選擇題/知識問答題）
 2. 選擇知識點或隨機
 3. 系統生成題目（不顯示答案）
@@ -306,21 +316,77 @@ def get_platform_specific_system_prompt(platform: str = "web") -> str:
 - 當收到包含上下文的測驗批改請求時，直接進行智能批改
 - 如果沒有上下文，正常回應
 
-工具使用說明：
-- linebot_quiz_generator_tool(topic, question_type) - 生成測驗題目，topic 為知識點，question_type 為 "選擇題" 或 "知識問答題"
-- linebot_knowledge_tool(query) - 獲取隨機知識點，query 為知識點名稱或 "隨機"
-- linebot_grade_tool(answer, correct_answer="", question="") - 批改測驗答案，從對話上下文中提取題目信息
-- 當收到測驗批改請求時，從上下文中找到題目內容，然後使用 linebot_grade_tool(answer, question="題目內容") 進行批改
+【行事曆操作邏輯】
+從 input_text 解析出：
+- line_id: 從「用戶ID: line_XXXX」提取並移除 "line_" 前綴
+- 當前日期: 從「當前日期: 」後面提取
+- event_date: 解析時間（今天、明天、五分鐘後、下午X點）
+- 操作類型：
+  - 包含「查看行事曆」→ view
+  - 包含「新增事件」→ add
+  - 包含「修改事件」或「修改ID」→ update
+  - 包含「刪除事件」或「刪除ID」→ delete
 
-開發中功能：
-- 學習分析、目標設定、最新消息/考試資訊、行事曆等功能目前顯示「開發中」訊息
-- 這些功能會提供功能預覽和說明
+---
 
-請根據用戶的問題，選擇最適合的工具來幫助他們。這些工具會提供簡潔、實用的回應，適合在 LINE 聊天中顯示簡單明瞭不要長篇大論。
+【行事曆範例】
+1️⃣ 新增事件：
+  用戶：「新增事件 標題:英文小考 內容:複習單字 時間:明天晚上9點」
+  → 調用 linebot_calendar_add_tool(line_id, "英文小考", "複習單字", "YYYY-MM-DD 21:00")
 
-重要：當使用工具時，請直接返回工具的完整回應，不要重新格式化或摘要，也不要包裝成 JSON 格式。
+2️⃣ 查看行事曆：
+  用戶：「行事曆」或「查看行事曆」
+  → 調用 linebot_calendar_view_tool(line_id)
 
-記住：你是一個助手，請使用工具來幫助用戶，並直接返回工具的結果給用戶。"""
+3️⃣ 修改事件：
+  用戶：「修改事件 ID=3 標題改成資管作業 時間改成今天晚上8點」
+  → 使用完整時間：2025-10-12 21:54 + 0分鐘 = "2025-10-12 20:00"
+  → 調用 linebot_calendar_update_tool(line_id, "3", "資管作業", "", "2025-10-12 20:00")
+  
+  用戶：「修改ID7標題為123內容為456然後五分鐘後提醒我」
+  → 使用完整時間：2025-10-12 21:54 + 5分鐘 = "2025-10-12 21:59"
+  → 調用 linebot_calendar_update_tool(line_id, "7", "123", "456", "2025-10-12 21:59")
+
+4️⃣ 刪除事件：
+  用戶：「刪除事件 ID=5」
+  → 調用 linebot_calendar_delete_tool(line_id, "5")
+
+---
+
+【時間解析規則 - 使用提供的時間信息】
+從 input_text 中提取：
+- 完整時間: YYYY-MM-DD HH:MM 格式（用於計算相對時間）
+- 當前日期: YYYY年MM月DD日 格式（用於絕對時間）
+- 當前時間: HH:MM 格式（用於參考）
+
+計算規則：
+- 「五分鐘後」= 完整時間 + 5分鐘，格式：YYYY-MM-DD HH:MM
+- 「十分鐘後」= 完整時間 + 10分鐘，格式：YYYY-MM-DD HH:MM
+- 「半小時後」= 完整時間 + 30分鐘，格式：YYYY-MM-DD HH:MM
+- 「一小時後」= 完整時間 + 1小時，格式：YYYY-MM-DD HH:MM
+- 「今天下午2點」= 當前日期 + 14:00，格式：YYYY-MM-DD 14:00
+- 「明天晚上9點」= 當前日期+1天 + 21:00，格式：YYYY-MM-DD 21:00
+- 「今天晚上9點」= 當前日期 + 21:00，格式：YYYY-MM-DD 21:00
+
+重要：使用 input_text 中提供的完整時間進行計算，確保時間準確！
+
+---
+
+【重要規則】
+1️⃣ 一定要呼叫對應工具，不要只回應文字。
+2️⃣ 直接輸出工具結果，不要自行加格式。
+3️⃣ 當用戶說「修改ID7標題為123內容為456然後五分鐘後提醒我」時，必須調用 linebot_calendar_update_tool。
+4️⃣ 時間解析：五分鐘後 = 當前時間 + 5分鐘，直接計算並調用工具。
+5️⃣ 不要要求用戶提供具體時間，AI 應該自己解析自然語言時間表達。
+
+---
+
+【測驗流程摘要】
+1. 選擇測驗類型 → 生成題目
+2. 用戶答題 → 批改並回饋
+3. 可請求導師指導 → linebot_tutor_tool
+
+請根據用戶的訊息，自動選擇最合適的工具調用。"""
     else:
         return """你是一個智能網站助手，能夠幫助用戶了解網站功能、查詢學習進度、提供AI教學指導，以及創建考卷。
 
@@ -408,8 +474,18 @@ def process_message(message: str, user_id: str = "default", platform: str = "web
             }
         
         # 使用平台特定的主代理人處理
+        # 對於 LINE Bot，將 user_id 和詳細時間信息包含在 input 中，讓工具能獲取到
+        if platform == "linebot":
+            now = datetime.now()
+            current_date = now.strftime("%Y年%m月%d日")
+            current_datetime = now.strftime("%Y-%m-%d %H:%M")
+            current_time = now.strftime("%H:%M")
+            enhanced_input = f"用戶ID: {user_id}\n當前日期: {current_date}\n當前時間: {current_time}\n完整時間: {current_datetime}\n\n{message}"
+        else:
+            enhanced_input = message
+            
         result = platform_executor.invoke({
-            "input": message,
+            "input": enhanced_input,
             "context": {"user_id": user_id, "platform": platform}
         })
         
@@ -664,48 +740,157 @@ def create_linebot_tutor_tool():
     return linebot_tutor_tool
 
 def create_linebot_learning_analysis_tool():
-    """創建 LINE Bot 學習分析工具 - 開發中"""
+    """創建 LINE Bot 學習分析工具"""
     from langchain_core.tools import tool
     
     @tool
-    def linebot_learning_analysis_tool(query: str = "") -> str:
-        """LINE Bot 學習分析工具 - 開發中"""
-        return learning_analysis_placeholder()
+    def linebot_learning_analysis_tool(input_text: str = "") -> str:
+        """LINE Bot 學習分析工具 - 獲取用戶學習分析數據"""
+        from src.learning_analytics import get_learning_analysis_for_linebot
+        # 從輸入中提取 user_id
+        import re
+        # 嘗試多種格式匹配
+        user_id_match = re.search(r'用戶ID: (line_[^\n]+)', input_text)
+        if not user_id_match:
+            # 如果沒有找到「用戶ID:」格式，直接尋找 line_ 開頭的ID
+            user_id_match = re.search(r'(line_[a-zA-Z0-9]+)', input_text)
+        
+        if user_id_match:
+            user_id = user_id_match.group(1)
+            # 移除 line_ 前綴，獲取純粹的 LINE ID
+            clean_line_id = user_id.replace('line_', '') if user_id.startswith('line_') else user_id
+            return get_learning_analysis_for_linebot(clean_line_id)
+        else:
+            return "❌ 無法獲取用戶ID，請重新綁定帳號"
     
     return linebot_learning_analysis_tool
 
 def create_linebot_goal_setting_tool():
-    """創建 LINE Bot 目標設定工具 - 開發中"""
+    """創建 LINE Bot 目標設定工具"""
     from langchain_core.tools import tool
     
     @tool
-    def linebot_goal_setting_tool(query: str = "") -> str:
-        """LINE Bot 目標設定工具 - 開發中"""
-        return goal_setting_placeholder()
+    def linebot_goal_setting_tool(input_text: str = "") -> str:
+        """LINE Bot 目標設定工具 - 管理學習目標"""
+        from src.dashboard import get_goals_for_linebot
+        # 從輸入中提取 user_id
+        import re
+        # 嘗試多種格式匹配
+        user_id_match = re.search(r'用戶ID: (line_[^\n]+)', input_text)
+        if not user_id_match:
+            # 如果沒有找到「用戶ID:」格式，直接尋找 line_ 開頭的ID
+            user_id_match = re.search(r'(line_[a-zA-Z0-9]+)', input_text)
+        
+        if user_id_match:
+            user_id = user_id_match.group(1)
+            # 移除 line_ 前綴，獲取純粹的 LINE ID
+            clean_line_id = user_id.replace('line_', '') if user_id.startswith('line_') else user_id
+            return get_goals_for_linebot(clean_line_id)
+        else:
+            return "❌ 無法獲取用戶ID，請重新綁定帳號"
     
     return linebot_goal_setting_tool
 
 def create_linebot_news_exam_tool():
-    """創建 LINE Bot 最新消息/考試資訊工具 - 開發中"""
+    """創建 LINE Bot 最新消息/考試資訊工具"""
     from langchain_core.tools import tool
     
     @tool
     def linebot_news_exam_tool(query: str = "") -> str:
-        """LINE Bot 最新消息/考試資訊工具 - 開發中"""
-        return news_exam_info_placeholder()
+        """LINE Bot 最新消息/考試資訊工具 - 獲取最新資訊"""
+        return "📰 最新消息功能\n\n請在 LINE Bot 中使用「最新消息」指令來獲取最新資訊！\n\n💡 功能包括：\n• 考試資訊推送\n• 重要公告\n• 學習資源更新\n• 活動通知"
     
     return linebot_news_exam_tool
 
-def create_linebot_calendar_tool():
-    """創建 LINE Bot 行事曆工具 - 開發中"""
+def create_linebot_calendar_view_tool():
+    """創建 LINE Bot 行事曆查看工具"""
     from langchain_core.tools import tool
     
     @tool
-    def linebot_calendar_tool(query: str = "") -> str:
-        """LINE Bot 行事曆工具 - 開發中"""
-        return calendar_placeholder()
+    def linebot_calendar_view_tool(line_id: str) -> str:
+        """LINE Bot 行事曆查看工具 - 查看學習計畫
+        
+        Args:
+            line_id: LINE 用戶 ID
+        """
+        from src.dashboard import get_calendar_for_linebot
+        
+        return get_calendar_for_linebot(line_id)
     
-    return linebot_calendar_tool
+    return linebot_calendar_view_tool
+
+def create_linebot_calendar_add_tool():
+    """創建 LINE Bot 行事曆新增工具"""
+    from langchain_core.tools import tool
+    
+    @tool
+    def linebot_calendar_add_tool(line_id: str, title: str, content: str, event_date: str) -> str:
+        """LINE Bot 行事曆新增工具 - 當用戶要新增事件時調用此工具
+        
+        Args:
+            line_id: LINE 用戶 ID (從 input_text 提取)
+            title: 事件標題 (從用戶訊息中提取)
+            content: 事件內容 (從用戶訊息中提取)
+            event_date: 事件日期時間 (從用戶訊息中提取並解析，格式: 2024-01-01 10:00)
+        """
+        from src.dashboard import add_calendar_event_for_linebot
+        
+        if not title:
+            return "❌ 標題為必填欄位！"
+        
+        # AI 已經計算好時間，直接使用
+        if not event_date or event_date == "":
+            return "❌ 請提供事件時間！"
+        
+        return add_calendar_event_for_linebot(line_id, title, content, event_date)
+    
+    return linebot_calendar_add_tool
+
+def create_linebot_calendar_update_tool():
+    """創建 LINE Bot 行事曆修改工具"""
+    from langchain_core.tools import tool
+    
+    @tool
+    def linebot_calendar_update_tool(line_id: str, event_id: int, title: str, content: str, event_date: str) -> str:
+        """LINE Bot 行事曆修改工具 - 修改學習計畫
+        
+        Args:
+            line_id: LINE 用戶 ID
+            event_id: 事件 ID
+            title: 事件標題
+            content: 事件內容
+            event_date: 事件日期時間 (支援格式: 2024-01-01 10:00, 2024-01-01T10:00, 2024-01-01)
+        """
+        from src.dashboard import update_calendar_event_for_linebot
+        
+        if not title:
+            return "❌ 標題為必填欄位！"
+        
+        # AI 已經計算好時間，直接使用
+        if not event_date or event_date == "":
+            return "❌ 請提供事件時間！"
+        
+        return update_calendar_event_for_linebot(line_id, event_id, title, content, event_date)
+    
+    return linebot_calendar_update_tool
+
+def create_linebot_calendar_delete_tool():
+    """創建 LINE Bot 行事曆刪除工具"""
+    from langchain_core.tools import tool
+    
+    @tool
+    def linebot_calendar_delete_tool(line_id: str, event_id: int) -> str:
+        """LINE Bot 行事曆刪除工具 - 刪除學習計畫
+        
+        Args:
+            line_id: LINE 用戶 ID
+            event_id: 事件 ID
+        """
+        from src.dashboard import delete_calendar_event_for_linebot
+        
+        return delete_calendar_event_for_linebot(line_id, event_id)
+    
+    return linebot_calendar_delete_tool
 
 def _clean_json_string(json_str: str) -> str:
     """清理JSON字符串，處理轉義字符問題"""

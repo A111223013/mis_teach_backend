@@ -1561,6 +1561,99 @@ def get_forgetting_analysis():
             'error': f'獲取遺忘分析數據失敗: {str(e)}'
         }), 500
 
+# ==================== LINE Bot 專用函數 ====================
+
+def get_learning_analysis_for_linebot(line_id: str) -> str:
+    """LINE Bot 專用的學習分析函數"""
+    try:
+        # 通過 line_id 找到用戶
+        user = mongo.db.user.find_one({"lineId": line_id})
+        if not user:
+            return "❌ 請先綁定您的帳號才能使用學習分析功能！"
+        
+        user_email = user.get('email')
+        user_name = user.get('name', '同學')
+        
+        # 獲取學習分析數據
+        quiz_records = get_student_quiz_records(user_email)
+        learning_metrics = calculate_learning_metrics(quiz_records)
+        
+        # 計算整體掌握度
+        total_questions = learning_metrics.get('totalQuestions', 0)
+        correct_answers = learning_metrics.get('correctAnswers', 0)
+        overall_accuracy = (correct_answers / total_questions * 100) if total_questions > 0 else 0
+        
+        # 獲取領域數據
+        all_domains = list(mongo.db.domain.find({}, {'name': 1, '_id': 1}))
+        domain_stats = {}
+        
+        for record in quiz_records:
+            domain_name = record.get('domain_name', '未知領域')
+            if domain_name not in domain_stats:
+                domain_stats[domain_name] = {'total': 0, 'correct': 0, 'wrong': 0}
+            
+            domain_stats[domain_name]['total'] += 1
+            if record['is_correct']:
+                domain_stats[domain_name]['correct'] += 1
+            else:
+                domain_stats[domain_name]['wrong'] += 1
+        
+        # 構建領域掌握度
+        domains = []
+        for domain_doc in all_domains:
+            domain_name = domain_doc.get('name', '未知領域')
+            stats = domain_stats.get(domain_name, {'total': 0, 'correct': 0, 'wrong': 0})
+            mastery = (stats['correct'] / stats['total'] * 100) if stats['total'] > 0 else 0
+            
+            domains.append({
+                'name': domain_name,
+                'mastery': mastery,
+                'total': stats['total'],
+                'correct': stats['correct']
+            })
+        
+        # 找出強項和弱項
+        strong_domains = [d for d in domains if d['mastery'] >= 70]
+        weak_domains = [d for d in domains if d['mastery'] < 50 and d['total'] > 0]
+        
+        # 格式化報告
+        report = f"""📊 學習分析報告 - {user_name}
+
+🎯 整體表現：
+• 總答題數：{total_questions} 題
+• 正確率：{overall_accuracy:.1f}%
+• 學習天數：{learning_metrics.get('studyDays', 0)} 天
+
+💪 強項領域："""
+        
+        if strong_domains:
+            for domain in strong_domains:
+                report += f"\n• {domain['name']} ({domain['mastery']:.1f}%)"
+        else:
+            report += "\n• 暫無強項領域"
+        
+        report += "\n\n⚠️ 需要加強："
+        if weak_domains:
+            for domain in weak_domains:
+                report += f"\n• {domain['name']} ({domain['mastery']:.1f}%)"
+        else:
+            report += "\n• 暫無弱項領域"
+        
+        report += f"""
+
+💡 學習建議：
+1. 專注於弱項領域的練習
+2. 保持每日學習習慣
+3. 定期複習已掌握的知識點
+
+📱 更多詳細分析請至網站查看！"""
+        
+        return report
+        
+    except Exception as e:
+        print(f"❌ LINE Bot 學習分析失敗: {e}")
+        return "❌ 學習分析功能暫時無法使用，請稍後再試。"
+
 def generate_ai_coach_analysis(overview_data: Dict, domains: List[Dict], quiz_records: List[Dict], user_email: str = None) -> Dict[str, Any]:
     """生成AI教練分析（使用Redis快取）"""
     try:

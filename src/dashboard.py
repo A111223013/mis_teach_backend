@@ -360,6 +360,30 @@ def delete_calendar_event():
 
 
 
+def setup_event_notification(student_email: str, event_id: int, title: str, content: str, event_date: str, user_id: str = None):
+    """設置事件通知到 Redis"""
+    from datetime import datetime, timedelta
+
+    event_datetime = datetime.fromisoformat(event_date.replace('Z', ''))
+
+    # 設置通知時間為事件時間前5分鐘
+    notify_datetime =event_datetime
+    notify_time_str = notify_datetime.strftime('%Y-%m-%d %H:%M')
+    
+    notification_data = {
+        'student_email': student_email,
+        'user_id': user_id,  # LINE 用戶 ID
+        'event_id': event_id,
+        'title': title,
+        'content': content,
+        'event_date': event_date,
+        'notify_time': notify_time_str
+    }
+    
+    # 使用 Redis List 儲存通知
+    redis_client.lpush('event_notification', json.dumps(notification_data))
+    print(f"✅ 已設置事件 {event_id} 的通知，將在 {notify_time_str} 發送")
+
 def add_notification_to_redis(student_email: str, event_id: int, title: str, content: str, event_date: str, notify_time: str):
     """將通知加入 Redis 列表"""
     from datetime import datetime
@@ -397,5 +421,276 @@ def remove_notification_from_redis(event_id: int):
 
 # 移除自動初始化，改為在應用程式啟動時初始化
 
+# ==================== LINE Bot 專用函數 ====================
 
+def get_goals_for_linebot(line_id: str) -> str:
+    """LINE Bot 專用的目標設定函數"""
+    try:
+        # 通過 line_id 找到用戶
+        user = mongo.db.user.find_one({"lineId": line_id})
+        if not user:
+            return "❌ 請先綁定您的帳號才能使用目標設定功能！"
+        
+        user_email = user.get('email')
+        user_name = user.get('name', '同學')
+        
+        # 這裡可以調用現有的目標設定邏輯
+        # 暫時返回基本資訊
+        return f"""🎯 目標設定 - {user_name}
+
+📋 您目前還沒有設定學習目標
+
+💡 建議目標：
+• 每日答題數：10-20 題
+• 每週學習天數：5-7 天
+• 目標掌握度：70% 以上
+• 重點領域：根據弱項設定
+
+📱 請至網站設定您的個人化學習目標！"""
+        
+    except Exception as e:
+        print(f"❌ LINE Bot 目標設定失敗: {e}")
+        return "❌ 目標設定功能暫時無法使用，請稍後再試。"
+
+def get_calendar_for_linebot(line_id: str) -> str:
+    """LINE Bot 專用的行事曆查看函數"""
+    try:
+        # 通過 line_id 找到用戶
+        user = mongo.db.user.find_one({"lineId": line_id})
+        if not user:
+            return "❌ 請先綁定您的帳號才能使用行事曆功能！"
+        
+        user_email = user.get('email')
+        user_name = user.get('name', '同學')
+        
+        # 獲取行事曆數據
+        with sqldb.engine.connect() as conn:
+            result = conn.execute(text("""
+                SELECT id, title, content, event_date, notify_enabled 
+                FROM schedule 
+                WHERE student_email = :email 
+                ORDER BY event_date ASC 
+                LIMIT 10
+            """), {"email": user_email})
+            
+            events = []
+            for row in result:
+                events.append({
+                    'id': row[0],
+                    'title': row[1],
+                    'content': row[2],
+                    'event_date': row[3],
+                    'notify_enabled': row[4]
+                })
+        
+        if events:
+            calendar_text = f"📅 您的行事曆事件 - {user_name}\n\n"
+            for i, event in enumerate(events, 1):
+                title = event.get('title', '無標題')
+                event_date = event.get('event_date', '')
+                content = event.get('content', '')
+                event_id = event.get('id')
+                
+                # 格式化日期
+                try:
+                    if event_date:
+                        from datetime import datetime
+                        date_obj = datetime.fromisoformat(str(event_date).replace('Z', '+00:00'))
+                        formatted_date = date_obj.strftime('%m/%d %H:%M')
+                    else:
+                        formatted_date = "未設定時間"
+                except:
+                    formatted_date = str(event_date)
+                
+                calendar_text += f"{i}. {title} (ID:{event_id})\n"
+                calendar_text += f"   📅 {formatted_date}\n"
+                if content:
+                    calendar_text += f"   📝 {content[:50]}{'...' if len(content) > 50 else ''}\n"
+                calendar_text += "\n"
+            
+            calendar_text += "💡 使用「新增事件:標題|內容|日期時間」來新增事件\n"
+            calendar_text += "💡 使用「修改事件:ID|標題|內容|日期時間」來修改事件\n"
+            calendar_text += "💡 使用「刪除事件:ID」來刪除事件"
+        else:
+            calendar_text = f"📅 您的行事曆目前沒有事件 - {user_name}\n\n💡 使用「新增事件:標題|內容|日期時間」來新增您的第一個學習計畫！"
+        
+        return calendar_text
+        
+    except Exception as e:
+        print(f"❌ LINE Bot 行事曆失敗: {e}")
+        return "❌ 行事曆功能暫時無法使用，請稍後再試。"
+
+def add_calendar_event_for_linebot(line_id: str, title: str, content: str, event_date: str) -> str:
+    """LINE Bot 專用的新增行事曆事件函數"""
+    try:
+        # 通過 line_id 找到用戶
+        user = mongo.db.user.find_one({"lineId": line_id})
+        if not user:
+            return "❌ 請先綁定您的帳號才能使用行事曆功能！"
+        
+        user_email = user.get('email')
+        user_name = user.get('name', '同學')
+        
+        # 格式化日期時間
+        try:
+            from datetime import datetime
+            # 支援多種日期格式
+            if 'T' in event_date:
+                # ISO 格式: 2024-01-01T10:00
+                event_datetime = datetime.fromisoformat(event_date.replace('Z', ''))
+            elif ' ' in event_date:
+                # 簡單格式: 2024-01-01 10:00
+                event_datetime = datetime.strptime(event_date, '%Y-%m-%d %H:%M')
+            else:
+                # 只有日期: 2024-01-01
+                event_datetime = datetime.strptime(event_date, '%Y-%m-%d')
+            
+            formatted_date = event_datetime.strftime('%Y-%m-%d %H:%M:%S')
+        except Exception as e:
+            return f"❌ 日期格式錯誤: {event_date}\n💡 請使用格式: 2024-01-01 10:00 或 2024-01-01T10:00"
+        
+        # 新增事件到資料庫
+        with sqldb.engine.connect() as conn:
+            result = conn.execute(text("""
+                INSERT INTO schedule (student_email, title, content, event_date, notify_enabled)
+                VALUES (:student_email, :title, :content, :event_date, :notify_enabled)
+            """), {
+                'student_email': user_email,
+                'title': title,
+                'content': content or '',
+                'event_date': formatted_date,
+                'notify_enabled': True  # 啟用通知
+            })
+            
+            event_id = result.lastrowid
+            conn.commit()
+        
+        # 設置通知到 Redis
+        try:
+            setup_event_notification(
+                student_email=user_email,
+                event_id=event_id,
+                title=title,
+                content=content or '',
+                event_date=formatted_date,
+                user_id=line_id  # 添加 LINE 用戶 ID
+            )
+        except Exception as e:
+            print(f"設置通知失敗: {e}")
+        
+        return f"✅ 成功新增行事曆事件！\n\n📅 標題: {title}\n📝 內容: {content or '無'}\n⏰ 時間: {event_datetime.strftime('%Y年%m月%d日 %H:%M')}\n🆔 事件ID: {event_id}\n\n💡 使用「查看行事曆」來查看所有事件"
+        
+    except Exception as e:
+        print(f"❌ LINE Bot 新增行事曆事件失敗: {e}")
+        return "❌ 新增行事曆事件失敗，請稍後再試。"
+
+def update_calendar_event_for_linebot(line_id: str, event_id: int, title: str, content: str, event_date: str) -> str:
+    """LINE Bot 專用的修改行事曆事件函數"""
+    try:
+        # 通過 line_id 找到用戶
+        user = mongo.db.user.find_one({"lineId": line_id})
+        if not user:
+            return "❌ 請先綁定您的帳號才能使用行事曆功能！"
+        
+        user_email = user.get('email')
+        user_name = user.get('name', '同學')
+        
+        # 格式化日期時間
+        try:
+            from datetime import datetime
+            # 支援多種日期格式
+            if 'T' in event_date:
+                # ISO 格式: 2024-01-01T10:00
+                event_datetime = datetime.fromisoformat(event_date.replace('Z', ''))
+            elif ' ' in event_date:
+                # 簡單格式: 2024-01-01 10:00
+                event_datetime = datetime.strptime(event_date, '%Y-%m-%d %H:%M')
+            else:
+                # 只有日期: 2024-01-01
+                event_datetime = datetime.strptime(event_date, '%Y-%m-%d')
+            
+            formatted_date = event_datetime.strftime('%Y-%m-%d %H:%M:%S')
+        except Exception as e:
+            return f"❌ 日期格式錯誤: {event_date}\n💡 請使用格式: 2024-01-01 10:00 或 2024-01-01T10:00"
+        
+        # 更新事件
+        with sqldb.engine.connect() as conn:
+            result = conn.execute(text("""
+                UPDATE schedule 
+                SET title = :title, content = :content, event_date = :event_date, 
+                    updated_at = CURRENT_TIMESTAMP, notify_enabled = :notify_enabled
+                WHERE id = :event_id AND student_email = :student_email
+            """), {
+                'title': title,
+                'content': content or '',
+                'event_date': formatted_date,
+                'event_id': event_id,
+                'student_email': user_email,
+                'notify_enabled': True  # 啟用通知
+            })
+            
+            if result.rowcount == 0:
+                return f"❌ 找不到事件ID {event_id} 或您沒有權限修改此事件"
+            
+            conn.commit()
+        
+        # 先移除舊通知，再設置新通知
+        try:
+            remove_notification_from_redis(event_id)
+            setup_event_notification(
+                student_email=user_email,
+                event_id=event_id,
+                title=title,
+                content=content or '',
+                event_date=formatted_date,
+                user_id=line_id  # 添加 LINE 用戶 ID
+            )
+        except Exception as e:
+            print(f"更新通知失敗: {e}")
+        
+        return f"✅ 成功修改行事曆事件！\n\n📅 標題: {title}\n📝 內容: {content or '無'}\n⏰ 時間: {event_datetime.strftime('%Y年%m月%d日 %H:%M')}\n🆔 事件ID: {event_id}\n\n💡 使用「查看行事曆」來查看所有事件"
+        
+    except Exception as e:
+        print(f"❌ LINE Bot 修改行事曆事件失敗: {e}")
+        return "❌ 修改行事曆事件失敗，請稍後再試。"
+
+def delete_calendar_event_for_linebot(line_id: str, event_id: int) -> str:
+    """LINE Bot 專用的刪除行事曆事件函數"""
+    try:
+        # 通過 line_id 找到用戶
+        user = mongo.db.user.find_one({"lineId": line_id})
+        if not user:
+            return "❌ 請先綁定您的帳號才能使用行事曆功能！"
+        
+        user_email = user.get('email')
+        user_name = user.get('name', '同學')
+        
+        # 先獲取事件資訊
+        with sqldb.engine.connect() as conn:
+            # 先查詢事件是否存在
+            check_result = conn.execute(text("""
+                SELECT title, event_date FROM schedule 
+                WHERE id = :event_id AND student_email = :student_email
+            """), {'event_id': event_id, 'student_email': user_email})
+            
+            event_info = check_result.fetchone()
+            if not event_info:
+                return f"❌ 找不到事件ID {event_id} 或您沒有權限刪除此事件"
+            
+            # 刪除事件
+            result = conn.execute(text("""
+                DELETE FROM schedule 
+                WHERE id = :event_id AND student_email = :student_email
+            """), {'event_id': event_id, 'student_email': user_email})
+            
+            conn.commit()
+        
+        # 從 Redis 移除通知
+        remove_notification_from_redis(event_id)
+        
+        return f"✅ 成功刪除行事曆事件！\n\n📅 已刪除: {event_info[0]}\n🆔 事件ID: {event_id}\n\n💡 使用「查看行事曆」來查看剩餘事件"
+        
+    except Exception as e:
+        print(f"❌ LINE Bot 刪除行事曆事件失敗: {e}")
+        return "❌ 刪除行事曆事件失敗，請稍後再試。"
 

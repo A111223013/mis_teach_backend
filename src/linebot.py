@@ -171,9 +171,6 @@ def check_line_binding():
 def call_main_agent(user_message: str, user_id: str) -> str:
     """調用現有的主代理人系統 (web_ai_assistant)"""
     try:
-        print(f"🔍 調用主代理人：用戶={user_id}, 消息={user_message}")
-        
-        # 準備請求數據 - 符合現有主代理人的格式，並標識為 LINE Bot
         request_data = {
             "message": user_message,
             "user_id": f"line_{user_id}",  # 加上 line_ 前綴區分來源
@@ -181,10 +178,6 @@ def call_main_agent(user_message: str, user_id: str) -> str:
             "conversation_id": f"line_{user_id}",  # 添加對話ID，用於記憶管理
             "maintain_context": True  # 標識需要保持對話上下文
         }
-        
-        print(f"📤 發送請求到：{MAIN_AGENT_API_URL}")
-        print(f"📤 請求數據：{request_data}")
-        
         # 調用現有的主代理人 API
         response = requests.post(
             MAIN_AGENT_API_URL,
@@ -193,19 +186,14 @@ def call_main_agent(user_message: str, user_id: str) -> str:
             timeout=30
         )
         
-        print(f"📥 收到回應：狀態碼={response.status_code}")
-        
         if response.status_code == 200:
             result = response.json()
-            print(f"📥 回應內容：{result}")
             
             if result.get('success'):
                 message = result.get("content", result.get("message", "主代理人回應格式錯誤"))
-                print(f"✅ 成功獲取回應：{message[:50]}...")
                 return message
             else:
                 error_msg = result.get("error", "未知錯誤")
-                print(f"❌ 主代理人處理失敗: {error_msg}")
                 return f"抱歉，主代理人處理失敗：{error_msg}"
         else:
             print(f"❌ 主代理人 API 錯誤: {response.status_code} - {response.text}")
@@ -367,8 +355,6 @@ def handle_message(event: MessageEvent):
     # 檢查是否為綁定碼格式（以 bind_ 開頭）
     if user_message.startswith('bind_'):
         binding_token = user_message.strip()
-        print(f"🔍 檢測到綁定碼格式：{user_message}")
-        print(f"🔍 使用綁定碼：{binding_token}")
         handle_binding_command(user_id, binding_token, event.reply_token)
         return
     
@@ -376,6 +362,25 @@ def handle_message(event: MessageEvent):
     if user_message.lower() in ['測試綁定', 'test', '檢查綁定', '我是誰']:
         handle_test_binding(user_id, event.reply_token)
         return
+    
+    # 處理圖文選單功能
+    if user_message == "學習分析":
+        handle_learning_analysis(user_id, event.reply_token)
+        return
+    elif user_message == "目標設定":
+        handle_goal_setting(user_id, event.reply_token)
+        return
+    elif user_message == "最新消息":
+        handle_news(user_id, event.reply_token)
+        return
+    elif user_message == "行事曆":
+        handle_calendar(user_id, event.reply_token)
+        return
+    elif user_message == "隨機知識":
+        handle_random_knowledge(user_id, event.reply_token)
+        return
+    
+    # 所有圖文選單功能都通過主代理人處理
     
     # 所有其他訊息都交給主代理人處理，包括測驗答案
     # 主代理人會自動維護對話上下文和記憶
@@ -809,23 +814,122 @@ def provide_tutoring(question: str, user_answer: str, correct_answer: str) -> st
     except Exception as e:
         return f"❌ 導師指導失敗：{str(e)}"
 
-# ==================== 開發中功能 ====================
 
-def learning_analysis_placeholder() -> str:
-    """學習分析功能 - 開發中"""
-    return "📊 學習分析功能\n\n🚧 此功能正在開發中，敬請期待！\n\n💡 功能預覽：\n• 學習進度追蹤\n• 弱點分析\n• 個人化建議\n• 學習報告"
 
-def goal_setting_placeholder() -> str:
-    """目標設定功能 - 開發中"""
-    return "🎯 目標設定功能\n\n🚧 此功能正在開發中，敬請期待！\n\n💡 功能預覽：\n• 學習目標設定\n• 進度追蹤\n• 提醒通知\n• 成就系統"
+# ==================== 圖文選單功能處理 ====================
 
-def news_exam_info_placeholder() -> str:
-    """最新消息/考試資訊功能 - 開發中"""
-    return "📰 最新消息/考試資訊\n\n🚧 此功能正在開發中，敬請期待！\n\n💡 功能預覽：\n• 考試資訊推送\n• 重要公告\n• 學習資源更新\n• 活動通知"
+def handle_learning_analysis(user_id: str, reply_token: str):
+    """處理學習分析功能 - 通過主代理人"""
+    try:
+        print(f"📊 處理學習分析請求：用戶={user_id}")
+        
+        # 檢查用戶是否已綁定
+        from accessories import mongo
+        user = mongo.db.user.find_one({"lineId": user_id})
+        
+        if not user:
+            reply_text(reply_token, "❌ 請先綁定您的帳號才能使用學習分析功能！\n\n請在網站上生成QR Code完成綁定。")
+            return
+        
+        # 發送思考中提示
+        send_thinking_message(reply_token)
+        
+        # 通過主代理人處理學習分析請求
+        response = call_main_agent("請提供我的學習分析報告，包括掌握度、弱點分析和學習建議", user_id)
+        push_text_message(user_id, response)
+        
+    except Exception as e:
+        print(f"❌ 學習分析處理失敗: {e}")
+        reply_text(reply_token, "❌ 學習分析功能暫時無法使用，請稍後再試。")
 
-def calendar_placeholder() -> str:
-    """行事曆功能 - 開發中"""
-    return "📅 行事曆功能\n\n🚧 此功能正在開發中，敬請期待！\n\n💡 功能預覽：\n• 學習計畫排程\n• 考試提醒\n• 作業截止日\n• 個人化行事曆"
+# 移除複雜的格式化函數，讓主代理人處理
+
+def handle_goal_setting(user_id: str, reply_token: str):
+    """處理目標設定功能 - 通過主代理人"""
+    try:
+        print(f"🎯 處理目標設定請求：用戶={user_id}")
+        
+        # 檢查用戶是否已綁定
+        from accessories import mongo
+        user = mongo.db.user.find_one({"lineId": user_id})
+        
+        if not user:
+            reply_text(reply_token, "❌ 請先綁定您的帳號才能使用目標設定功能！\n\n請在網站上生成QR Code完成綁定。")
+            return
+        
+        # 發送思考中提示
+        send_thinking_message(reply_token)
+        
+        # 通過主代理人處理目標設定請求
+        response = call_main_agent("請幫我查看和設定學習目標，包括每日題數、掌握度目標和學習計畫", user_id)
+        push_text_message(user_id, response)
+        
+    except Exception as e:
+        print(f"❌ 目標設定處理失敗: {e}")
+        reply_text(reply_token, "❌ 目標設定功能暫時無法使用，請稍後再試。")
+
+# 移除複雜的格式化函數，讓主代理人處理
+
+def handle_news(user_id: str, reply_token: str):
+    """處理最新消息功能 - 通過主代理人"""
+    try:
+        print(f"📰 處理最新消息請求：用戶={user_id}")
+        
+        # 發送思考中提示
+        send_thinking_message(reply_token)
+        
+        # 通過主代理人處理最新消息請求
+        response = call_main_agent("請提供最新的考試資訊、系統更新和學習資源推薦", user_id)
+        push_text_message(user_id, response)
+        
+    except Exception as e:
+        print(f"❌ 最新消息處理失敗: {e}")
+        reply_text(reply_token, "❌ 最新消息功能暫時無法使用，請稍後再試。")
+
+# 移除複雜的 API 調用函數，讓主代理人處理
+
+def handle_calendar(user_id: str, reply_token: str):
+    """處理行事曆功能 - 通過主代理人"""
+    try:
+        print(f"📅 處理行事曆請求：用戶={user_id}")
+        
+        # 檢查用戶是否已綁定
+        from accessories import mongo
+        user = mongo.db.user.find_one({"lineId": user_id})
+        
+        if not user:
+            reply_text(reply_token, "❌ 請先綁定您的帳號才能使用行事曆功能！\n\n請在網站上生成QR Code完成綁定。")
+            return
+        
+        # 發送思考中提示
+        send_thinking_message(reply_token)
+        
+        # 通過主代理人處理行事曆請求
+        response = call_main_agent("請提供我的學習計畫排程、考試提醒和重要日期，並幫我管理行事曆", user_id)
+        push_text_message(user_id, response)
+        
+    except Exception as e:
+        print(f"❌ 行事曆處理失敗: {e}")
+        reply_text(reply_token, "❌ 行事曆功能暫時無法使用，請稍後再試。")
+
+# 移除複雜的選單函數，讓主代理人處理
+
+# 移除複雜的行事曆處理函數，讓主代理人處理
+
+# 移除複雜的事件創建函數，讓主代理人處理
+
+def handle_random_knowledge(user_id: str, reply_token: str):
+    """處理隨機知識功能"""
+    try:
+        print(f"📚 處理隨機知識請求：用戶={user_id}")
+        
+        # 調用隨機知識工具
+        response = call_main_agent("請提供一個隨機的資管相關知識點，包含詳細說明和學習建議", user_id)
+        reply_text(reply_token, response)
+        
+    except Exception as e:
+        print(f"❌ 隨機知識處理失敗: {e}")
+        reply_text(reply_token, "❌ 隨機知識功能暫時無法使用，請稍後再試。")
 
 # ==================== 測驗輪盤樣板 ====================
 

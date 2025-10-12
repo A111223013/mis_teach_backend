@@ -140,21 +140,33 @@ def check_calendar_notifications():
             try:
                 notification = item['notification']
                 student_email = notification.get('student_email')
-                event_title = notification.get('title')
-                event_content = notification.get('content', '')
+                user_id = notification.get('user_id')
+                event_title = notification.get('event_title') or notification.get('title')
+                event_content = notification.get('event_content') or notification.get('content', '')
                 event_date = notification.get('event_date', '')
                 
                 if student_email and event_title:
-                    # 在應用程式上下文中發送郵件
+                    # 發送郵件通知
+                    mail_success = False
                     with app.app_context():
-                        success = send_calendar_notification(
+                        mail_success = send_calendar_notification(
                             student_email=student_email,
                             event_title=event_title,
                             event_content=event_content,
                             event_date=event_date
                         )
                     
-                    if success:
+                    # 發送 LINE Bot 通知
+                    line_success = False
+                    if user_id:
+                        line_success = send_line_calendar_notification(
+                            user_id=user_id,
+                            event_title=event_title,
+                            event_content=event_content,
+                            event_date=event_date
+                        )
+                    
+                    if mail_success or line_success:
                         # 發送成功後從 Redis List 移除
                         redis_client.lrem('event_notification', 1, item['notification_data'])
                         print(f"✅ 通知已發送並從 Redis List 移除: event_id {item['event_id']}")
@@ -167,6 +179,41 @@ def check_calendar_notifications():
                 
     except Exception as e:
         print(f"檢查行事曆通知時發生錯誤: {e}")
+
+def send_line_calendar_notification(user_id: str, event_title: str, event_content: str, event_date: str) -> bool:
+    """發送 LINE Bot 行事曆通知"""
+    try:
+        from src.linebot import line_bot_api, PushMessageRequest, TextMessage
+        
+        # 格式化事件日期
+        try:
+            event_datetime = datetime.fromisoformat(event_date.replace('Z', '+00:00'))
+            formatted_date = event_datetime.strftime('%Y年%m月%d日 %H:%M')
+        except:
+            formatted_date = event_date
+        
+        # 創建通知訊息
+        notification_text = f"""🔔 行事曆提醒
+
+📅 事件：{event_title}
+⏰ 時間：{formatted_date}
+{f'📝 內容：{event_content}' if event_content else ''}
+"""
+        
+        # 發送 LINE 訊息
+        line_bot_api.push_message(
+            PushMessageRequest(
+                to=user_id,
+                messages=[TextMessage(text=notification_text)]
+            )
+        )
+        
+        print(f"✅ LINE 行事曆通知已發送給用戶 {user_id}")
+        return True
+        
+    except Exception as e:
+        print(f"❌ 發送 LINE 行事曆通知失敗: {e}")
+        return False
 
 def run_scheduler():
     """運行背景排程器"""
@@ -182,8 +229,6 @@ with app.app_context():
     init_calendar_tables() 
     scheduler_thread = threading.Thread(target=run_scheduler, daemon=True)
     scheduler_thread.start()
-    print("✅ 行事曆通知排程器已啟動")
-
     # 初始化MongoDB數據
     init_mongo_data()
     initialize_mis_teach_db()
