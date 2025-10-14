@@ -17,21 +17,35 @@ class AnswerGrader:
         if not questions_data:
             return []
         
+        print(f"\n{'='*80}")
+        print(f"🚀 [批量評分] 開始批量評分")
+        print(f"{'='*80}")
+        
         # 獲取可用的API金鑰數量
         api_keys_count = get_api_keys_count()
         total_questions = len(questions_data)
+        
+        print(f"📊 評分資訊:")
+        print(f"   總題目數: {total_questions}")
+        print(f"   可用 API 金鑰數: {api_keys_count}")
 
         # 計算每個API金鑰處理的題目數量
         questions_per_key = total_questions // api_keys_count
         remainder = total_questions % api_keys_count
+        
+        print(f"   每個金鑰處理: {questions_per_key} 題")
+        print(f"   剩餘題目: {remainder} 題")
 
         # 分配題目給不同的API金鑰
         all_results = [None] * total_questions  # 預分配結果陣列
+        
+        print(f"\n🔧 建立並行處理執行緒池 (max_workers={api_keys_count})...")
         
         with concurrent.futures.ThreadPoolExecutor(max_workers=api_keys_count) as executor:
             futures = []
             start_index = 0
             
+            print(f"\n📦 分配任務給各個 API 金鑰:")
             for i in range(api_keys_count):
                 # 計算這個金鑰要處理的題目數量
                 batch_size = questions_per_key + (1 if i < remainder else 0)
@@ -40,6 +54,8 @@ class AnswerGrader:
                 # 提取這批題目
                 questions_batch = questions_data[start_index:end_index]
                 batch_indices = list(range(start_index, end_index))  # 記錄原始索引
+                
+                print(f"   API 金鑰 {i+1}: 題目 {start_index+1}-{end_index} (共 {batch_size} 題)")
                 
                 # 提交任務
                 future = executor.submit(
@@ -52,10 +68,16 @@ class AnswerGrader:
                 
                 start_index = end_index
             
+            print(f"\n⏳ 等待所有批次完成...")
+            completed_count = 0
+            
             # 收集結果
             for future in concurrent.futures.as_completed(futures):
                 try:
                     batch_results = future.result()
+                    completed_count += 1
+                    print(f"✅ 批次 {completed_count}/{api_keys_count} 完成 (處理了 {len(batch_results)} 題)")
+                    
                     # 將結果放入正確的位置
                     for result in batch_results:
                         if result and 'original_index' in result:
@@ -63,9 +85,17 @@ class AnswerGrader:
                             all_results[original_idx] = result
                 except Exception as e:
                     print(f"❌ 並行處理批次失敗: {e}")
+                    import traceback
+                    traceback.print_exc()
         
         # 過濾掉None值（如果有錯誤的話）
         final_results = [result for result in all_results if result is not None]
+        
+        print(f"\n{'='*80}")
+        print(f"✅ 批量評分完成！")
+        print(f"   成功評分: {len(final_results)}/{total_questions} 題")
+        print(f"   失敗: {total_questions - len(final_results)} 題")
+        print(f"{'='*80}\n")
 
         return final_results
     
@@ -73,9 +103,20 @@ class AnswerGrader:
         """處理一批題目（單個API金鑰）"""
         results = []
         
+        # 如果沒有題目，直接返回空結果
+        if not questions_batch or not batch_indices:
+        
+            return results
+        
+    
+        
+        
         for i, question_data in enumerate(questions_batch):
             try:
                 original_index = batch_indices[i]
+                question_id = question_data.get('question_id', 'Unknown')
+                
+                print(f"\n🔹 [API金鑰 {api_key_index+1}] 正在評分第 {original_index+1} 題 (ID: {question_id})")
                 
                 # 為這個批次創建專用的Gemini模型實例
                 batch_model = self._create_batch_model(api_key_index)
@@ -102,8 +143,13 @@ class AnswerGrader:
                 }
                 results.append(result)
                 
+                print(f"   ✅ 題目 {original_index+1} 評分完成: {score} 分 ({'正確' if is_correct else '錯誤'})")
+                
             except Exception as e:
-                print(f"  ❌ API金鑰 {api_key_index+1} 評分題目 {batch_indices[i]+1} 失敗: {e}")
+                print(f"   ❌ API金鑰 {api_key_index+1} 評分題目 {batch_indices[i]+1} 失敗: {e}")
+                import traceback
+                traceback.print_exc()
+                
                 # 創建錯誤結果
                 error_result = {
                     'question_id': question_data.get('question_id', ''),
@@ -114,6 +160,10 @@ class AnswerGrader:
                     'api_key_used': api_key_index + 1
                 }
                 results.append(error_result)
+        
+        print(f"\n{'─'*80}")
+        print(f"✅ [API 金鑰 {api_key_index+1}] 批次處理完成！成功 {len(results)} 題")
+        print(f"{'─'*80}\n")
         
         return results
     
@@ -144,6 +194,49 @@ class AnswerGrader:
             print(f"⚠️ 獲取指定索引API金鑰失敗，使用隨機選擇: {e}")
             return get_api_key()
     
+    def _describe_image(self, model, image_parts: List) -> str:
+        """先讓 AI 詳細描述圖片內容"""
+        try:
+            print(f"\n{'='*80}")
+            print(f"🖼️  [圖片描述階段] 開始分析圖片")
+            print(f"{'='*80}")
+            print(f"📊 圖片數量: {len(image_parts)}")
+            
+            describe_prompt = """
+請詳細描述這張圖片的內容，包括：
+1. 圖片中的所有文字（包括手寫文字）
+2. 圖片中的公式、計算過程
+3. 圖片中的圖形、圖表、箭頭、符號
+4. 圖片的整體結構和布局
+5. 任何可能與學習、答題相關的內容
+
+請盡可能詳細地描述，以便用於評分。如果有多張圖片，請分別描述每張圖片。
+"""
+            # 組合提示詞和圖片
+            contents = [describe_prompt] + image_parts
+            
+            print(f"🔄 正在發送圖片給 Gemini 進行描述...")
+            print(f"📦 傳送內容: 1 個提示詞 + {len(image_parts)} 張圖片")
+            
+            response = model.generate_content(contents)
+            description = response.text.strip()
+            
+            print(f"\n✅ 圖片描述完成！")
+            print(f"{'─'*80}")
+            print(f"📝 AI 描述內容:")
+            print(f"{'─'*80}")
+            print(f"{description}")
+            print(f"{'─'*80}")
+            print(f"📏 描述長度: {len(description)} 字元\n")
+            
+            return description
+            
+        except Exception as e:
+            print(f"❌ 圖片描述失敗: {e}")
+            import traceback
+            traceback.print_exc()
+            return "無法描述圖片內容"
+    
     def _ai_grade_answer_with_model(self, model, user_answer: Any, question_text: str, correct_answer: str, 
                                     options: List[str], question_type: str) -> Tuple[bool, float, Dict[str, Any]]:
         """使用指定的模型進行AI評分 - 使用舊版 SDK"""
@@ -152,79 +245,145 @@ class AnswerGrader:
             from PIL import Image
             import io
             
-            prompt = self._build_grading_prompt(user_answer, question_text, correct_answer, options, question_type)
+            print(f"\n{'='*80}")
+            print(f"🎯 [評分階段] 開始處理答案")
+            print(f"{'='*80}")
+            print(f"📝 題目類型: {question_type}")
+            print(f"📄 答案類型: {type(user_answer).__name__}")
+            
+            # 強制使用新版 Google GenAI SDK 方式處理圖片
+            def _is_data_image(s: str) -> bool:
+                try:
+                    result = isinstance(s, str) and s.startswith('data:image/')
+                    if result:
+                        return result
+                except Exception:
+                    return False
+
+            image_parts = []
+            text_parts = []
+            image_description = ""
+            
+            # 收集所有圖片，使用 PIL Image 方式（兼容舊版 SDK）
+            if isinstance(user_answer, list):
+                print(f"📋 檢測到陣列答案，共 {len(user_answer)} 項")
+                # 多圖片：收集所有 data:image/*
+                for i, ua in enumerate(user_answer):
+                    if _is_data_image(ua):
+                        try:
+                            print(f"🖼️  項目 {i+1}: 檢測到圖片資料")
+                            
+                            header, b64 = ua.split(',', 1)
+                            mime = header.split(':', 1)[1].split(';', 1)[0]
+                            print(f"   📎 MIME 類型: {mime}")
+                            print(f"   📊 Base64 資料長度: {len(b64)} 字元")
+                            
+                            image_data = base64.b64decode(b64)
+                            print(f"   ✅ Base64 解碼成功，位元組大小: {len(image_data)} bytes ({len(image_data)/1024:.2f} KB)")
+                            
+                            # 使用 PIL Image 轉換（兼容舊版 SDK）
+                            image = Image.open(io.BytesIO(image_data))
+                            print(f"   🔍 原始圖片格式: {image.format}, 模式: {image.mode}, 尺寸: {image.size}")
+                            
+                            # 確保圖片是 RGB 模式（舊版 SDK 兼容性更好）
+                            if image.mode != 'RGB':
+                                print(f"   🔄 轉換圖片模式: {image.mode} -> RGB")
+                                image = image.convert('RGB')
+                            
+                            image_parts.append(image)
+                            print(f"   ✅ 成功創建圖片物件 (尺寸: {image.size}, 模式: {image.mode})")
+                        except Exception as e:
+                            print(f"   ❌ 處理圖片失敗: {e}")
+                            import traceback
+                            traceback.print_exc()
+                            continue
+                    else:
+                        print(f"📝 項目 {i+1}: 文字資料 - {str(ua)[:50]}...")
+                        text_parts.append(str(ua))
+            elif _is_data_image(user_answer):
+                print(f"🖼️  檢測到單張圖片")
+                try:
+                    header, b64 = user_answer.split(',', 1)
+                    mime = header.split(':', 1)[1].split(';', 1)[0]
+                    print(f"   📎 MIME 類型: {mime}")
+                    print(f"   📊 Base64 資料長度: {len(b64)} 字元")
+                    
+                    image_data = base64.b64decode(b64)
+                    print(f"   ✅ Base64 解碼成功，位元組大小: {len(image_data)} bytes ({len(image_data)/1024:.2f} KB)")
+                    
+                    # 使用 PIL Image 轉換（兼容舊版 SDK）
+                    image = Image.open(io.BytesIO(image_data))
+                    print(f"   🔍 原始圖片格式: {image.format}, 模式: {image.mode}, 尺寸: {image.size}")
+                    
+                    # 確保圖片是 RGB 模式（舊版 SDK 兼容性更好）
+                    if image.mode != 'RGB':
+                        print(f"   🔄 轉換圖片模式: {image.mode} -> RGB")
+                        image = image.convert('RGB')
+                    
+                    # 驗證圖片數據（檢查是否為空白或純色）
+                    import numpy as np
+                    img_array = np.array(image)
+                    unique_colors = len(np.unique(img_array.reshape(-1, img_array.shape[2]), axis=0))
+                    print(f"   🎨 圖片包含 {unique_colors} 種不同顏色")
+                    
+                    if unique_colors == 1:
+                        print(f"   ⚠️  警告：圖片只有單一顏色，可能是空白圖片！")
+                        # 顯示該顏色的 RGB 值
+                        single_color = img_array[0, 0]
+                        print(f"   🎨 唯一顏色 RGB: {single_color}")
+                    
+                    image_parts.append(image)
+                    print(f"   ✅ 成功創建圖片物件 (尺寸: {image.size}, 模式: {image.mode})")
+                except Exception as e:
+                    print(f"   ❌ 處理圖片失敗: {e}")
+                    import traceback
+                    traceback.print_exc()
+            else:
+                print(f"📝 檢測到文字答案: {str(user_answer)[:100]}...")
+                text_parts.append(str(user_answer))
+
+            print(f"\n📊 收集結果:")
+            print(f"   🖼️  圖片數量: {len(image_parts)}")
+            print(f"   📝 文字片段: {len(text_parts)}")
+
+            # 如果有圖片，先創建一個新的 Gemini 來描述圖片
+            if image_parts and model:
+                try:
+                    print(f"\n🔧 創建專門的圖片描述模型...")
+                    # 創建專門用於描述圖片的模型實例
+                    description_model = init_gemini('gemini-2.5-flash')
+                    print(f"✅ 描述模型創建成功")
+                    image_description = self._describe_image(description_model, image_parts)
+                except Exception as e:
+                    print(f"⚠️ 創建描述模型失敗，使用原模型: {e}")
+                    image_description = self._describe_image(model, image_parts)
+            
+            # 構建評分提示（包含圖片描述）
+            print(f"\n{'='*80}")
+            print(f"📝 [評分提示] 構建評分提示")
+            print(f"{'='*80}")
+            if image_description:
+                print(f"✅ 包含圖片描述 (長度: {len(image_description)} 字元)")
+            else:
+                print(f"ℹ️  無圖片描述")
+                
+            prompt = self._build_grading_prompt(
+                user_answer, 
+                question_text, 
+                correct_answer, 
+                options, 
+                question_type,
+                image_description  # 傳入圖片描述
+            )
+            print(f"✅ 評分提示構建完成 (總長度: {len(prompt)} 字元)")
             
             if model:
-                
-                # 強制使用新版 Google GenAI SDK 方式處理圖片
-                def _is_data_image(s: str) -> bool:
-                    try:
-                        result = isinstance(s, str) and s.startswith('data:image/')
-                        if result:
-                            return result
-                    except Exception:
-                        return False
-
-                image_parts = []
-                text_parts = []
-                
-                
-                # 收集所有圖片，強制使用新版 types.Part.from_bytes
-                if isinstance(user_answer, list):
-                    # 多圖片：收集所有 data:image/*
-                    for i, ua in enumerate(user_answer):
-                        if _is_data_image(ua):
-                            try:
-                                # 強制使用新版 SDK
-                                import base64
-                                try:
-                                    import google.genai
-                                    from google.genai import types
-                                except ImportError:
-                                    from google import genai as google_genai
-                                    from google.genai import types
-                                
-                                header, b64 = ua.split(',', 1)
-                                mime = header.split(':', 1)[1].split(';', 1)[0]
-                                
-                                image_data = base64.b64decode(b64)
-                                
-                                image_part = types.Part.from_bytes(data=image_data, mime_type=mime)
-                                image_parts.append(image_part)
-                            except Exception as e:
-                                import traceback
-                                traceback.print_exc()
-                                continue
-                        else:
-                            text_parts.append(str(ua))
-                elif _is_data_image(user_answer):
-                    try:
-                        # 強制使用新版 SDK
-                        import base64
-                        try:
-                            import google.genai
-                            from google.genai import types
-                        except ImportError:
-                            from google import genai as google_genai
-                            from google.genai import types
-                        
-                        header, b64 = user_answer.split(',', 1)
-                        mime = header.split(':', 1)[1].split(';', 1)[0]
-                        
-                        image_data = base64.b64decode(b64)
-                        
-                        image_part = types.Part.from_bytes(data=image_data, mime_type=mime)
-                        image_parts.append(image_part)
-                    except Exception as e:
-                        import traceback
-                        traceback.print_exc()
-                else:
-                    text_parts.append(str(user_answer))
-
                 # 統一處理：優先使用圖片模式
                 if image_parts:
                     try:
-                        
+                        print(f"\n{'='*80}")
+                        print(f"🚀 [發送請求] 使用圖片模式評分")
+                        print(f"{'='*80}")
                         # 組合內容：先放提示詞，後放圖片
                         contents = [prompt] + image_parts
                         
@@ -232,35 +391,62 @@ class AnswerGrader:
                         if text_parts:
                             contents.append(f"額外文字內容: {' '.join(text_parts)}")
                         
+                        print(f"📦 傳送內容組成:")
                         for i, item in enumerate(contents):
                             if hasattr(item, '__class__') and 'Part' in str(type(item)):
-                                print(f"🔍 [DEBUG] 項目 {i}: {item.__class__.__name__} (圖片 Part 物件)")
+                                print(f"   項目 {i+1}: {item.__class__.__name__} (圖片 Part 物件)")
                             else:
-                                print(f"🔍 [DEBUG] 項目 {i}: {item.__class__.__name__} - {str(item)[:50]}...")
+                                preview = str(item)[:80].replace('\n', ' ')
+                                print(f"   項目 {i+1}: 文字 - {preview}...")
                         
+                        print(f"\n🔄 正在發送請求給 Gemini 進行評分...")
                         response = model.generate_content(contents)
+                        print(f"✅ 收到 Gemini 回應")
                         
                     except Exception as e:
+                        print(f"❌ 圖片模式評分失敗，降級為純文字模式: {e}")
                         import traceback
                         traceback.print_exc()
+                        print(f"\n🔄 使用純文字模式重試...")
                         response = model.generate_content(prompt)
                 else:
+                    print(f"\n{'='*80}")
+                    print(f"🚀 [發送請求] 使用純文字模式評分")
+                    print(f"{'='*80}")
+                    print(f"🔄 正在發送請求給 Gemini...")
                     response = model.generate_content(prompt)
+                    print(f"✅ 收到 Gemini 回應")
                 
-
+                print(f"\n{'='*80}")
+                print(f"🔍 [解析回應] AI 評分結果")
+                print(f"{'='*80}")
+                print(f"📄 原始回應長度: {len(response.text)} 字元")
+                print(f"{'─'*80}")
+                print(f"原始回應內容:")
+                print(f"{response.text}")
+                print(f"{'─'*80}")
                 
                 result = self._parse_ai_response(response.text)
                 if result:
                     # 確保評分邏輯一致性：分數 ≥ 85 的答案被標記為正確
                     score = result.get('score', 0)
                     is_correct = score >= 85
+                    
+                    print(f"\n✅ 解析成功！")
+                    print(f"   是否正確: {is_correct}")
+                    print(f"   分數: {score}")
+                    print(f"   反饋: {result.get('feedback', {})}")
+                    
                     # 如果AI的判斷與我們的標準不一致，進行修正
                     if result.get('is_correct') != is_correct:
+                        print(f"⚠️  修正 is_correct: {result.get('is_correct')} -> {is_correct}")
                         result['is_correct'] = is_correct
                     
+                    print(f"{'='*80}\n")
                     return result['is_correct'], result['score'], result['feedback']
                 else:
-                    print(f"🔍 [DEBUG] AI評分失敗: {response.text}")
+                    print(f"❌ 解析失敗！無法從回應中提取評分資訊")
+                    print(f"{'='*80}\n")
             return False, 0, {'error': 'AI評分失敗'}
             
         except Exception as e:
@@ -270,20 +456,32 @@ class AnswerGrader:
             return False, 0, {'error': f'評分失敗: {str(e)}'}
     
     def _build_grading_prompt(self, user_answer: str, question_text: str, correct_answer: str, 
-                             options: List[str], question_type: str) -> str:
+                             options: List[str], question_type: str, image_description: str = "") -> str:
         """構建AI評分提示"""
         # 根據題目類型添加特定的評分指導
         type_guidance = self._get_type_specific_guidance(question_type)
         
+        # 如果有圖片描述，加入到提示中
+        image_info = ""
+        if image_description:
+            image_info = f"""
+
+**圖片內容描述（由AI預先分析）**：
+{image_description}
+
+**請注意**：上述圖片描述是AI預先分析的結果，請結合圖片本身和這個描述來進行評分。
+"""
+        
         prompt = f"""
-請作為一位專業的MIS課程教師，對以下學生答案進行評分，請你先描述一遍他圖片的內容，接下來再根據題目類型、內容和相關東西做批改。
+請作為一位專業的MIS課程教師，對以下學生答案進行評分。
 
 **評分任務說明**：
 請記住你只需要評分學生的答案，不要評分正確答案。正確答案只是用來參考比較的標準。
 若學生以「圖片」作答：
-- 詳細列出你從圖片中「讀到的文字、公式、步驟與結果」。
+- 我們已經預先用AI分析過圖片內容，請參考圖片描述和圖片本身進行評分。
 - 只要圖片中有與題目相關的計算/公式/圖形元素，應給予相對應的分數（可給部分分）。
 
+{image_info}
 
 **題目資訊**：
 題目類型：{question_type}
@@ -297,7 +495,7 @@ class AnswerGrader:
 選項：{options if options else '無'}
 
 **重要說明**：
-- 如果學生答案是圖片（data:image/... 或多張圖），請先列出你辨識到的內容，再進行評分。
+- 如果學生答案是圖片（data:image/... 或多張圖），請結合上方的圖片描述和圖片本身進行評分。
 - 對於繪圖或手寫題，依據圖片內容與題目要求的匹配度評分，可給部分分。
 - 圖片中若同時包含簽名與作答，簽名須被忽略，不得因此判0分。
 - **對於選擇題**：比較學生答案與正確答案是否一致，不考慮大小寫差異
