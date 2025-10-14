@@ -10,7 +10,7 @@ class AnswerGrader:
     
     def __init__(self):
         # 初始化Gemini API
-        self.model = init_gemini('gemini-2.0-flash')
+        self.model = init_gemini('gemini-2.5-flash')
     
     def batch_grade_ai_questions(self, questions_data: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """批量評分AI題目 - 並行處理版本"""
@@ -123,7 +123,7 @@ class AnswerGrader:
             # 使用指定的API金鑰索引
             api_key = self._get_api_key_by_index(api_key_index)
             # 使用 accessories 中的 init_gemini 函數
-            model = init_gemini('gemini-2.0-flash')
+            model = init_gemini('gemini-2.5-flash')
             return model
         except Exception as e:
             print(f"❌ 創建批次模型失敗: {e}")
@@ -146,9 +146,11 @@ class AnswerGrader:
     
     def _ai_grade_answer_with_model(self, model, user_answer: Any, question_text: str, correct_answer: str, 
                                     options: List[str], question_type: str) -> Tuple[bool, float, Dict[str, Any]]:
-        """使用指定的模型進行AI評分"""
+        """使用指定的模型進行AI評分 - 使用舊版 SDK"""
         try:
-            # 所有題目都使用AI進行評分，包括選擇題
+            import base64
+            from PIL import Image
+            import io
             
             prompt = self._build_grading_prompt(user_answer, question_text, correct_answer, options, question_type)
             
@@ -263,6 +265,8 @@ class AnswerGrader:
             
         except Exception as e:
             print(f"❌ AI評分異常: {str(e)}")
+            import traceback
+            traceback.print_exc()
             return False, 0, {'error': f'評分失敗: {str(e)}'}
     
     def _build_grading_prompt(self, user_answer: str, question_text: str, correct_answer: str, 
@@ -324,7 +328,7 @@ class AnswerGrader:
     "is_correct": true/false,
     "score": 分數(0-100),
     "feedback": {{
-        "explanation": "評分說明",
+        "explanation": "評分說明(如果有圖描述一下圖片內容)",
         "strengths": "優點",
         "weaknesses": "需要改進的地方",
         "suggestions": "學習建議"
