@@ -18,6 +18,7 @@ from accessories import mail, redis_client, send_calendar_notification
 import threading
 import schedule
 from src.dashboard import init_calendar_tables
+from neo4j.exceptions import ServiceUnavailable
 
 
 from src.ai_teacher import ai_teacher_bp
@@ -232,8 +233,18 @@ with app.app_context():
     # 初始化MongoDB數據
     init_mongo_data()
     initialize_mis_teach_db()
-    init_neo4j()  # 初始化Neo4j驅動
-    init_neo4j_knowledge_graph()
+    
+    # 初始化Neo4j（如果服務未運行則跳過）
+    try:
+        init_neo4j()  # 初始化Neo4j驅動
+        init_neo4j_knowledge_graph()
+        print("✓ Neo4j 知識圖譜初始化成功")
+    except ServiceUnavailable as e:
+        print("⚠ 警告: Neo4j 服務未運行，跳過知識圖譜初始化")
+        print(f"  詳細資訊: {str(e)}")
+    except Exception as e:
+        print(f"⚠ 警告: Neo4j 初始化時發生錯誤，跳過知識圖譜初始化")
+        print(f"  詳細資訊: {str(e)}")
 
 if __name__ == '__main__':
     app.run(debug=True)
