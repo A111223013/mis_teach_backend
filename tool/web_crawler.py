@@ -1,67 +1,77 @@
-# tool/ithome_crawler.py
-from flask import Blueprint, jsonify
 import requests
 from lxml import html
+import json
+import time
+import os
 
-ithome_bp = Blueprint('ithome', __name__)
+# ======== 設定區 ========
+BASE_URL = "https://www.ithome.com.tw/latest?page={}"
+OUTPUT_FILE = "data/ithome_news.json"  # 你的指定路徑
+TOTAL_PAGES = 15  # 要爬的頁數
+DELAY_SECONDS = 1  # 每頁延遲時間（秒）
+# =========================
 
-@ithome_bp.route('/api/news', methods=['GET'])
-def get_latest_ithome_news():
-    """爬取 iThome 首頁前三則新聞（固定 XPath + 迴圈）"""
-    url = "https://www.ithome.com.tw"
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-    }
+# 確保資料夾存在
+os.makedirs(os.path.dirname(OUTPUT_FILE), exist_ok=True)
 
-    try:
-        response = requests.get(url, headers=headers, timeout=10)
-        response.raise_for_status()
-        tree = html.fromstring(response.content)
+all_news = []
 
-        news_data = []
+for page in range(1, TOTAL_PAGES + 1):
+    url = BASE_URL.format(page)
+    print(f"📄 正在爬取第 {page} 頁: {url}")
 
-        for i in range(1, 4):  # 抓前三則
-            base_xpath = f'//*[@id="block-views-latest-news-block-3"]/div/div[1]/div[{i}]/div/span/div'
+    response = requests.get(url, headers={"User-Agent": "Mozilla/5.0"})
+    response.encoding = "utf-8"
+    tree = html.fromstring(response.text)
 
-            # 1. 圖片
-            img_xpath = f'{base_xpath}/p[1]/a/img/@src'
-            img = tree.xpath(img_xpath)
-            img_url = img[0] if img else ''
+    items = tree.xpath('/html/body/div[4]/div/section/div/div[1]/div')
+    print(f"  └─ 共找到 {len(items)} 筆新聞")
 
-            # 2. Tags（文字 + href）
-            tags_xpath = f'{base_xpath}/p[2]/a'
-            tags_nodes = tree.xpath(tags_xpath)
-            tags = [{"text": t.text.strip(), "href": t.get("href")} for t in tags_nodes if t.text]
+    for i, item in enumerate(items, start=1):
+        try:
+            # image
+            img = item.xpath(f'./div/span/div/p[1]/a/img/@src')
+            img_url = img[0] if img else ""
 
-            # 3. 標題（文字 + href）
-            title_xpath = f'{base_xpath}/p[3]/a'
-            title_nodes = tree.xpath(title_xpath)
-            title_text = title_nodes[0].text.strip() if title_nodes else ''
-            title_href = title_nodes[0].get('href') if title_nodes else ''
-            full_href = f"https://www.ithome.com.tw{title_href}" if title_href else ''
+            # image href
+            img_href = item.xpath(f'./div/span/div/p[1]/a/@href')
+            href = img_href[0] if img_href else ""
 
-            # 4. 副標（summary）
-            summary_xpath = f'{base_xpath}/div/text()'
-            summary_nodes = tree.xpath(summary_xpath)
-            summary_text = summary_nodes[0].strip() if summary_nodes else ''
+            # tags
+            tags = item.xpath(f'./div/span/div/p[2]/a')
+            tags_data = [{"text": t.text_content().strip(), "href": t.get("href")} for t in tags]
 
-            # 5. 日期
-            date_xpath = f'{base_xpath}/p[4]/text()'
-            date_nodes = tree.xpath(date_xpath)
-            date_text = date_nodes[0].strip() if date_nodes else ''
+            # title
+            title_elem = item.xpath(f'./div/span/div/p[3]/a')
+            title_data = {"text": "", "href": ""}
+            if title_elem:
+                title_data["text"] = title_elem[0].text_content().strip()
+                title_data["href"] = title_elem[0].get("href")
 
-            # 整理成一筆新聞資料
-            news_data.append({
-                "headerType": "image",
-                "headerContent": img_url,
-                "tags": tags,
-                "headline": title_text,
-                "subheadline": summary_text,
-                "date": date_text,
-                "url": full_href
+            # summary
+            summary_elem = item.xpath(f'./div/span/div/div/p/text()')
+            summary_text = summary_elem[0].strip() if summary_elem else ""
+
+            # date
+            date_elem = item.xpath(f'./div/span/div/p[4]/text()')
+            date_text = date_elem[0].strip() if date_elem else ""
+
+            all_news.append({
+                "image": img_url,
+                "href": href,
+                "tags": tags_data,
+                "title": title_data,
+                "summary": summary_text,
+                "date": date_text
             })
 
-        return jsonify(news_data)
+        except Exception as e:
+            print(f"❌ 第 {page} 頁第 {i} 筆發生錯誤: {e}")
 
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+    time.sleep(DELAY_SECONDS)
+
+# 儲存成 JSON 檔案
+with open(OUTPUT_FILE, "w", encoding="utf-8") as f:
+    json.dump(all_news, f, ensure_ascii=False, indent=2)
+
+print(f"\n✅ 爬取完成，共 {len(all_news)} 筆新聞已儲存到：{OUTPUT_FILE}")
