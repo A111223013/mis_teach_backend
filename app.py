@@ -29,7 +29,8 @@ from src.learning_analytics import analytics_bp
 from tool.insert_mongodb import initialize_mis_teach_db # 引入教材資料庫
 from tool.init_neo4j_knowledge_graph import init_neo4j_knowledge_graph  # 引入Neo4j知識圖譜初始化
 from accessories import init_neo4j  # 引入Neo4j驅動初始化
-from tool.web_crawler import ithome_bp  # 引入 iThome 爬蟲 Blueprint
+from tool.insert_test_school import check_and_insert_test_school  # 引入測試學校自動檢查
+from tool.web_crawler import ithome_bp 
 
 
 # 定義 BASE_DIR 為 backend 資料夾的絕對路徑
@@ -85,7 +86,7 @@ app.register_blueprint(web_ai_bp, url_prefix='/web-ai')
 app.register_blueprint(linebot_bp, url_prefix='/linebot') # 註冊 LINE Bot Blueprint
 app.register_blueprint(materials_bp, url_prefix="/materials")
 app.register_blueprint(analytics_bp, url_prefix='/api/learning-analytics')  # 註冊學習分析 API Blueprint
-app.register_blueprint(ithome_bp) # 新增的爬蟲 Blueprint
+app.register_blueprint(ithome_bp, url_prefix='/ithome') 
 
 # 創建靜態文件服務路由 (用於圖片)
 @app.route('/static/images/<path:filename>')
@@ -235,6 +236,9 @@ with app.app_context():
     # 初始化MongoDB數據
     init_mongo_data()
     initialize_mis_teach_db()
+    
+    # 自動檢查並插入測試學校資料
+    check_and_insert_test_school()
     
     # 初始化Neo4j（如果服務未運行則跳過）
     try:
