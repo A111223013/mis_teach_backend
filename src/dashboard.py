@@ -449,6 +449,257 @@ def get_goals_for_linebot(line_id: str) -> str:
         print(f"❌ LINE Bot 目標設定失敗: {e}")
         return "❌ 目標設定功能暫時無法使用，請稍後再試。"
 
+@dashboard_bp.route('/dashboard-stats', methods=['POST', 'OPTIONS'])
+@cross_origin()
+def get_dashboard_stats():
+    """獲取 dashboard 快速統計數據"""
+    if request.method == 'OPTIONS':
+        return '', 204
+    
+    auth_header = request.headers.get('Authorization')
+    if not auth_header:
+        return jsonify({'error': '未提供認證 token'}), 401
+    
+    try:
+        token = auth_header.split(" ")[1]
+        user_email = get_user_info(token, 'email')
+        
+        # 統計資料變數
+        stats = {
+            'today_quizzes': 0,
+            'week_study_time': 0,
+            'reviews_needed': 0,
+            'avg_score': 0
+        }
+        
+        with sqldb.engine.connect() as conn:
+            # 今日測驗次數
+            today_result = conn.execute(text("""
+                SELECT COUNT(*) FROM quiz_history 
+                WHERE user_email = :user_email 
+                AND DATE(created_at) = CURDATE()
+            """), {'user_email': user_email})
+            stats['today_quizzes'] = today_result.fetchone()[0]
+            
+            # 本週學習時間（小時）
+            week_result = conn.execute(text("""
+                SELECT SUM(total_time_taken) / 3600 as hours
+                FROM quiz_history 
+                WHERE user_email = :user_email 
+                AND created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)
+            """), {'user_email': user_email})
+            hours = week_result.fetchone()[0]
+            stats['week_study_time'] = round(hours if hours else 0, 1)
+            
+            # 待複習題數（從錯題統計）
+            reviews_result = conn.execute(text("""
+                SELECT COUNT(DISTINCT question_id) 
+                FROM error_questions 
+                WHERE user_email = :user_email
+                AND is_reviewed = 0
+            """), {'user_email': user_email})
+            stats['reviews_needed'] = reviews_result.fetchone()[0]
+            
+            # 最近平均得分
+            recent_score_result = conn.execute(text("""
+                SELECT AVG(average_score) 
+                FROM quiz_history 
+                WHERE user_email = :user_email 
+                AND created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)
+            """), {'user_email': user_email})
+            avg_score = recent_score_result.fetchone()[0]
+            stats['avg_score'] = round(avg_score if avg_score else 0, 1)
+        
+        refreshed_token = refresh_token(token)
+        return jsonify({'token': refreshed_token, 'stats': stats})
+    
+    except Exception as e:
+        print(f"❌ 獲取 dashboard 統計失敗: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+@dashboard_bp.route('/recent-activities', methods=['POST', 'OPTIONS'])
+@cross_origin()
+def get_recent_activities():
+    """獲取最近活動列表"""
+    if request.method == 'OPTIONS':
+        return '', 204
+    
+    auth_header = request.headers.get('Authorization')
+    if not auth_header:
+        return jsonify({'error': '未提供認證 token'}), 401
+    
+    try:
+        token = auth_header.split(" ")[1]
+        user_email = get_user_info(token, 'email')
+        
+        activities = []
+        
+        with sqldb.engine.connect() as conn:
+            # 獲取最近的測驗記錄（最多 5 筆）
+            quiz_result = conn.execute(text("""
+                SELECT id, quiz_template_id, quiz_type, average_score, 
+                       total_questions, correct_count, created_at
+                FROM quiz_history 
+                WHERE user_email = :user_email 
+                ORDER BY created_at DESC 
+                LIMIT 5
+            """), {'user_email': user_email})
+            
+            for row in quiz_result:
+                activities.append({
+                    'type': 'quiz',
+                    'id': row[0],
+                    'title': row[2] or '測驗',
+                    'quiz_id': row[1],
+                    'score': round(row[3], 1),
+                    'total': row[4],
+                    'correct': row[5],
+                    'date': row[6].isoformat() if row[6] else None
+                })
+            
+            # 獲取最近的錯題記錄（最多 3 筆）
+            error_result = conn.execute(text("""
+                SELECT question_id, concept_name, created_at
+                FROM error_questions 
+                WHERE user_email = :user_email 
+                AND is_reviewed = 0
+                ORDER BY created_at DESC 
+                LIMIT 3
+            """), {'user_email': user_email})
+            
+            for row in error_result:
+                activities.append({
+                    'type': 'error',
+                    'id': row[0],
+                    'title': '錯題提醒',
+                    'concept': row[1],
+                    'date': row[2].isoformat() if row[2] else None
+                })
+            
+            # 依日期排序（最新的在前）
+            activities.sort(key=lambda x: x.get('date', ''), reverse=True)
+        
+        refreshed_token = refresh_token(token)
+        return jsonify({'token': refreshed_token, 'activities': activities[:8]})
+    
+    except Exception as e:
+        print(f"❌ 獲取最近活動失敗: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+@dashboard_bp.route('/daily-checkin', methods=['POST', 'OPTIONS'])
+@cross_origin()
+def daily_checkin():
+    """每日簽到功能"""
+    if request.method == 'OPTIONS':
+        return '', 204
+    
+    auth_header = request.headers.get('Authorization')
+    if not auth_header:
+        return jsonify({'error': '未提供認證 token'}), 401
+    
+    try:
+        token = auth_header.split(" ")[1]
+        user_email = get_user_info(token, 'email')
+        user_name = get_user_info(token, 'name')
+        
+        today = datetime.now().strftime('%Y-%m-%d')
+        
+        # 使用 Redis 檢查今日是否已簽到
+        checkin_key = f'checkin:{user_email}:{today}'
+        already_checked = redis_client.exists(checkin_key)
+        
+        if already_checked:
+            # 已簽到，返回簽到信息
+            checkin_data = redis_client.get(checkin_key)
+            checkin_info = json.loads(checkin_data) if checkin_data else {}
+            
+            refreshed_token = refresh_token(token)
+            return jsonify({
+                'token': refreshed_token,
+                'already_checked': True,
+                'checkin_time': checkin_info.get('checkin_time'),
+                'message': '今日已簽到'
+            })
+        
+        # 執行簽到
+        checkin_time = datetime.now().isoformat()
+        
+        # 1. 保存到 Redis
+        redis_client.setex(checkin_key, 86400, json.dumps({
+            'user_email': user_email,
+            'user_name': user_name,
+            'checkin_time': checkin_time,
+            'date': today
+        }))
+        
+        # 2. 更新 MongoDB student 簽到記錄
+        # 獲取或創建學生的簽到統計
+        student = mongo.db.student.find_one({'email': user_email})
+      
+        
+        refreshed_token = refresh_token(token)
+        return jsonify({
+            'token': refreshed_token,
+            'already_checked': False,
+            'checkin_time': checkin_time,
+            'checkin_streak': new_streak,
+            'message': '簽到成功'
+        })
+    
+    except Exception as e:
+        print(f"❌ 簽到失敗: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+@dashboard_bp.route('/checkin-status', methods=['POST', 'OPTIONS'])
+@cross_origin()
+def get_checkin_status():
+    """獲取簽到狀態"""
+    if request.method == 'OPTIONS':
+        return '', 204
+    
+    auth_header = request.headers.get('Authorization')
+    if not auth_header:
+        return jsonify({'error': '未提供認證 token'}), 401
+    
+    try:
+        token = auth_header.split(" ")[1]
+        user_email = get_user_info(token, 'email')
+        
+        today = datetime.now().strftime('%Y-%m-%d')
+        checkin_key = f'checkin:{user_email}:{today}'
+        
+        # 檢查今日簽到狀態
+        checked_today = redis_client.exists(checkin_key)
+        
+        # 從 MongoDB 獲取簽到統計
+        student = mongo.db.student.find_one({'email': user_email})
+        
+        if student:
+            checkin_streak = student.get('checkin_streak', 0)
+            total_checkin_days = student.get('total_checkin_days', 0)
+            last_checkin_date = student.get('last_checkin_date', '')
+        else:
+            checkin_streak = 0
+            total_checkin_days = 0
+            last_checkin_date = ''
+        
+        refreshed_token = refresh_token(token)
+        return jsonify({
+            'token': refreshed_token,
+            'checked_today': bool(checked_today),
+            'checkin_streak': checkin_streak,
+            'total_checkin_days': total_checkin_days,
+            'last_checkin_date': last_checkin_date
+        })
+    
+    except Exception as e:
+        print(f"❌ 獲取簽到狀態失敗: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
 def get_calendar_for_linebot(line_id: str) -> str:
     """LINE Bot 專用的行事曆查看函數"""
     try:

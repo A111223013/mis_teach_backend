@@ -29,7 +29,8 @@ from src.learning_analytics import analytics_bp
 from tool.insert_mongodb import initialize_mis_teach_db # 引入教材資料庫
 from tool.init_neo4j_knowledge_graph import init_neo4j_knowledge_graph  # 引入Neo4j知識圖譜初始化
 from accessories import init_neo4j  # 引入Neo4j驅動初始化
-from tool.web_crawler import ithome_bp  # 引入 iThome 爬蟲 Blueprint
+from src.news_api import news_api_bp  # 引入新聞 API Blueprint
+from tool.init_news_table import init_news_table  # 引入新聞表初始化
 
 
 # 定義 BASE_DIR 為 backend 資料夾的絕對路徑
@@ -85,7 +86,7 @@ app.register_blueprint(web_ai_bp, url_prefix='/web-ai')
 app.register_blueprint(linebot_bp, url_prefix='/linebot') # 註冊 LINE Bot Blueprint
 app.register_blueprint(materials_bp, url_prefix="/materials")
 app.register_blueprint(analytics_bp, url_prefix='/api/learning-analytics')  # 註冊學習分析 API Blueprint
-app.register_blueprint(ithome_bp) # 新增的爬蟲 Blueprint
+app.register_blueprint(news_api_bp) # 註冊新聞 API Blueprint
 
 # 創建靜態文件服務路由 (用於圖片)
 @app.route('/static/images/<path:filename>')
@@ -229,7 +230,8 @@ def run_scheduler():
 with app.app_context():
     sqldb.create_all()
     init_quiz_tables() 
-    init_calendar_tables() 
+    init_calendar_tables()
+    init_news_table()  # 初始化新聞表 
     scheduler_thread = threading.Thread(target=run_scheduler, daemon=True)
     scheduler_thread.start()
     # 初始化MongoDB數據
