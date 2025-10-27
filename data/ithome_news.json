@@ -660,6 +660,34 @@
     "date": "2025-10-22"
   },
   {
+    "image": "https://s4.itho.me/sites/default/files/styles/picture_size_small/public/field/image/_ktwy8ctq3y_0.jpg?itok=WTJRCgFH",
+    "href": "/news/171822",
+    "tags": [
+      {
+        "text": "新聞",
+        "href": "/tags/%E6%96%B0%E8%81%9E"
+      },
+      {
+        "text": "Oracle",
+        "href": "/tags/oracle"
+      },
+      {
+        "text": "Oracle E-Business Suite",
+        "href": "/tags/oracle-e-business-suite"
+      },
+      {
+        "text": "CVE-2025-61884",
+        "href": "/tags/cve-2025-61884"
+      }
+    ],
+    "title": {
+      "text": "Oracle EBS資安漏洞CVE-2025-61884追追追！有資安媒體指出在公布之前已遭到駭客組織ShinyHunters利用",
+      "href": "/news/171822"
+    },
+    "summary": "資安新聞網站Bleeping Computer指出，Oracle於10月11日公布的資安漏洞CVE-2025-61884，在公布之前不僅已出現概念驗證攻擊程式（PoC），也被駭客組織ShinyHunters積極用於攻擊活動",
+    "date": "2025-10-22"
+  },
+  {
     "image": "https://s4.itho.me/sites/default/files/styles/picture_size_small/public/field/image/20251022.jpg?itok=YzVKsRsI",
     "href": "/news/171813",
     "tags": [

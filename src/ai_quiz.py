@@ -1258,6 +1258,121 @@ def get_exam():
  
     return jsonify({'exams': exam_list}), 200
 
+@ai_quiz_bp.route('/create-mixed-quiz', methods=['POST', 'OPTIONS'])
+def create_mixed_quiz():
+    """創建全題型測驗 - 每個 answer_type 各選 2 題"""
+    if request.method == 'OPTIONS':
+        return '', 204
+    
+    auth_header = request.headers.get('Authorization')
+    
+    if not auth_header:
+        return jsonify({'message': '未提供token', 'code': 'NO_TOKEN'}), 401
+    
+    try:
+        token = auth_header.split(" ")[1]
+        decoded_token = jwt.decode(token, current_app.config['SECRET_KEY'], algorithms=['HS256'])
+        user_email = decoded_token.get('user')
+        
+        if not user_email:
+            return jsonify({'message': '無效的token', 'code': 'TOKEN_INVALID'}), 401
+    except jwt.ExpiredSignatureError:
+        return jsonify({'message': 'Token已過期，請重新登錄', 'code': 'TOKEN_EXPIRED'}), 401
+    except jwt.InvalidTokenError:
+        return jsonify({'message': '無效的token', 'code': 'TOKEN_INVALID'}), 401
+    except Exception as e:
+        print(f"驗證token時發生錯誤: {str(e)}")
+        return jsonify({'message': '認證失敗', 'code': 'AUTH_FAILED'}), 401
+    
+    try:
+        # 獲取所有不同的 answer_type（排除測試學校資料）
+        answer_types = mongo.db.exam.distinct('answer_type', {
+            'school': {'$ne': '測試學校(全題型)'}
+        })
+        print(f"🔍 找到的 answer_type: {answer_types}")
+        
+        selected_questions = []
+        
+        # 為每個 answer_type 選擇 2 題（只從非測試學校的資料中選擇）
+        for answer_type in answer_types:
+            if answer_type:  # 確保 answer_type 不為空
+                # 從該 answer_type 中隨機選擇 2 題，排除測試學校
+                questions = list(mongo.db.exam.find({
+                    'answer_type': answer_type,
+                    'school': {'$ne': '測試學校(全題型)'}
+                }).limit(20))  # 增加限制數量以獲得更多選擇
+                
+                if len(questions) >= 2:
+                    selected = random.sample(questions, 2)
+                elif len(questions) == 1:
+                    selected = questions
+                else:
+                    continue  # 如果沒有題目，跳過這個 answer_type
+                
+                selected_questions.extend(selected)
+                print(f"✅ {answer_type}: 選擇了 {len(selected)} 題")
+        
+        print(f"📊 總共選擇了 {len(selected_questions)} 題")
+        
+        if not selected_questions:
+            return jsonify({'message': '沒有找到任何題目', 'code': 'NO_QUESTIONS'}), 400
+        
+        # 轉換為前端格式
+        frontend_questions = []
+        for i, exam in enumerate(selected_questions):
+            exam_type = exam.get('type', 'single')
+            if exam_type == 'group':
+                # 如果是題組，讀取子題目的answer_type
+                sub_questions = exam.get('sub_questions', [])
+                if sub_questions:
+                    question_type = sub_questions[0].get('answer_type', 'single-choice')
+                else:
+                    question_type = 'single-choice'
+            else:
+                # 如果是單題，直接讀取answer_type
+                question_type = exam.get('answer_type', 'single-choice')
+            
+            frontend_question = {
+                'question_id': f'mixed_{i+1}',
+                'question_text': exam.get('question_text', ''),
+                'options': exam.get('options'),
+                'correct_answer': exam.get('answer', ''),
+                'original_exam_id': str(exam.get('_id', '')),
+                'image_file': exam.get('image_file', ''),
+                'key_points': exam.get('key-points', ''),
+                'answer_type': question_type,
+                'detail_answer': exam.get('detail-answer', '')
+            }
+            frontend_questions.append(frontend_question)
+        
+        # 隨機打亂題目順序
+        random.shuffle(frontend_questions)
+        
+        # 創建測驗模板
+        template_data = {
+            'template_name': '測試學校(全題型) 114 資訊管理學系',
+            'template_type': 'mixed',
+            'question_count': len(frontend_questions),
+            'questions': frontend_questions,
+            'created_by': user_email,
+            'created_at': datetime.now().isoformat()
+        }
+        
+        # 儲存到資料庫
+        template_id = f"mixed_template_{int(time.time())}"
+        
+        return jsonify({
+            'success': True,
+            'template_id': template_id,
+            'question_count': len(frontend_questions),
+            'answer_types': answer_types,
+            'message': f'成功創建全題型測驗，包含 {len(frontend_questions)} 題'
+        }), 200
+        
+    except Exception as e:
+        print(f"❌ 創建全題型測驗時發生錯誤: {str(e)}")
+        return jsonify({'message': f'創建測驗失敗: {str(e)}', 'code': 'CREATE_FAILED'}), 500
+
 
 @ai_quiz_bp.route('/grading-progress/<template_id>', methods=['GET', 'OPTIONS'])
 def get_grading_progress(template_id):
