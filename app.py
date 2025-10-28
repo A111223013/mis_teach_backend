@@ -32,6 +32,7 @@ from accessories import init_neo4j  # 引入Neo4j驅動初始化
 from tool.insert_test_school import check_and_insert_test_school  # 引入測試學校自動檢查
 from src.news_api import news_api_bp  # 引入新聞 API Blueprint
 from tool.init_news_table import init_news_table  # 引入新聞表初始化vssssss
+from tool.rename_materials import rename_materials
 
 # 定義 BASE_DIR 為 backend 資料夾的絕對路徑
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -237,7 +238,7 @@ with app.app_context():
     # 初始化MongoDB數據
     init_mongo_data()
     initialize_mis_teach_db()
-    
+    rename_materials()
     # 自動檢查並插入測試學校資料
     check_and_insert_test_school()
     
