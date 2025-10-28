@@ -10,11 +10,11 @@ import logging
 from datetime import datetime
 from typing import List, Dict, Any
 import fitz  # PyMuPDF
-import google.generativeai as genai
 from tool.api_keys import get_api_key
 import chromadb
 from chromadb.config import Settings
 from sentence_transformers import SentenceTransformer
+from accessories import init_gemini
 
 # 設置日誌
 logging.basicConfig(level=logging.INFO)
@@ -59,8 +59,7 @@ class RAGBuilder:
             
             # 配置 Gemini API
             try:
-                api_key = get_api_key()
-                genai.configure(api_key=api_key)
+                self.gemini_model = init_gemini('gemini-2.5-flash')
                 print("✅ Gemini API 配置成功")
             except Exception as e:
                 print(f"❌ Gemini API 配置失敗: {e}")
@@ -110,7 +109,7 @@ class RAGBuilder:
             請確保返回有效的 JSON 格式。
             """
             
-            model = genai.GenerativeModel('gemini-2.5-flash')
+            model = init_gemini('gemini-2.5-flash')
             response = model.generate_content(prompt)
             
             # 檢查回應是否有效

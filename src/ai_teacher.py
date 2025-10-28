@@ -8,8 +8,8 @@ import json
 from datetime import datetime
 from flask import Blueprint, request, jsonify
 from typing import Dict, Any, List, Optional
-
-from accessories import mongo
+from src.api import get_user_info
+from accessories import mongo, refresh_token
 from bson.objectid import ObjectId
 
 # 導入 RAG 系統模組
@@ -37,18 +37,17 @@ def get_quiz_from_database(quiz_ids: List[str]) -> dict:
         
         for quiz_id in quiz_ids:
             try:
-                # 嘗試使用 ObjectId 查詢
-                quiz_doc = mongo.db.quizzes.find_one({"_id": ObjectId(quiz_id)})
+                # 優先使用 ObjectId 查詢（AI生成的測驗使用ObjectId）
+                quiz_doc = mongo.db.exam.find_one({"_id": ObjectId(quiz_id)})
+                
                 if not quiz_doc:
-                    # 如果 ObjectId 查詢失敗，嘗試直接查詢
-                    quiz_doc = mongo.db.quizzes.find_one({"_id": quiz_id})
+                    # 如果 ObjectId 查詢失敗，嘗試直接查詢（支援字串格式ID）
+                    quiz_doc = mongo.db.exam.find_one({"_id": quiz_id})
                 
                 if quiz_doc:
-                    logger.info(f"找到考卷: {quiz_doc.get('title', 'Unknown')}")
                     break
                     
             except Exception as e:
-                logger.error(f"處理考卷ID {quiz_id} 時發生錯誤: {e}")
                 continue
         
         if not quiz_doc:
@@ -59,15 +58,22 @@ def get_quiz_from_database(quiz_ids: List[str]) -> dict:
         
         # 從考卷文檔中提取題目數據
         questions = quiz_doc.get('questions', [])
+        
         if not questions:
             return {
                 'success': False,
                 'message': '考卷中沒有題目數據'
             }
         
-        # 轉換題目格式為前端需要的格式
+        # 記錄第一個題目的詳細信息
+        if questions:
+            first_question = questions[0]
+        
+        # 直接使用 MongoDB 中的題目數據，不進行格式轉換
+        # 確保每個題目都有必要的字段
         formatted_questions = []
         for i, question in enumerate(questions):
+            # 保持原始數據結構，只確保必要字段存在
             formatted_question = {
                 'id': question.get('id', i + 1),
                 'question_text': question.get('question_text', ''),
@@ -79,7 +85,9 @@ def get_quiz_from_database(quiz_ids: List[str]) -> dict:
                 'key_points': question.get('key_points', ''),
                 'explanation': question.get('explanation', ''),
                 'topic': question.get('topic', ''),
-                'difficulty': question.get('difficulty', 'medium')
+                'difficulty': question.get('difficulty', 'medium'),
+                # 保留所有原始字段
+                **question
             }
             formatted_questions.append(formatted_question)
         
@@ -102,7 +110,6 @@ def get_quiz_from_database(quiz_ids: List[str]) -> dict:
             'database_ids': quiz_ids
         }
         
-        logger.info(f"成功載入考卷: {quiz_data['quiz_info']['title']}, 題目數量: {len(formatted_questions)}")
         
         return {
             'success': True,
@@ -159,7 +166,7 @@ def _extract_user_answer(user_answer_raw: str) -> str:
     
     return user_answer_raw
     
-def chat_with_ai(question: str, conversation_type: str = "general", session_id: str = None) -> dict:
+def chat_with_ai(question: str, conversation_type: str = "general", session_id: str = None, request_data: dict = None, auth_token: str = None) -> dict:
     """AI 對話處理 - 簡化版本"""
     try:
         if not RAG_AVAILABLE:
@@ -171,8 +178,8 @@ def chat_with_ai(question: str, conversation_type: str = "general", session_id: 
 
         if conversation_type == "tutoring" and session_id:
             try:
-                # 從請求中獲取必要數據
-                data = request.get_json()
+                # 從傳入的數據中獲取必要數據
+                data = request_data or {}
                 correct_answer = data.get('correct_answer', '')
                 user_answer = data.get('user_answer', '')
                 
@@ -194,8 +201,7 @@ def chat_with_ai(question: str, conversation_type: str = "general", session_id: 
                         user_input = question
                 # 直接調用 verify_token 獲取用戶 email
                 from .api import verify_token
-                token = request.headers.get('Authorization', '').replace('Bearer ', '')
-                user_email = verify_token(token) if token else "anonymous_user"
+                user_email = verify_token(auth_token) if auth_token else "anonymous_user"
 
                 # 傳遞AI批改的評分反饋
                 response = handle_tutoring_conversation(user_email, actual_question, user_answer, correct_answer, user_input, grading_feedback)
@@ -277,7 +283,7 @@ def get_quiz_result_data(result_id: str) -> dict:
                 question_id = str(answer[0])  # 確保ID為字符串格式
                 user_answer = answer[1]
                 is_correct = bool(answer[2])  # 確保為 boolean 類型
-                score = float(answer[3]) if answer[3] else 0
+                score = float(answer[3]) if answer[3] is not None else 0.0
                 feedback = json.loads(answer[4]) if answer[4] else {}  # 將JSON字符串轉換回Python字典
                 created_at = answer[5]
                 
@@ -323,7 +329,7 @@ def get_quiz_result_data(result_id: str) -> dict:
                     'is_correct': is_correct,
                     'is_marked': False,
                     'topic': question_obj.get('topic', '計算機概論'),
-                    'difficulty': question_obj.get('difficulty', 2),
+                    'difficulty': int(question_obj.get('difficulty', 2)),
                     'options': question_obj.get('options', []),
                     'image_file': question_obj.get('image_file', ''),
                     'key_points': question_obj.get('key_points', ''),
@@ -332,21 +338,21 @@ def get_quiz_result_data(result_id: str) -> dict:
                 
                 questions.append(question_data)
             
-            # 構建返回結果
+            # 構建返回結果 - 確保所有數值字段都是 JSON 可序列化的
             result = {
-                'quiz_history_id': history_result[0],
-                'quiz_template_id': history_result[1],
-                'user_email': history_result[2],
-                'quiz_type': history_result[3],
-                'total_questions': history_result[4],
-                'answered_questions': history_result[5],
-                'correct_count': history_result[6],
-                'wrong_count': history_result[7],
-                'accuracy_rate': history_result[8],
-                'average_score': history_result[9],
-                'total_time_taken': history_result[10],
+                'quiz_history_id': int(history_result[0]) if history_result[0] is not None else 0,
+                'quiz_template_id': int(history_result[1]) if history_result[1] is not None else 0,
+                'user_email': str(history_result[2]) if history_result[2] else '',
+                'quiz_type': str(history_result[3]) if history_result[3] else '',
+                'total_questions': int(history_result[4]) if history_result[4] is not None else 0,
+                'answered_questions': int(history_result[5]) if history_result[5] is not None else 0,
+                'correct_count': int(history_result[6]) if history_result[6] is not None else 0,
+                'wrong_count': int(history_result[7]) if history_result[7] is not None else 0,
+                'accuracy_rate': float(history_result[8]) if history_result[8] is not None else 0.0,
+                'average_score': float(history_result[9]) if history_result[9] is not None else 0.0,
+                'total_time_taken': int(history_result[10]) if history_result[10] is not None else 0,
                 'submit_time': history_result[11].isoformat() if history_result[11] else None,
-                'status': history_result[12],
+                'status': str(history_result[12]) if history_result[12] else '',
                 'created_at': history_result[13].isoformat() if history_result[13] else None,
                 'questions': questions,
                 'errors': [q for q in questions if not q['is_correct']]
@@ -364,7 +370,13 @@ def ai_tutoring():
     """AI 教學對話端點"""
     try:
         if request.method == 'OPTIONS':
-            return jsonify({'success': True})
+            return jsonify({'token': None, 'success': True}), 204
+    
+        auth_header = request.headers.get('Authorization')
+        if not auth_header:
+            return jsonify({'token': None, 'message': '未提供token'}), 401
+        
+        token = auth_header.split(" ")[1]
         
         data = request.get_json()
         user_input = data.get('user_input', '')
@@ -372,53 +384,81 @@ def ai_tutoring():
         conversation_type = data.get('conversation_type', 'tutoring')
         
         
-        # 調用 AI 對話處理
-        result = chat_with_ai(user_input or "初始化會話", conversation_type, session_id)
+        # 調用 AI 對話處理，傳遞必要的數據
+        result = chat_with_ai(
+            user_input or "初始化會話", 
+            conversation_type, 
+            session_id,
+            request_data=data,
+            auth_token=token
+        )
         
-        return jsonify(result)
+        # 確保返回正確的結構給前端
+        if isinstance(result, dict) and 'success' in result:
+            # 將 token 加入到結果中
+            result['token'] = refresh_token(token)
+            return jsonify(result)
+        else:
+            # 如果 result 不是期待的格式，建立一個標準回應
+            return jsonify({
+                'success': False,
+                'error': 'AI回應格式錯誤',
+                'response': '抱歉，AI教學對話處理失敗，請重試。',
+                'token': refresh_token(token)
+            })
         
     except Exception as e:
         logger.error(f"❌ AI教學對話端點錯誤: {e}")
         return jsonify({
             'success': False,
             'error': f'AI教學對話失敗：{str(e)}',
-            'response': '抱歉，AI教學對話處理失敗，請重試。'
-        })
+            'response': '抱歉，AI教學對話處理失敗，請重試。',
+            'token': None
+        }), 500
 
 @ai_teacher_bp.route('/get-quiz-result/<result_id>', methods=['GET', 'OPTIONS'])
 def get_quiz_result(result_id):
     """獲取測驗結果"""
-    try:
-        if request.method == 'OPTIONS':
-            return jsonify({'success': True})
-        
-        # 獲取測驗結果數據
-        result_data = get_quiz_result_data(result_id)
-        
-        if result_data:
-            return jsonify({
-                'success': True,
-                'data': result_data
-            })
-        else:
-            return jsonify({
-                'success': False,
-                'error': '未找到測驗結果'
-            }), 404
-        
-    except Exception as e:
-        logger.error(f"❌ 獲取測驗結果失敗: {e}")
+    if request.method == 'OPTIONS':
+        return jsonify({'token': None, 'success': True}), 204
+    
+    auth_header = request.headers.get('Authorization')
+    if not auth_header:
+        return jsonify({'token': None, 'message': '未提供token'}), 401
+    
+    token = auth_header.split(" ")[1]
+    user_email = get_user_info(token, 'email')
+    if not user_email:
+        return jsonify({'token': None, 'message': '無效的token'}), 401
+    
+    # 獲取測驗結果數據
+    result_data = get_quiz_result_data(result_id)
+    
+    if result_data:
         return jsonify({
+            'token': refresh_token(token),
+            'success': True,
+            'data': result_data
+        })
+    else:
+        return jsonify({
+            'token': refresh_token(token),
             'success': False,
-            'error': f'獲取測驗結果失敗：{str(e)}'
-        }), 500
+            'message': '未找到測驗結果'
+        }), 404
 
 @ai_teacher_bp.route('/get-quiz-from-database', methods=['POST', 'OPTIONS'])
 def get_quiz_from_database_endpoint():
     """從資料庫獲取考卷數據"""
     try:
         if request.method == 'OPTIONS':
-            return jsonify({'success': True})
+            return jsonify({'token': None, 'success': True}), 204
+    
+        auth_header = request.headers.get('Authorization')
+        if not auth_header:
+            return jsonify({'token': None, 'message': '未提供token'}), 401
+        
+        token = auth_header.split(" ")[1]
         
         data = request.get_json()
         quiz_ids = data.get('quiz_ids', [])
@@ -432,7 +472,7 @@ def get_quiz_from_database_endpoint():
         # 調用獲取考卷數據函數
         result = get_quiz_from_database(quiz_ids)
         
-        return jsonify(result)
+        return jsonify({'token': refresh_token(token), 'data': result})
         
     except Exception as e:
         logger.error(f"❌ 獲取考卷數據失敗: {e}")

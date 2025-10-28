@@ -7,6 +7,7 @@
 import logging
 from typing import Dict, List, Any, Optional
 from datetime import datetime
+from bson import ObjectId
 import json
 import random
 import time
@@ -57,45 +58,39 @@ class SmartQuizGenerator:
         Returns:
             生成的考卷數據
         """
-        try:
-            logger.info(f"🚀 開始智能生成考卷，需求: {requirements}")
-            
-            # 驗證需求
-            validated_req = self._validate_requirements(requirements)
-            
-            # 根據考卷類型生成題目
-            if validated_req['exam_type'] == 'pastexam':
-                questions = self._generate_pastexam_questions(validated_req)
-            else:
-                questions = self._generate_knowledge_questions(validated_req)
-            
-            # 檢查是否成功生成足夠的題目
-            if len(questions) < validated_req['question_count']:
-                logger.warning(f"⚠️ 只成功生成 {len(questions)} 題，少於要求的 {validated_req['question_count']} 題")
-                if len(questions) == 0:
-                    return {
-                        'success': False,
-                        'error': f"無法生成任何題目，請檢查AI服務是否正常"
-                    }
-            
-            # 生成考卷信息
-            quiz_info = self._generate_quiz_info(validated_req, questions)
-            
-            logger.info(f"✅ 考卷生成完成，成功生成 {len(questions)} 題")
-            
-            return {
-                'success': True,
-                'quiz_info': quiz_info,
-                'questions': questions,
-                'generated_at': datetime.now().isoformat()
-            }
-            
-        except Exception as e:
-            logger.error(f"❌ 生成考卷失敗: {e}")
-            return {
-                'success': False,
-                'error': f"生成考卷失敗: {str(e)}"
-            }
+        logger.info(f"🚀 開始智能生成考卷，需求: {requirements}")
+        
+        # 驗證需求
+        validated_req = self._validate_requirements(requirements)
+        
+        # 根據考卷類型生成題目
+        if validated_req['exam_type'] == 'pastexam':
+            questions = self._generate_pastexam_questions(validated_req)
+        elif validated_req['exam_type'] == 'content-based':
+            questions = self._generate_content_based_questions(validated_req)
+        else:
+            questions = self._generate_knowledge_questions(validated_req)
+        
+        # 檢查是否成功生成足夠的題目
+        if len(questions) < validated_req['question_count']:
+            logger.warning(f"⚠️ 只成功生成 {len(questions)} 題，少於要求的 {validated_req['question_count']} 題")
+            if len(questions) == 0:
+                return {
+                    'success': False,
+                    'error': f"無法生成任何題目，請檢查AI服務是否正常"
+                }
+        
+        # 生成考卷信息
+        quiz_info = self._generate_quiz_info(validated_req, questions)
+        
+        logger.info(f"✅ 考卷生成完成，成功生成 {len(questions)} 題")
+        
+        return {
+            'success': True,
+            'quiz_info': quiz_info,
+            'questions': questions,
+            'generated_at': datetime.now().isoformat()
+        }
     
     def generate_and_save_quiz(self, requirements: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -107,28 +102,30 @@ class SmartQuizGenerator:
         Returns:
             包含數據庫ID的考卷數據
         """
-        try:
-            # 生成考卷
-            quiz_result = self.generate_quiz(requirements)
-            
-            if not quiz_result['success']:
-                return quiz_result
-            
-            # 保存到數據庫
-            saved_questions = self._save_questions_to_database(quiz_result['questions'], requirements)
-            
-            if saved_questions:
-                quiz_result['database_ids'] = saved_questions
-                quiz_result['message'] = "考卷已成功生成並保存到數據庫"
-            
+        logger.info(f"🔍 開始生成考卷，需求: {requirements}")
+        
+        # 生成考卷
+        logger.info("🔍 調用 generate_quiz 方法...")
+        quiz_result = self.generate_quiz(requirements)
+        logger.info(f"🔍 generate_quiz 結果: success={quiz_result.get('success', False)}")
+        
+        if not quiz_result['success']:
+            logger.error(f"❌ 考卷生成失敗: {quiz_result.get('error', '未知錯誤')}")
             return quiz_result
-            
-        except Exception as e:
-            logger.error(f"❌ 生成並保存考卷失敗: {e}")
-            return {
-                'success': False,
-                'error': f"生成並保存考卷失敗: {str(e)}"
-            }
+        
+        # 保存到數據庫
+        logger.info("🔍 開始保存到數據庫...")
+        saved_questions = self._save_questions_to_database(quiz_result['questions'], requirements)
+        logger.info(f"🔍 數據庫保存結果: {len(saved_questions)} 個題目ID")
+        
+        if saved_questions:
+            quiz_result['database_ids'] = saved_questions
+            quiz_result['message'] = "考卷已成功生成並保存到數據庫"
+            logger.info("✅ 考卷生成並保存成功")
+        else:
+            logger.warning("⚠️ 數據庫保存失敗，但考卷生成成功")
+        
+        return quiz_result
     
     def _save_questions_to_database(self, questions: List[Dict], requirements: Dict) -> List[str]:
         """
@@ -151,37 +148,77 @@ class SmartQuizGenerator:
                 return []
             
             # 創建完整的考卷文檔
-            quiz_doc = {
-                "quiz_id": f"ai_generated_{int(time.time())}",
-                "title": f"{requirements.get('topic', 'AI生成')}知識點測驗",
-                "type": "knowledge",
-                "creator_email": "ai_system@mis_teach.com",
-                "create_time": datetime.now().isoformat(),
-                "time_limit": requirements.get('time_limit', 60),
-                "questions": questions,
-                "metadata": {
-                    "topic": requirements.get('topic', 'AI生成'),
-                    "difficulty": requirements.get('difficulty', 'medium'),
-                    "question_count": len(questions)
+            quiz_id = f"ai_generated_{int(time.time())}"
+            
+            # 根據考卷類型設置不同的標題和類型
+            if requirements.get('exam_type') == 'content-based':
+                title = f"基於內容的AI生成測驗"
+                quiz_type = "content-based"
+            elif requirements.get('exam_type') == 'pastexam':
+                title = f"{requirements.get('school', 'AI生成')}考古題測驗"
+                quiz_type = "pastexam"
+            else:
+                title = f"{requirements.get('topic', 'AI生成')}知識點測驗"
+                quiz_type = "knowledge"
+            
+            # 轉換題目格式以符合exam文檔結構
+            formatted_questions = []
+            for i, question in enumerate(questions):
+                # 處理選項格式
+                options = question.get('options', [])
+                processed_options = []
+                if options and isinstance(options, list):
+                    for option in options:
+                        if ': ' in option:
+                            processed_options.append(option.split(': ', 1)[1])
+                        else:
+                            processed_options.append(option)
+                
+                # 確定答案類型
+                answer_type = "single" if question.get('type') == 'multiple-choice' else "short-answer"
+                
+                formatted_question = {
+                    "_id": ObjectId(),
+                    "type": answer_type,
+                    "school": "",
+                    "department": "",
+                    "year": "",
+                    "question_number": str(i + 1),
+                    "question_text": question.get('question_text', ''),
+                    "options": processed_options,
+                    "answer": question.get('correct_answer', ''),
+                    "answer_type": answer_type,
+                    "image_file": [],
+                    "detail-answer": question.get('explanation', ''),
+                    "key-points": question.get('key_points', requirements.get('topic', 'AI生成')),
+                    "micro_concepts": [requirements.get('topic', 'AI生成'), f"{requirements.get('topic', 'AI生成')}基礎", f"{requirements.get('topic', 'AI生成')}應用"],
+                    "difficulty_level": '中等' if requirements.get('difficulty', 'medium') == 'medium' else ('簡單' if requirements.get('difficulty', 'medium') == 'easy' else '困難'),
+                    "error_reason": "",
+                    "created_at": datetime.now()
                 }
-            }
+                formatted_questions.append(formatted_question)
             
-            # 插入到quizzes集合
-            result = mongo.db.quizzes.insert_one(quiz_doc)
-            quiz_id = str(result.inserted_id)
-            
-            logger.info(f"💾 考卷已保存到數據庫，ID: {quiz_id}")
-            logger.info(f"✅ 成功保存考卷到數據庫，包含 {len(questions)} 道題目")
-            
-            return [quiz_id]  # 返回考卷ID而不是題目ID
+            # 直接保存題目作為獨立文檔，不需要測驗文檔
+            if formatted_questions:
+                question_results = mongo.db.exam.insert_many(formatted_questions)
+                
+                # 創建SQL template（使用所有題目的ID）
+                question_ids = [str(q_id) for q_id in question_results.inserted_ids]
+                template_id = create_sql_template_for_quiz(question_ids, {
+                    'title': title,
+                    'total_questions': len(formatted_questions),
+                    'difficulty': requirements.get('difficulty', 'medium'),
+                    'concept': requirements.get('topic', 'AI生成'),
+                    'domain': 'AI生成測驗'
+                })
+                
+                return [str(question_results.inserted_ids[0])]  # 返回第一個題目的ID
+            else:
+                return []
             
         except ImportError as e:
-            logger.warning(f"⚠️ 無法導入數據庫模組: {e}")
-            logger.info("📝 跳過數據庫保存，僅生成考卷")
             return []
         except Exception as e:
-            logger.error(f"❌ 保存考卷到數據庫失敗: {e}")
-            logger.info("📝 跳過數據庫保存，僅生成考卷")
             return []
     
     def _convert_to_database_format(self, question: Dict, requirements: Dict) -> Dict:
@@ -210,7 +247,6 @@ class SmartQuizGenerator:
             "detail-answer": question.get('explanation', ''),
             "key-points": [question.get('key_points', requirements.get('topic', 'AI生成'))],
             "difficulty level": self._map_difficulty(question.get('difficulty', 'medium')),
-            "error reason": "",
             "create_time": datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
         }
         
@@ -280,7 +316,9 @@ class SmartQuizGenerator:
                 question_number=i + 1,
                 topic=topic,
                 difficulty=difficulty,
-                question_type=question_type
+                question_type=question_type,
+                selected_text=requirements.get('selected_text'),
+                requirements=requirements
             )
             
             if question:
@@ -298,7 +336,7 @@ class SmartQuizGenerator:
         return questions
     
     def _smart_generate_single_question(self, question_number: int, topic: str, 
-                                      difficulty: str, question_type: str) -> Optional[Dict[str, Any]]:
+                                      difficulty: str, question_type: str, selected_text: str = None, requirements: Dict[str, Any] = None) -> Optional[Dict[str, Any]]:
         """智能生成單一題目 - 帶重試機制"""
         
         for attempt in range(self.max_retries):
@@ -332,7 +370,7 @@ class SmartQuizGenerator:
                 # LLM已經初始化完成
                 
                 # 構建動態提示詞
-                prompt = self._build_dynamic_prompt(topic, difficulty, question_type)
+                prompt = self._build_dynamic_prompt(topic, difficulty, question_type, selected_text, requirements)
                 
                 # 調用AI生成
                 response = llm.invoke(prompt)
@@ -393,7 +431,151 @@ class SmartQuizGenerator:
         
         return None
     
-    def _build_dynamic_prompt(self, topic: str, difficulty: str, question_type: str) -> str:
+    def _smart_generate_content_based_question(self, question_number: int, selected_text: str, 
+                                             difficulty: str, question_type: str) -> Optional[Dict[str, Any]]:
+        """基於內容智能生成單一題目 - 帶重試機制"""
+        
+        for attempt in range(self.max_retries):
+            try:
+                logger.info(f"🔄 基於內容生成第 {question_number} 題，第 {attempt + 1} 次嘗試")
+                
+                # 直接初始化LLM，避免循環導入問題
+                from langchain_google_genai import ChatGoogleGenerativeAI
+                import sys
+                import os
+                
+                # 添加tool目錄到路徑
+                tool_path = os.path.join(os.path.dirname(__file__), '..', 'tool')
+                if tool_path not in sys.path:
+                    sys.path.append(tool_path)
+                
+                from api_keys import get_api_key
+                
+                # 初始化LLM
+                api_key = get_api_key()
+                llm = ChatGoogleGenerativeAI(
+                    model="gemini-2.5-flash",
+                    google_api_key=api_key,
+                    temperature=0.7,
+                    top_p=0.8,
+                    top_k=40,
+                    max_output_tokens=8192,
+                    convert_system_message_to_human=True
+                )
+                
+                # 構建基於內容的動態提示詞
+                prompt = self._build_content_based_prompt(selected_text, difficulty, question_type)
+                
+                # 調用AI生成
+                response = llm.invoke(prompt)
+                response_text = response.content if hasattr(response, 'content') else str(response)
+                
+                logger.info(f"📝 基於內容AI回應長度: {len(response_text)} 字符")
+                
+                if not response_text or len(response_text.strip()) == 0:
+                    logger.error("❌ 基於內容AI回應為空！")
+                    if attempt < self.max_retries - 1:
+                        logger.info(f"⏳ 等待 {self.retry_delay} 秒後重試...")
+                        time.sleep(self.retry_delay)
+                        continue
+                    else:
+                        return None
+                
+                # 提取和驗證JSON
+                logger.info(f"🔍 開始提取和驗證第 {question_number} 題的JSON")
+                question_data = self._extract_and_validate_single_question(response_text)
+                
+                if question_data:
+                    logger.info(f"✅ 第 {question_number} 題JSON提取成功")
+                    # 添加題目編號和類型
+                    question_data['id'] = question_number
+                    question_data['type'] = question_type
+                    question_data['topic'] = '基於內容生成'
+                    question_data['difficulty'] = difficulty
+                    question_data['image_file'] = []
+                    question_data['generation_type'] = 'content-based'
+                    
+                    return question_data
+                else:
+                    logger.warning(f"⚠️ 第 {question_number} 題JSON提取或驗證失敗")
+                    
+                    if attempt < self.max_retries - 1:
+                        logger.info(f"⏳ 等待 {self.retry_delay} 秒後重試...")
+                        time.sleep(self.retry_delay)
+                        continue
+                    else:
+                        return None
+                        
+            except Exception as e:
+                logger.error(f"❌ 基於內容生成第 {question_number} 題時發生錯誤: {e}")
+                
+                if attempt < self.max_retries - 1:
+                    logger.info(f"⏳ 等待 {self.retry_delay} 秒後重試...")
+                    time.sleep(self.retry_delay)
+                    continue
+                else:
+                    return None
+        
+        return None
+    
+    def _build_content_based_prompt(self, selected_text: str, difficulty: str, question_type: str) -> str:
+        """構建基於內容的AI提示詞"""
+        
+        # 根據題型調整提示詞
+        if question_type == 'single-choice':
+            option_instruction = "提供4個選項，只有1個正確答案"
+            answer_format = '"A"'
+        elif question_type == 'multiple-choice':
+            option_instruction = "提供4個選項，正確答案可以是1-3個，用逗號分隔（如：'A,C'）"
+            answer_format = '"A,C"'
+        else:
+            option_instruction = "提供4個選項"
+            answer_format = '"A"'
+        
+        prompt = f"""請基於以下提供的內容，創建一道{self.difficulty_levels[difficulty]}程度的{self.question_types[question_type]}。
+
+提供的內容：
+「{selected_text}」
+
+要求：
+1. 題目必須完全基於提供的內容，不能偏離主題
+2. 題目要測試對提供內容的理解和應用
+3. 題目要真實、有教育意義，符合大學課程標準
+4. 選項要合理且具有迷惑性，避免明顯錯誤的選項
+5. 答案要正確且有詳細解釋，解釋要清晰易懂
+6. 題目內容要符合{self.difficulty_levels[difficulty]}程度
+7. {option_instruction}
+8. 題目應該深入測試提供內容的核心概念
+
+請務必以以下 JSON Schema 格式回傳（只生成一題）：
+
+{{
+  "question_text": "基於提供內容的題目",
+  "options": [
+    "選項A: 選項內容",
+    "選項B: 選項內容", 
+    "選項C: 選項內容",
+    "選項D: 選項內容"
+  ],
+  "correct_answer": {answer_format},
+  "explanation": "詳細的解釋說明，包含與提供內容的關聯性",
+  "key_points": "關鍵知識點, 與提供內容的關聯, 核心概念"
+}}
+
+重要提醒：
+- 請確保JSON格式完整，不要中途截斷
+- 所有字符串都要用雙引號包圍，不要使用單引號
+- 選項數組必須包含4個元素，每個選項都要有標籤（A、B、C、D）
+- 題目內容要專業且準確，完全基於提供的內容
+- 請使用繁體中文撰寫所有內容
+- 請嚴格按照上述JSON Schema格式，不要添加任何其他文字或格式
+- 必須生成真實的題目內容，不要使用佔位符
+- 題目應該深入測試提供內容的核心概念和應用
+- 正確答案格式：{answer_format}"""
+        
+        return prompt
+    
+    def _build_dynamic_prompt(self, topic: str, difficulty: str, question_type: str, selected_text: str = None, requirements: Dict[str, Any] = None) -> str:
         """構建動態AI提示詞"""
         
         # 根據題型調整提示詞
@@ -407,7 +589,15 @@ class SmartQuizGenerator:
             option_instruction = "提供4個選項"
             answer_format = '"A"'
         
-        prompt = f"""請為我創建一道關於{topic}的{self.difficulty_levels[difficulty]}程度{self.question_types[question_type]}。
+        # 構建更詳細的主題描述
+        if requirements and 'domain_name' in requirements and 'concept_name' in requirements:
+            domain_name = requirements['domain_name']
+            concept_name = requirements['concept_name']
+            detailed_topic = f"{domain_name}領域中的{concept_name}概念"
+        else:
+            detailed_topic = topic
+        
+        prompt = f"""請為我創建一道關於{detailed_topic}的{self.difficulty_levels[difficulty]}程度{self.question_types[question_type]}。
 
 要求：
 1. 題目要真實、有教育意義，符合大學課程標準
@@ -415,6 +605,8 @@ class SmartQuizGenerator:
 3. 答案要正確且有詳細解釋，解釋要清晰易懂
 4. 題目內容要符合{self.difficulty_levels[difficulty]}程度
 5. {option_instruction}
+6. 題目必須緊密圍繞{detailed_topic}的核心概念和知識點
+7. 如果提供了參考內容，題目應該與參考內容相關且具有相似性
 
 請務必以以下 JSON Schema 格式回傳（只生成一題）：
 
@@ -435,14 +627,15 @@ class SmartQuizGenerator:
 - 請確保JSON格式完整，不要中途截斷
 - 所有字符串都要用雙引號包圍，不要使用單引號
 - 選項數組必須包含4個元素，每個選項都要有標籤（A、B、C、D）
-- 題目內容要專業且準確，符合{topic}學科標準
+- 題目內容要專業且準確，符合{detailed_topic}學科標準
 - 請使用繁體中文撰寫所有內容
 - 請嚴格按照上述JSON Schema格式，不要添加任何其他文字或格式
 - 必須生成真實的題目內容，不要使用佔位符
-- 題目內容應該與{topic}相關，具有實際的教學價值
+- 題目內容應該與{detailed_topic}相關，具有實際的教學價值
 - 由於只生成一題，請確保JSON完整且不截斷
-- 請根據{topic}創建全新的真實題目，不要複製示例內容
-- 正確答案格式：{answer_format}"""
+- 請根據{detailed_topic}創建全新的真實題目，不要複製示例內容
+- 正確答案格式：{answer_format}
+- 特別注意：題目必須是關於{detailed_topic}的，不要生成其他不相關的主題（如網路、作業系統等）"""
         
         return prompt
     
@@ -731,10 +924,6 @@ class SmartQuizGenerator:
             return None
         
         except Exception as e:
-            logger.warning(f"❌ 激進JSON修復失敗: {e}")
-            return None
-            
-        except Exception as e:
             logger.error(f"❌ 激進JSON修復失敗: {e}")
             # 返回最基本的JSON結構
             return '{"question_text": "題目內容", "options": ["選項A: 選項內容", "選項B: 選項內容", "選項C: 選項內容", "選項D: 選項內容"], "correct_answer": "A", "explanation": "詳細解釋", "key_points": "關鍵知識點"}'
@@ -843,6 +1032,42 @@ class SmartQuizGenerator:
             logger.error(f"❌ 題目數據驗證失敗: {e}")
             return False
     
+    def _generate_content_based_questions(self, requirements: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """基於內容生成題目"""
+        questions = []
+        selected_text = requirements.get('selected_text', '')
+        question_count = requirements['question_count']
+        difficulty = requirements['difficulty']
+        question_types = requirements['question_types']
+        
+        logger.info(f"🎯 開始基於內容生成題目，內容長度: {len(selected_text)} 字符")
+        
+        # 逐題生成，每題都有重試機制
+        for i in range(question_count):
+            question_type = random.choice(question_types)
+            logger.info(f"🔄 正在生成第 {i + 1}/{question_count} 題，題型: {question_type}")
+            
+            # 基於內容生成單題，帶重試機制
+            question = self._smart_generate_content_based_question(
+                question_number=i + 1,
+                selected_text=selected_text,
+                difficulty=difficulty,
+                question_type=question_type
+            )
+            
+            if question:
+                questions.append(question)
+                logger.info(f"✅ 第 {i + 1} 題生成成功")
+            else:
+                logger.warning(f"⚠️ 第 {i + 1} 題生成失敗，跳過此題")
+            
+            # 每題之間稍作延遲，避免API限制
+            if i < question_count - 1:
+                time.sleep(1)
+        
+        logger.info(f"🎯 基於內容的題目生成完成，成功生成 {len(questions)} 題")
+        return questions
+    
     def _generate_pastexam_questions(self, requirements: Dict[str, Any]) -> List[Dict[str, Any]]:
         """生成考古題目"""
         questions = []
@@ -888,18 +1113,21 @@ class SmartQuizGenerator:
         """生成考卷信息"""
         if requirements['exam_type'] == 'pastexam':
             title = f"{requirements['school']} {requirements['year']}年 {requirements['department']}考古題"
+        elif requirements['exam_type'] == 'content-based':
+            title = f"基於內容的AI生成測驗"
         else:
             title = f"{requirements['topic']}知識點測驗"
         
         return {
             'title': title,
             'exam_type': requirements['exam_type'],
-            'topic': requirements['topic'],
+            'topic': requirements.get('topic', '基於內容生成'),
             'difficulty': requirements['difficulty'],
             'question_count': len(questions),
             'time_limit': 60,  # 默認60分鐘
             'total_score': len(questions) * 5,  # 每題5分
-            'created_at': datetime.now().isoformat()
+            'created_at': datetime.now().isoformat(),
+            'selected_text': requirements.get('selected_text', '') if requirements['exam_type'] == 'content-based' else None
         }
 
 # 創建全局實例
@@ -952,6 +1180,40 @@ def _parse_quiz_requirements(text: str) -> dict:
     }
     
     text_lower = text.lower()
+    
+    # 檢測是否為基於內容的生成請求
+    content_keywords = ['根據以下內容', '基於以下內容', '根據內容', '基於內容', '以下內容', '內容如下']
+    
+    # 智能檢測：如果文本包含具體的技術內容且沒有明確的題目生成指令，則視為基於內容的請求
+    technical_content_indicators = [
+        '進位系統', '二進制', '八進制', '十六進制', '十進制',
+        '數字表示', '數值轉換', '位元', '位元組',
+        '演算法', '資料結構', '程式設計', '作業系統',
+        '記憶體', 'CPU', '硬體', '軟體'
+    ]
+    
+    # 明確的題目生成指令
+    quiz_generation_keywords = ['生成', '創建', '建立', '製作', '產生', '考卷', '測驗', '題目', '考試']
+    
+    # 檢查是否包含明確的題目生成指令
+    has_quiz_generation_keyword = any(keyword in text for keyword in quiz_generation_keywords)
+    
+    # 檢查是否包含技術內容
+    has_technical_content = any(indicator in text for indicator in technical_content_indicators)
+    
+    # 如果包含明確的內容關鍵詞，直接視為基於內容的請求
+    if any(keyword in text for keyword in content_keywords):
+        requirements['exam_type'] = 'content-based'
+        requirements['selected_text'] = text
+        logger.info(f"🎯 檢測到基於內容的生成請求（明確關鍵詞）")
+        return requirements
+    
+    # 如果包含技術內容但沒有明確的題目生成指令，視為基於內容的請求
+    elif has_technical_content and not has_quiz_generation_keyword:
+        requirements['exam_type'] = 'content-based'
+        requirements['selected_text'] = text
+        logger.info(f"🎯 檢測到基於內容的生成請求（技術內容檢測）")
+        return requirements
     
     # 檢測知識點
     topics = ['計算機概論', '程式設計', '資料結構', '演算法', '作業系統', '資料庫', '網路', '軟體工程', '人工智慧', '機器學習']
@@ -1058,30 +1320,24 @@ def create_quiz_generator_tool():
                     'database_ids': database_ids
                 }
                 
+                # 簡化回應格式，只返回考卷 ID
                 response = f"✅ 考卷生成成功！\n\n"
-                response += f"📝 考卷標題: {quiz_info['title']}\n"
+                response += f"📝 **{quiz_info['title']}**\n"
                 response += f"📚 主題: {quiz_info['topic']}\n"
-                response += f"📊 難度: {quiz_info['difficulty']}\n"
-                response += f"🔢 題目數量: {quiz_info['question_count']}\n"
-                response += f"⏱️ 時間限制: {quiz_info['time_limit']}分鐘\n"
-                response += f"💯 總分: {quiz_info['total_score']}分\n\n"
+                response += f"🔢 題目數量: {quiz_info['question_count']} 題\n"
+                response += f"⏱️ 時間限制: {quiz_info['time_limit']} 分鐘\n\n"
                 
-                if database_ids:
-                    response += f"💾 已保存到數據庫，題目ID: {', '.join(database_ids[:3])}{'...' if len(database_ids) > 3 else ''}\n\n"
+                # 顯示第一題預覽
+                if questions:
+                    first_question = questions[0]
+                    response += "📋 題目預覽:\n"
+                    response += f"1. {first_question['question_text'][:80]}...\n\n"
                 
-                response += "📋 題目預覽:\n"
-                for i, q in enumerate(questions[:3]):  # 只顯示前3題
-                    response += f"{i+1}. {q['question_text'][:100]}...\n"
+                # 使用第一個數據庫 ID 作為考卷 ID
+                quiz_id = database_ids[0] if database_ids else f"ai_generated_{int(time.time())}"
                 
-                if len(questions) > 3:
-                    response += f"... 還有 {len(questions)-3} 題\n\n"
-                
-                response += "🚀 **點擊下方按鈕開始測驗！**\n\n"
-                response += "```json\n"
-                response += json.dumps(quiz_data, ensure_ascii=False, indent=2)
-                response += "\n```\n\n"
-                
-                response += "💡 提示：點擊「開始測驗」按鈕即可開始答題！"
+                response += "🚀 **開始測驗**\n\n"
+                response += f"📋 考卷ID: `{quiz_id}`"
                 
                 return response
             else:
@@ -1104,16 +1360,23 @@ def execute_quiz_generation(requirements: str) -> str:
         格式化的回應字符串
     """
     try:
+        logger.info(f"🔍 開始執行考卷生成，需求: {requirements[:100]}...")
+        
         # 解析用戶需求
         try:
             # 嘗試解析JSON格式的需求
             req_dict = json.loads(requirements)
+            logger.info("🔍 成功解析JSON格式需求")
         except:
             # 如果不是JSON，嘗試從文本中提取信息
+            logger.info("🔍 嘗試從文本中提取需求信息")
             req_dict = _parse_quiz_requirements(requirements)
+            logger.info(f"🔍 解析後的需求: {req_dict}")
         
         # 生成考卷並保存到數據庫
+        logger.info("🔍 開始生成考卷並保存到數據庫...")
         result = generate_and_save_quiz_by_ai(req_dict)
+        logger.info(f"🔍 考卷生成結果: success={result.get('success', False)}")
         
         if result['success']:
             quiz_info = result['quiz_info']
@@ -1130,30 +1393,24 @@ def execute_quiz_generation(requirements: str) -> str:
                 'database_ids': database_ids
             }
             
+            # 簡化回應格式，只返回考卷 ID
             response = f"✅ 考卷生成成功！\n\n"
-            response += f"📝 考卷標題: {quiz_info['title']}\n"
+            response += f"📝 **{quiz_info['title']}**\n"
             response += f"📚 主題: {quiz_info['topic']}\n"
-            response += f"📊 難度: {quiz_info['difficulty']}\n"
-            response += f"🔢 題目數量: {quiz_info['question_count']}\n"
-            response += f"⏱️ 時間限制: {quiz_info['time_limit']}分鐘\n"
-            response += f"💯 總分: {quiz_info['total_score']}分\n\n"
+            response += f"🔢 題目數量: {quiz_info['question_count']} 題\n"
+            response += f"⏱️ 時間限制: {quiz_info['time_limit']} 分鐘\n\n"
             
-            if database_ids:
-                response += f"💾 已保存到數據庫，題目ID: {', '.join(database_ids[:3])}{'...' if len(database_ids) > 3 else ''}\n\n"
+            # 顯示第一題預覽
+            if questions:
+                first_question = questions[0]
+                response += "📋 題目預覽:\n"
+                response += f"1. {first_question['question_text'][:80]}...\n\n"
             
-            response += "📋 題目預覽:\n"
-            for i, q in enumerate(questions[:3]):  # 只顯示前3題
-                response += f"{i+1}. {q['question_text'][:100]}...\n"
+            # 使用第一個數據庫 ID 作為考卷 ID
+            quiz_id = database_ids[0] if database_ids else f"ai_generated_{int(time.time())}"
             
-            if len(questions) > 3:
-                response += f"... 還有 {len(questions)-3} 題\n\n"
-            
-            response += "🚀 **點擊下方按鈕開始測驗！**\n\n"
-            response += "```json\n"
-            response += json.dumps(quiz_data, ensure_ascii=False, indent=2)
-            response += "\n```\n\n"
-            
-            response += "💡 提示：點擊「開始測驗」按鈕即可開始答題！"
+            response += "🚀 **開始測驗**\n\n"
+            response += f"📋 考卷ID: `{quiz_id}`"
             
             return response
         else:
@@ -1162,3 +1419,619 @@ def execute_quiz_generation(requirements: str) -> str:
     except Exception as e:
         logger.error(f"❌ 考卷生成執行失敗: {e}")
         return f"❌ 考卷生成失敗，請稍後再試。錯誤: {str(e)}"
+
+def execute_content_based_quiz_generation(content: str) -> str:
+    """
+    執行基於內容的考卷生成 - 供外部調用
+    
+    Args:
+        content: 用戶提供的內容字符串
+        
+    Returns:
+        格式化的回應字符串
+    """
+    try:
+        logger.info(f"🎯 開始基於內容的考卷生成，內容長度: {len(content)} 字符")
+        
+        # 構建基於內容的需求
+        requirements = {
+            'exam_type': 'content-based',
+            'selected_text': content,
+            'topic': '基於內容生成',
+            'difficulty': 'medium',
+            'question_count': 1,
+            'question_types': ['single-choice', 'multiple-choice']
+        }
+        
+        # 生成考卷並保存到數據庫
+        result = generate_and_save_quiz_by_ai(requirements)
+        
+        if result['success']:
+            quiz_info = result['quiz_info']
+            questions = result['questions']
+            database_ids = result.get('database_ids', [])
+            
+            # 簡化回應格式，只返回考卷 ID
+            response = f"✅ 基於內容的考卷生成成功！\n\n"
+            response += f"📝 **{quiz_info['title']}**\n"
+            response += f"📚 基於內容: {content[:50]}...\n"
+            response += f"🎯 主題: {quiz_info['topic']}\n"
+            response += f"🔢 題目數量: {quiz_info['question_count']} 題\n"
+            response += f"⏱️ 時間限制: {quiz_info['time_limit']} 分鐘\n"
+            response += f"🏷️ 生成類型: 基於內容\n\n"
+            
+            # 顯示第一題預覽
+            if questions:
+                first_question = questions[0]
+                response += "📋 題目預覽:\n"
+                response += f"1. {first_question['question_text'][:80]}...\n\n"
+            
+            # 使用第一個數據庫 ID 作為考卷 ID
+            quiz_id = database_ids[0] if database_ids else f"content_based_{int(time.time())}"
+            
+            response += "🚀 **開始測驗**\n\n"
+            response += f"📋 考卷ID: `{quiz_id}`"
+            
+            return response
+        else:
+            return f"❌ 基於內容的考卷生成失敗: {result.get('error', '未知錯誤')}"
+            
+    except Exception as e:
+        logger.error(f"❌ 基於內容的考卷生成執行失敗: {e}")
+        return f"❌ 基於內容的考卷生成失敗，請稍後再試。錯誤: {str(e)}"
+
+class SimilarQuizGenerator:
+    """相似題目生成器 - 專門生成與選中文字相似的題目"""
+    
+    def __init__(self):
+        self.question_types = {
+            'single-choice': '單選題',
+            'multiple-choice': '多選題', 
+            'fill-in-the-blank': '填空題',
+            'true-false': '是非題',
+            'short-answer': '簡答題'
+        }
+        
+        self.difficulty_levels = {
+            'easy': '簡單',
+            'medium': '中等', 
+            'hard': '困難'
+        }
+        
+        # 重試配置
+        self.max_retries = 3
+        self.retry_delay = 2  # 秒
+    
+    def generate_similar_quiz(self, selected_text: str) -> Dict[str, Any]:
+        """
+        根據選中的文字生成相似的題目
+        
+        Args:
+            selected_text: 用戶選中的文字內容
+            
+        Returns:
+            生成的考卷結果字典
+        """
+        try:
+            logger.info(f"🎯 開始生成相似題目，選中文字: {selected_text[:50]}...")
+            
+            # 分析選中文字的內容
+            topic = self._extract_topic_from_text(selected_text)
+            difficulty = self._determine_difficulty_from_text(selected_text)
+            question_type = self._select_appropriate_question_type(selected_text)
+            
+            logger.info(f"📝 分析結果 - 主題: {topic}, 難度: {difficulty}, 題型: {question_type}")
+            
+            # 生成相似題目
+            question = self._generate_similar_question(selected_text, topic, difficulty, question_type)
+            
+            if not question:
+                return {
+                    'success': False,
+                    'error': '相似題目生成失敗'
+                }
+            
+            # 構建考卷信息
+            quiz_info = {
+                'title': f"基於「{topic}」的相似題目測驗",
+                'topic': topic,
+                'difficulty': difficulty,
+                'question_count': 1,
+                'time_limit': 60,
+                'selected_text': selected_text,
+                'generation_type': 'similar'  # 標記為相似題目生成
+            }
+            
+            # 保存到數據庫
+            database_ids = self._save_similar_question_to_database([question], quiz_info)
+            
+            return {
+                'success': True,
+                'questions': [question],
+                'quiz_info': quiz_info,
+                'database_ids': database_ids,
+                'generation_type': 'similar'
+            }
+            
+        except Exception as e:
+            logger.error(f"❌ 相似題目生成失敗: {e}")
+            return {
+                'success': False,
+                'error': f'相似題目生成失敗: {str(e)}'
+            }
+    
+    def _generate_similar_question(self, selected_text: str, topic: str, difficulty: str, question_type: str) -> Optional[Dict[str, Any]]:
+        """生成單一相似題目"""
+        
+        for attempt in range(self.max_retries):
+            try:
+                logger.info(f"🔄 相似題目生成，第 {attempt + 1} 次嘗試")
+                
+                # 初始化LLM
+                from langchain_google_genai import ChatGoogleGenerativeAI
+                import sys
+                import os
+                
+                # 添加tool目錄到路徑
+                tool_path = os.path.join(os.path.dirname(__file__), '..', 'tool')
+                if tool_path not in sys.path:
+                    sys.path.append(tool_path)
+                
+                from api_keys import get_api_key
+                
+                # 初始化LLM
+                api_key = get_api_key()
+                llm = ChatGoogleGenerativeAI(
+                    model="gemini-2.5-flash",
+                    google_api_key=api_key,
+                    temperature=0.8,  # 提高創造性
+                    top_p=0.9,
+                    top_k=40,
+                    max_output_tokens=8192,
+                    convert_system_message_to_human=True
+                )
+                
+                # 構建相似題目專用的提示詞
+                prompt = self._build_similar_question_prompt(selected_text, topic, difficulty, question_type)
+                
+                # 調用AI生成
+                response = llm.invoke(prompt)
+                response_text = response.content if hasattr(response, 'content') else str(response)
+                
+                logger.info(f"📝 相似題目AI回應長度: {len(response_text)} 字符")
+                
+                if not response_text or len(response_text.strip()) == 0:
+                    logger.error("❌ 相似題目AI回應為空！")
+                    if attempt < self.max_retries - 1:
+                        time.sleep(self.retry_delay)
+                        continue
+                    else:
+                        return None
+                
+                # 提取和驗證JSON
+                question_data = self._extract_and_validate_similar_question(response_text)
+                
+                if question_data:
+                    logger.info(f"✅ 相似題目生成成功")
+                    # 添加題目信息
+                    question_data['id'] = 1
+                    question_data['type'] = question_type
+                    question_data['topic'] = topic
+                    question_data['difficulty'] = difficulty
+                    question_data['image_file'] = []
+                    question_data['generation_type'] = 'similar'  # 標記為相似題目
+                    
+                    return question_data
+                else:
+                    logger.warning(f"⚠️ 相似題目JSON提取失敗")
+                    if attempt < self.max_retries - 1:
+                        time.sleep(self.retry_delay)
+                        continue
+                    else:
+                        return None
+                        
+            except Exception as e:
+                logger.error(f"❌ 相似題目生成錯誤: {e}")
+                if attempt < self.max_retries - 1:
+                    time.sleep(self.retry_delay)
+                    continue
+                else:
+                    return None
+        
+        return None
+    
+    def _build_similar_question_prompt(self, selected_text: str, topic: str, difficulty: str, question_type: str) -> str:
+        """構建相似題目專用的提示詞"""
+        
+        # 根據題型調整提示詞
+        if question_type == 'single-choice':
+            option_instruction = "提供4個選項，只有1個正確答案"
+            answer_format = '"A"'
+        elif question_type == 'multiple-choice':
+            option_instruction = "提供4個選項，正確答案可以是1-3個，用逗號分隔（如：'A,C'）"
+            answer_format = '"A,C"'
+        else:
+            option_instruction = "提供4個選項"
+            answer_format = '"A"'
+        
+        prompt = f"""請基於以下選中的文字內容，創建一道與之相關且相似的{self.difficulty_levels[difficulty]}程度{self.question_types[question_type]}。
+
+選中的文字內容：
+「{selected_text}」
+
+要求：
+1. 題目必須與選中文字的內容主題相關
+2. 題目應該測試對選中文字內容的理解和應用
+3. 可以擴展、深化或變換選中文字的知識點
+4. 題目要真實、有教育意義，符合大學課程標準
+5. 選項要合理且具有迷惑性，避免明顯錯誤的選項
+6. 答案要正確且有詳細解釋，解釋要清晰易懂
+7. 題目內容要符合{self.difficulty_levels[difficulty]}程度
+8. {option_instruction}
+9. 題目應該與選中文字有相似性，但不要完全相同
+
+請務必以以下 JSON Schema 格式回傳：
+
+{{
+  "question_text": "基於選中文字內容的相似題目",
+  "options": [
+    "選項A: 選項內容",
+    "選項B: 選項內容", 
+    "選項C: 選項內容",
+    "選項D: 選項內容"
+  ],
+  "correct_answer": {answer_format},
+  "explanation": "詳細的解釋說明，包含與選中文字的關聯性",
+  "key_points": "關鍵知識點, 與選中文字的關聯, 相似概念"
+}}
+
+重要提醒：
+- 請確保JSON格式完整，不要中途截斷
+- 所有字符串都要用雙引號包圍，不要使用單引號
+- 選項數組必須包含4個元素，每個選項都要有標籤（A、B、C、D）
+- 題目內容要專業且準確，與選中文字相關
+- 請使用繁體中文撰寫所有內容
+- 請嚴格按照上述JSON Schema格式，不要添加任何其他文字或格式
+- 必須生成真實的題目內容，不要使用佔位符
+- 題目應該與選中文字有相似性，測試相關的知識點
+- 正確答案格式：{answer_format}"""
+        
+        return prompt
+    
+    def _extract_and_validate_similar_question(self, response_text: str) -> Optional[Dict[str, Any]]:
+        """提取和驗證相似題目的JSON"""
+        try:
+            logger.info(f"🔍 開始提取相似題目JSON，回應文本長度: {len(response_text)}")
+            
+            # 方法1: 尋找 ```json ... ``` 格式
+            if '```json' in response_text:
+                start = response_text.find('```json') + 7
+                end = response_text.find('```', start)
+                if end != -1:
+                    json_text = response_text[start:end].strip()
+                    logger.info(f"🔍 找到```json```格式，JSON長度: {len(json_text)}")
+                else:
+                    logger.warning("⚠️ 找到```json開始但沒有結束標記")
+                    return None
+            # 方法2: 尋找 { ... } 格式
+            elif '{' in response_text and '}' in response_text:
+                start = response_text.find('{')
+                end = response_text.rfind('}') + 1
+                json_text = response_text[start:end]
+                logger.info(f"🔍 找到{{}}格式，JSON長度: {len(json_text)}")
+            else:
+                logger.warning("⚠️ 沒有找到有效的JSON格式")
+                return None
+            
+            # 解析JSON
+            question_data = json.loads(json_text)
+            logger.info(f"✅ 相似題目JSON解析成功")
+            
+            # 驗證必要字段
+            required_fields = ['question_text', 'options', 'correct_answer', 'explanation']
+            for field in required_fields:
+                if field not in question_data:
+                    logger.warning(f"⚠️ 缺少必要字段: {field}")
+                    return None
+            
+            # 驗證選項數量
+            if len(question_data['options']) != 4:
+                logger.warning(f"⚠️ 選項數量不正確: {len(question_data['options'])}")
+                return None
+            
+            logger.info(f"✅ 相似題目驗證通過")
+            return question_data
+            
+        except json.JSONDecodeError as e:
+            logger.error(f"❌ 相似題目JSON解析失敗: {e}")
+            logger.error(f"❌ 失敗的JSON文本: {json_text[:200]}...")
+            return None
+        except Exception as e:
+            logger.error(f"❌ 相似題目提取過程發生錯誤: {e}")
+            return None
+    
+    def _extract_topic_from_text(self, text: str) -> str:
+        """從選中的文字中提取主題"""
+        # 定義常見的計算機概論主題關鍵詞
+        topic_keywords = {
+            '作業系統': ['作業系統', '操作系統', 'OS', '進程', '執行緒', '記憶體管理', '檔案系統'],
+            '資料結構': ['資料結構', '數據結構', '陣列', '鏈表', '堆疊', '佇列', '樹', '圖'],
+            '演算法': ['演算法', '算法', '排序', '搜尋', '遞迴', '動態規劃', '貪心'],
+            '程式設計': ['程式設計', '編程', '程式語言', 'C++', 'Java', 'Python', '函數', '變數'],
+            '資料庫': ['資料庫', '數據庫', 'SQL', '關聯式', '正規化', '索引', '交易'],
+            '網路': ['網路', '網絡', 'TCP', 'IP', 'HTTP', '協定', '路由', '防火牆'],
+            '數位邏輯': ['數位邏輯', '數位電路', '邏輯閘', '布林', 'AND', 'OR', 'NOT', '0', '1'],
+            '計算機概論': ['計算機概論', '電腦概論', '資訊概論', '硬體', '軟體', 'CPU', '記憶體']
+        }
+        
+        text_lower = text.lower()
+        
+        # 檢查每個主題的關鍵詞
+        for topic, keywords in topic_keywords.items():
+            for keyword in keywords:
+                if keyword.lower() in text_lower:
+                    return topic
+        
+        # 如果沒有找到特定主題，返回通用主題
+        return '計算機概論'
+    
+    def _determine_difficulty_from_text(self, text: str) -> str:
+        """根據選中文字的複雜度確定難度"""
+        text_length = len(text)
+        
+        # 定義難度關鍵詞
+        easy_keywords = ['基本', '簡單', '基礎', '入門', '介紹']
+        hard_keywords = ['複雜', '進階', '高級', '深度', '詳細', '分析', '設計', '實作']
+        
+        text_lower = text.lower()
+        
+        # 檢查難度關鍵詞
+        for keyword in hard_keywords:
+            if keyword in text_lower:
+                return 'hard'
+        
+        for keyword in easy_keywords:
+            if keyword in text_lower:
+                return 'easy'
+        
+        # 根據文字長度判斷
+        if text_length < 50:
+            return 'easy'
+        elif text_length < 150:
+            return 'medium'
+        else:
+            return 'hard'
+    
+    def _select_appropriate_question_type(self, text: str) -> str:
+        """根據選中文字的內容選擇合適的題型"""
+        text_lower = text.lower()
+        
+        # 根據內容特徵選擇題型
+        if any(keyword in text_lower for keyword in ['比較', '對比', '差異', '相同', '不同']):
+            return 'multiple-choice'
+        elif any(keyword in text_lower for keyword in ['定義', '什麼是', '何謂', '概念']):
+            return 'single-choice'
+        elif any(keyword in text_lower for keyword in ['步驟', '過程', '流程', '方法']):
+            return 'single-choice'
+        else:
+            return 'single-choice'  # 默認單選題
+    
+    def _save_similar_question_to_database(self, questions: List[Dict], quiz_info: Dict) -> List[str]:
+        """將相似題目保存到MongoDB數據庫"""
+        try:
+            from accessories import mongo
+            
+            # 檢查 mongo 對象是否可用
+            if mongo is None or mongo.db is None:
+                logger.warning("⚠️ MongoDB 連接不可用")
+                return []
+            
+            # 創建完整的考卷文檔
+            quiz_id = f"similar_quiz_{int(time.time())}"
+            quiz_doc = {
+                "_id": quiz_id,  # 直接使用quiz_id作為_id
+                "quiz_id": quiz_id,
+                "title": quiz_info['title'],
+                "type": "similar_quiz",  # 標記為相似題目
+                "creator_email": "ai_system@mis_teach.com",
+                "create_time": datetime.now().isoformat(),
+                "time_limit": quiz_info['time_limit'],
+                "questions": questions,
+                "metadata": {
+                    "topic": quiz_info['topic'],
+                    "difficulty": quiz_info['difficulty'],
+                    "question_count": len(questions),
+                    "selected_text": quiz_info['selected_text'],
+                    "generation_type": "similar"
+                }
+            }
+            
+            # 保存到數據庫
+            result = mongo.db.exam.insert_one(quiz_doc)
+            
+            if result.inserted_id:
+                logger.info(f"✅ 相似題目已保存到數據庫，ID: {result.inserted_id}")
+                
+                # 創建SQL template
+                template_id = create_sql_template_for_quiz(quiz_id, quiz_doc)
+                logger.info(f"📋 SQL template已創建: {template_id}")
+                
+                return [quiz_id]  # 返回我們設置的quiz_id
+            else:
+                logger.error("❌ 保存相似題目到數據庫失敗")
+                return []
+            
+        except Exception as e:
+            logger.error(f"❌ 保存相似題目到數據庫失敗: {e}")
+            return []
+
+def generate_similar_quiz_from_text(selected_text: str) -> str:
+    """
+    根據選中的文字生成相似的題目 - 使用新的SimilarQuizGenerator
+    
+    Args:
+        selected_text: 用戶選中的文字內容
+        
+    Returns:
+        生成的考卷信息字符串
+    """
+    try:
+        logger.info(f"🎯 開始使用SimilarQuizGenerator生成相似題目: {selected_text[:50]}...")
+        
+        # 創建相似題目生成器
+        similar_generator = SimilarQuizGenerator()
+        
+        # 生成相似題目
+        result = similar_generator.generate_similar_quiz(selected_text)
+        
+        if result['success']:
+            questions = result['questions']
+            quiz_info = result['quiz_info']
+            database_ids = result.get('database_ids', [])
+            
+            # 簡化回應格式，只返回考卷 ID
+            response = f"✅ 相似題目生成成功！\n\n"
+            response += f"📝 **{quiz_info['title']}**\n"
+            response += f"📚 基於內容: {selected_text[:50]}...\n"
+            response += f"🎯 主題: {quiz_info['topic']}\n"
+            response += f"🔢 題目數量: {quiz_info['question_count']} 題\n"
+            response += f"⏱️ 時間限制: {quiz_info['time_limit']} 分鐘\n"
+            response += f"🏷️ 生成類型: 相似題目\n\n"
+            
+            # 顯示第一題預覽
+            if questions:
+                first_question = questions[0]
+                response += "📋 題目預覽:\n"
+                response += f"1. {first_question['question_text'][:80]}...\n\n"
+            
+            # 使用第一個數據庫 ID 作為考卷 ID
+            quiz_id = database_ids[0] if database_ids else f"similar_quiz_{int(time.time())}"
+            
+            response += "🚀 **開始測驗**\n\n"
+            response += f"📋 考卷ID: `{quiz_id}`"
+            
+            return response
+        else:
+            return f"❌ 相似題目生成失敗: {result.get('error', '未知錯誤')}"
+            
+    except Exception as e:
+        logger.error(f"❌ 相似題目生成執行失敗: {e}")
+        return f"❌ 相似題目生成失敗，請稍後再試。錯誤: {str(e)}"
+
+def _extract_topic_from_text(text: str) -> str:
+    """
+    從選中的文字中提取主題
+    
+    Args:
+        text: 選中的文字
+        
+    Returns:
+        提取的主題
+    """
+    # 定義常見的計算機概論主題關鍵詞
+    topic_keywords = {
+        '作業系統': ['作業系統', '操作系統', 'OS', '進程', '執行緒', '記憶體管理', '檔案系統'],
+        '資料結構': ['資料結構', '數據結構', '陣列', '鏈表', '堆疊', '佇列', '樹', '圖'],
+        '演算法': ['演算法', '算法', '排序', '搜尋', '遞迴', '動態規劃', '貪心'],
+        '程式設計': ['程式設計', '編程', '程式語言', 'C++', 'Java', 'Python', '函數', '變數'],
+        '資料庫': ['資料庫', '數據庫', 'SQL', '關聯式', '正規化', '索引', '交易'],
+        '網路': ['網路', '網絡', 'TCP', 'IP', 'HTTP', '協定', '路由', '防火牆'],
+        '數位邏輯': ['數位邏輯', '數位電路', '邏輯閘', '布林', 'AND', 'OR', 'NOT', '0', '1'],
+        '計算機概論': ['計算機概論', '電腦概論', '資訊概論', '硬體', '軟體', 'CPU', '記憶體']
+    }
+    
+    text_lower = text.lower()
+    
+    # 檢查每個主題的關鍵詞
+    for topic, keywords in topic_keywords.items():
+        for keyword in keywords:
+            if keyword.lower() in text_lower:
+                return topic
+    
+    # 如果沒有找到特定主題，返回通用主題
+    return '計算機概論'
+
+def _determine_difficulty_from_text(text: str) -> str:
+    """
+    根據選中文字的複雜度確定難度
+    
+    Args:
+        text: 選中的文字
+        
+    Returns:
+        難度等級 ('easy', 'medium', 'hard')
+    """
+    # 簡單的難度判斷邏輯
+    text_length = len(text)
+    
+    # 定義難度關鍵詞
+    easy_keywords = ['基本', '簡單', '基礎', '入門', '介紹']
+    hard_keywords = ['複雜', '進階', '高級', '深度', '詳細', '分析', '設計', '實作']
+    
+    text_lower = text.lower()
+    
+    # 檢查難度關鍵詞
+    for keyword in hard_keywords:
+        if keyword in text_lower:
+            return 'hard'
+    
+    for keyword in easy_keywords:
+        if keyword in text_lower:
+            return 'easy'
+    
+    # 根據文字長度判斷
+    if text_length < 50:
+        return 'easy'
+    elif text_length < 150:
+        return 'medium'
+    else:
+        return 'hard'
+
+def create_sql_template_for_quiz(question_ids: List[str], quiz_info: Dict[str, Any], user_email: str = 'ai_system@mis_teach.com') -> str:
+    """為quiz_generator生成的測驗創建SQL template，參考學校考古題的創建方式"""
+    try:
+        from accessories import sqldb
+        from sqlalchemy import text
+        import json
+        
+        # 創建SQL template記錄
+        template_query = text("""
+            INSERT INTO quiz_templates (
+                user_email,
+                template_type,
+                question_ids,
+                school,
+                department,
+                year
+            ) VALUES (
+                :user_email,
+                :template_type,
+                :question_ids,
+                :school,
+                :department,
+                :year
+            )
+        """)
+        
+        # 準備數據
+        template_data = {
+            'user_email': user_email,
+            'template_type': 'knowledge',
+            'question_ids': json.dumps(question_ids),  # 使用傳入的question_ids
+            'school': '',
+            'department': '',
+            'year': ''
+        }
+        
+        # 執行SQL並獲取lastrowid作為template_id
+        with sqldb.engine.connect() as conn:
+            result = conn.execute(template_query, template_data)
+            conn.commit()
+            template_id = result.lastrowid
+            
+        logger.info(f"SQL template已創建: {template_id}")
+        return str(template_id)
+        
+    except Exception as e:
+        logger.error(f"創建SQL template失敗: {e}")
+        return f"temp_template_{int(time.time())}"

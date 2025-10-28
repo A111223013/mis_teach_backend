@@ -4,7 +4,7 @@ from datetime import datetime
 import logging
 import jwt
 from flask import current_app
-from accessories import mongo
+from accessories import mongo, refresh_token
 
 # 創建藍圖
 user_guide_bp = Blueprint('user_guide', __name__)
@@ -41,10 +41,10 @@ def get_user_guide_status():
         if not user_email:
             # 如果沒有 token，從 session 獲取用戶 ID
             user_id = session.get('user_id', 'anonymous_user')
-            user_record = mongo.db.students.find_one({'user_id': user_id})
+            user_record = mongo.db.user.find_one({'user_id': user_id})
         else:
             # 使用 email 查詢用戶
-            user_record = mongo.db.students.find_one({'email': user_email})
+            user_record = mongo.db.user.find_one({'email': user_email})
 
         if user_record:
             # 用戶存在，返回實際狀態
@@ -75,6 +75,7 @@ def get_user_guide_status():
     except Exception as e:
         logger.error(f"獲取用戶導覽狀態失敗: {str(e)}")
         return jsonify({
+            'token': None,
             'error': '獲取用戶狀態失敗',
             'message': str(e)
         }), 500
@@ -103,7 +104,7 @@ def mark_user_as_guided():
             identifier = user_email
 
         # 更新用戶記錄
-        update_result = mongo.db.students.update_one(
+        update_result = mongo.db.user.update_one(
             query,
             {
                 '$set': {
@@ -118,6 +119,7 @@ def mark_user_as_guided():
         if update_result.modified_count > 0:
             logger.info(f"用戶 {identifier} 已完成導覽")
             return jsonify({
+                'token': refresh_token(token),
                 'success': True,
                 'message': '導覽狀態已更新',
                 'user_identifier': identifier,
@@ -133,6 +135,7 @@ def mark_user_as_guided():
     except Exception as e:
         logger.error(f"標記用戶導覽完成失敗: {str(e)}")
         return jsonify({
+            'token': None,
             'error': '標記導覽完成失敗',
             'message': str(e)
         }), 500
@@ -148,7 +151,7 @@ def reset_user_guide_status():
         user_id = session.get('user_id', 'anonymous_user')
         
         # 連接 MongoDB
-        users_collection = mongo.db.students
+        users_collection = mongo.db.user
         
         # 重置用戶記錄
         update_result = users_collection.update_one(
@@ -168,6 +171,7 @@ def reset_user_guide_status():
         if update_result.modified_count > 0 or update_result.upserted_id:
             logger.info(f"用戶 {user_id} 導覽狀態已重置")
             return jsonify({
+                'token': refresh_token(token),
                 'success': True,
                 'message': '導覽狀態已重置為新用戶',
                 'user_id': user_id,
@@ -183,6 +187,7 @@ def reset_user_guide_status():
     except Exception as e:
         logger.error(f"重置用戶導覽狀態失敗: {str(e)}")
         return jsonify({
+            'token': None,
             'error': '重置導覽狀態失敗',
             'message': str(e)
         }), 500
@@ -195,7 +200,7 @@ def get_guide_statistics():
     """
     try:
         # 連接 MongoDB
-        users_collection = mongo.db.students
+        users_collection = mongo.db.user
         
         # 統計數據
         total_users = users_collection.count_documents({})
@@ -211,11 +216,12 @@ def get_guide_statistics():
         }
         
         logger.info(f"導覽統計數據: {stats}")
-        return jsonify(stats), 200
+        return jsonify({'token': refresh_token(token), 'data': stats}), 200
         
     except Exception as e:
         logger.error(f"獲取導覽統計失敗: {str(e)}")
         return jsonify({
+            'token': None,
             'error': '獲取統計數據失敗',
             'message': str(e)
         }), 500
@@ -230,6 +236,7 @@ def test_user_guide_api():
     try:
         user_id = session.get('user_id', 'test_user')
         return jsonify({
+            'token': refresh_token(token),
             'success': True,
             'message': '用戶導覽 API 正常運作',
             'user_id': user_id,
@@ -237,6 +244,7 @@ def test_user_guide_api():
         }), 200
     except Exception as e:
         return jsonify({
+            'token': None,
             'error': 'API 測試失敗',
             'message': str(e)
         }), 500

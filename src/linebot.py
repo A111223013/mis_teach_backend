@@ -17,7 +17,7 @@ from linebot.v3 import WebhookHandler
 from linebot.v3.exceptions import InvalidSignatureError
 from linebot.v3.messaging import (
     Configuration, ApiClient, MessagingApi, ReplyMessageRequest, 
-    TextMessage, FlexMessage, FlexContainer
+    PushMessageRequest, TextMessage, FlexMessage, FlexContainer
 )
 from linebot.v3.webhooks import MessageEvent, TextMessageContent, PostbackEvent
 
@@ -44,13 +44,129 @@ line_bot_api = MessagingApi(ApiClient(configuration))
 # ===== 全局變數 =====
 # 移除 user_quiz_data，現在使用主代理人的記憶管理
 
+# ===== Line 綁定功能 =====
+import qrcode
+import io
+import base64
+import redis
+from accessories import redis_client
+
+@linebot_bp.route('/generate-qr', methods=['POST', 'OPTIONS'])
+def generate_line_qr():
+    """生成 Line Bot 綁定 QR Code"""
+    if request.method == 'OPTIONS':
+        return '', 204
+    
+    auth_header = request.headers.get('Authorization')
+    if not auth_header:
+        return jsonify({'token': None, 'message': '未提供認證 token'}), 401
+    
+    token = auth_header.split(" ")[1]
+    from src.api import get_user_info
+    student_email = get_user_info(token, 'email')
+    data = request.get_json()
+    binding_token = data.get('bindingToken')
+    
+    if not binding_token:
+        return jsonify({'token': None, 'message': '缺少綁定 token'}), 400
+    
+    try:
+        # 使用正確的加好友連結生成 QR Code
+        line_bot_url = "https://lin.ee/rG5sXkM"  # 正確的加好友連結
+        
+        
+        # 生成 QR Code
+        qr = qrcode.QRCode(version=1, box_size=10, border=5)
+        qr.add_data(line_bot_url)
+        qr.make(fit=True)
+        
+        # 創建 QR Code 圖片
+        img = qr.make_image(fill_color="black", back_color="white")
+        
+        # 轉換為 base64
+        buffer = io.BytesIO()
+        img.save(buffer, format='PNG')
+        img_str = base64.b64encode(buffer.getvalue()).decode()
+        
+        
+        # 儲存綁定 token 到 Redis (3分鐘過期)
+        redis_client.setex(f"line_binding:{binding_token}", 180, student_email)
+        
+        
+        from accessories import refresh_token
+        refreshed_token = refresh_token(token)
+        return jsonify({
+            'token': refreshed_token, 
+            'qrCodeUrl': f"data:image/png;base64,{img_str}",
+            'bindingToken': binding_token
+        })
+        
+    except Exception as e:
+        print(f"❌ 生成 QR Code 失敗: {e}")
+        return jsonify({'token': None, 'message': f'生成 QR Code 失敗: {str(e)}'}), 500
+
+@linebot_bp.route('/check-binding', methods=['POST', 'OPTIONS'])
+def check_line_binding():
+    """檢查 Line 綁定狀態"""
+    if request.method == 'OPTIONS':
+        return '', 204
+    
+    auth_header = request.headers.get('Authorization')
+    if not auth_header:
+        return jsonify({'token': None, 'message': '未提供認證 token'}), 401
+    
+    token = auth_header.split(" ")[1]
+    from src.api import get_user_info
+    student_email = get_user_info(token, 'email')
+    data = request.get_json()
+    binding_token = data.get('bindingToken')
+    
+    if not binding_token:
+        return jsonify({'token': None, 'message': '缺少綁定 token'}), 400
+    
+    # 檢查 Redis 中是否有綁定成功的記錄
+    binding_key = f"line_binding_success:{binding_token}"
+    line_user_id = redis_client.get(binding_key)
+    
+    if line_user_id:
+        # 綁定成功，更新用戶資料
+        line_user_id = line_user_id.decode('utf-8')
+        
+        # 更新 MongoDB 中的用戶資料
+        from accessories import mongo
+        result = mongo.db.user.update_one(
+            {"email": student_email},
+            {"$set": {"lineId": line_user_id}}
+        )
+        
+        if result.matched_count == 0:
+            print(f"❌ 找不到用戶: {student_email}")
+            return jsonify({'token': None, 'message': '找不到用戶資料'}), 404
+        
+        
+        # 清除綁定記錄
+        redis_client.delete(binding_key)
+        redis_client.delete(f"line_binding:{binding_token}")
+        
+        from accessories import refresh_token
+        refreshed_token = refresh_token(token)
+        return jsonify({
+            'token': refreshed_token,
+            'bound': True,
+            'lineId': line_user_id
+        })
+    else:
+        from accessories import refresh_token
+        refreshed_token = refresh_token(token)
+        return jsonify({
+            'token': refreshed_token,
+            'bound': False
+        })
+
 # ===== 主代理人調用 =====
 def call_main_agent(user_message: str, user_id: str) -> str:
     """調用現有的主代理人系統 (web_ai_assistant)"""
     try:
-        print(f"🔍 調用主代理人：用戶={user_id}, 消息={user_message}")
-        
-        # 準備請求數據 - 符合現有主代理人的格式，並標識為 LINE Bot
         request_data = {
             "message": user_message,
             "user_id": f"line_{user_id}",  # 加上 line_ 前綴區分來源
@@ -58,10 +174,6 @@ def call_main_agent(user_message: str, user_id: str) -> str:
             "conversation_id": f"line_{user_id}",  # 添加對話ID，用於記憶管理
             "maintain_context": True  # 標識需要保持對話上下文
         }
-        
-        print(f"📤 發送請求到：{MAIN_AGENT_API_URL}")
-        print(f"📤 請求數據：{request_data}")
-        
         # 調用現有的主代理人 API
         response = requests.post(
             MAIN_AGENT_API_URL,
@@ -70,19 +182,14 @@ def call_main_agent(user_message: str, user_id: str) -> str:
             timeout=30
         )
         
-        print(f"📥 收到回應：狀態碼={response.status_code}")
-        
         if response.status_code == 200:
             result = response.json()
-            print(f"📥 回應內容：{result}")
             
             if result.get('success'):
-                message = result.get("message", "主代理人回應格式錯誤")
-                print(f"✅ 成功獲取回應：{message[:50]}...")
+                message = result.get("content", result.get("message", "主代理人回應格式錯誤"))
                 return message
             else:
                 error_msg = result.get("error", "未知錯誤")
-                print(f"❌ 主代理人處理失敗: {error_msg}")
                 return f"抱歉，主代理人處理失敗：{error_msg}"
         else:
             print(f"❌ 主代理人 API 錯誤: {response.status_code} - {response.text}")
@@ -101,7 +208,6 @@ def reply_text(reply_token: str, text: str):
     try:
         # 檢查消息是否為空
         if not text or not text.strip():
-            print("警告：嘗試發送空消息")
             text = "抱歉，系統暫時無法回應，請稍後再試。"
         
         line_bot_api.reply_message(
@@ -110,26 +216,157 @@ def reply_text(reply_token: str, text: str):
                 messages=[TextMessage(text=text)]
             )
         )
-        print(f"✅ 成功發送消息：{text[:50]}...")
     except Exception as e:
         print(f"❌ 發送消息失敗: {e}")
-        # 嘗試發送錯誤消息
-        try:
-            line_bot_api.reply_message(
-                ReplyMessageRequest(
-                    reply_token=reply_token,
-                    messages=[TextMessage(text="抱歉，消息發送失敗，請稍後再試。")]
-                )
+
+def send_thinking_message(reply_token: str):
+    """發送思考中提示訊息"""
+    try:
+        thinking_text = "🤔 小幫手正在思考中，請稍候..."
+        line_bot_api.reply_message(
+            ReplyMessageRequest(
+                reply_token=reply_token,
+                messages=[TextMessage(text=thinking_text)]
             )
-        except Exception as fallback_error:
-            print(f"❌ 錯誤消息發送也失敗: {fallback_error}")
+        )
+    except Exception as e:
+        print(f"❌ 發送思考中提示失敗: {e}")
+
+def push_text_message(user_id: str, text: str):
+    """發送推播訊息（用於後續回應）"""
+    try:
+        # 檢查消息是否為空
+        if not text or not text.strip():
+            text = "抱歉，系統暫時無法回應，請稍後再試。"
+        
+        line_bot_api.push_message(
+            PushMessageRequest(
+                to=user_id,
+                messages=[TextMessage(text=text)]
+            )
+        )
+    except Exception as e:
+        print(f"❌ 發送推播消息失敗: {e}")
+
+def send_error_message(reply_token: str):
+    """發送錯誤訊息"""
+    try:
+        line_bot_api.reply_message(
+            ReplyMessageRequest(
+                reply_token=reply_token,
+                messages=[TextMessage(text="抱歉，消息發送失敗，請稍後再試。")]
+            )
+        )
+    except Exception as fallback_error:
+        print(f"❌ 錯誤消息發送也失敗: {fallback_error}")
+
+def handle_binding_command(user_id: str, binding_token: str, reply_token: str):
+    """處理綁定指令"""
+    try:
+        
+        # 檢查綁定 token 是否存在
+        binding_key = f"line_binding:{binding_token}"
+        user_email = redis_client.get(binding_key)
+        
+        
+        if user_email:
+            user_email = user_email.decode('utf-8')
+            
+            # 記錄綁定成功
+            success_key = f"line_binding_success:{binding_token}"
+            redis_client.setex(success_key, 180, user_id)
+            
+            
+            # 發送確認訊息給用戶
+            reply_text(reply_token, "🎉 綁定成功！您已成功綁定 Line Bot，現在可以使用所有功能了！")
+            
+        else:
+            
+            # 列出所有相關的 Redis keys 進行調試
+            try:
+                all_keys = redis_client.keys("line_binding:*")
+            except Exception as e:
+                print(f"🔍 無法列出 Redis keys: {e}")
+            
+            reply_text(reply_token, f"❌ 綁定失敗，綁定碼無效或已過期。\n\n請確認：\n1. 綁定碼是否正確複製\n2. 是否在 3 分鐘內完成綁定\n3. 是否重新生成了 QR Code\n\n當前綁定碼：{binding_token}")
+            
+    except Exception as e:
+        print(f"❌ 處理綁定指令失敗: {e}")
+        reply_text(reply_token, "❌ 綁定過程中發生錯誤，請稍後再試。")
+
+def handle_test_binding(user_id: str, reply_token: str):
+    """處理綁定測試指令"""
+    try:
+        
+        # 檢查用戶是否已綁定
+        from accessories import mongo
+        user = mongo.db.user.find_one({"lineId": user_id})
+        
+        if user:
+            # 用戶已綁定
+            test_message = f"""✅ 綁定狀態測試成功！
+
+👤 用戶姓名：{user.get('name', '未知')}
+📧 綁定帳號：{user.get('email', '未知')}
+🏫 學校：{user.get('school', '未知')}
+🆔 LINE ID：{user_id}
+
+🎉 您已成功綁定 MIS 教學助手！
+現在可以使用所有功能了。"""
+        else:
+            # 用戶未綁定
+            test_message = """❌ 您尚未綁定 MIS 教學助手
+
+📋 綁定步驟：
+1. 在網站設定頁面生成 QR Code
+2. 複製顯示的綁定碼
+3. 直接發送綁定碼（以 bind_ 開頭）
+
+💡 例如：bind_1757907057155_e47dt5lib"""
+        
+        reply_text(reply_token, test_message)
+        
+    except Exception as e:
+        print(f"❌ 測試綁定狀態失敗: {e}")
+        reply_text(reply_token, "❌ 測試過程中發生錯誤，請稍後再試。")
 
 def handle_message(event: MessageEvent):
     """處理用戶文字消息"""
     user_message = event.message.text.strip()
     user_id = event.source.user_id
     
-    # 所有訊息都交給主代理人處理，包括測驗答案
+
+    # 檢查是否為綁定碼格式（以 bind_ 開頭）
+    if user_message.startswith('bind_'):
+        binding_token = user_message.strip()
+        handle_binding_command(user_id, binding_token, event.reply_token)
+        return
+    
+    # 檢查是否為測試指令
+    if user_message.lower() in ['測試綁定', 'test', '檢查綁定', '我是誰']:
+        handle_test_binding(user_id, event.reply_token)
+        return
+    
+    # 處理圖文選單功能
+    if user_message == "學習分析":
+        handle_learning_analysis(user_id, event.reply_token)
+        return
+    elif user_message == "目標設定":
+        handle_goal_setting(user_id, event.reply_token)
+        return
+    elif user_message == "最新消息":
+        handle_news(user_id, event.reply_token)
+        return
+    elif user_message == "行事曆":
+        handle_calendar(user_id, event.reply_token)
+        return
+    elif user_message == "隨機知識":
+        handle_random_knowledge(user_id, event.reply_token)
+        return
+    
+    # 所有圖文選單功能都通過主代理人處理
+    
+    # 所有其他訊息都交給主代理人處理，包括測驗答案
     # 主代理人會自動維護對話上下文和記憶
     
     # 檢查是否為測驗答案（根據前一次對話判斷）
@@ -183,7 +420,6 @@ def handle_message(event: MessageEvent):
             return False
     
     if is_likely_quiz_answer(user_message, user_id):
-        print(f"🎯 檢測到測驗答案：{user_message}")
         
         # 從記憶管理器中獲取最近的對話上下文
         try:
@@ -198,23 +434,19 @@ def handle_message(event: MessageEvent):
                 # 構建包含上下文的測驗批改請求
                 grading_request = f"用戶剛才進行了測驗，現在輸入答案：{user_message}\n\n對話上下文：\n{context}\n\n請進行測驗批改，包含：1. 答案是否正確 2. 如果錯誤，解釋為什麼錯誤 3. 提供學習建議。要求：內容要簡潔明瞭，適合 LINE Bot 顯示，包含適當的表情符號"
                 
-                print(f"📝 發送測驗批改請求：{grading_request[:100]}...")
                 response = call_main_agent(grading_request, user_id)
                 reply_text(event.reply_token, response)
                 return
             else:
-                print("📝 沒有找到對話記憶，按一般訊息處理")
+                print(f"❌ 沒有找到對話記憶，按一般訊息處理")
         except Exception as e:
             print(f"❌ 獲取記憶失敗：{e}，按一般訊息處理")
     
     # 處理特殊指令
     if user_message in ["@每日測驗"]:
-        print(f"🎯 收到測驗指令：{user_message}")
         # 發送測驗選擇輪盤
         try:
-            print("🔄 正在創建測驗選擇輪盤...")
             carousel = create_quiz_selection_carousel()
-            print("✅ 輪盤樣板創建成功")
             
             line_bot_api.reply_message(
                 ReplyMessageRequest(
@@ -222,11 +454,8 @@ def handle_message(event: MessageEvent):
                     messages=[carousel]
                 )
             )
-            print("✅ 成功發送測驗選擇輪盤")
             return
         except Exception as e:
-            print(f"❌ 發送測驗輪盤失敗: {e}")
-            print(f"❌ 錯誤詳情: {type(e).__name__}: {str(e)}")
             # 如果輪盤發送失敗，回退到文字回應
             response = "🎯 開始測驗！\n\n請選擇知識點：\n• 基本計概\n• 數位邏輯\n• 作業系統\n• 程式語言\n• 資料結構\n• 網路通訊\n• 資料庫\n• AI與機器學習\n• 資訊安全\n• 雲端運算\n• MIS系統\n• 軟體工程\n• 隨機\n\n系統會自動生成隨機題型（選擇題或知識問答題）"
             reply_text(event.reply_token, response)
@@ -235,13 +464,15 @@ def handle_message(event: MessageEvent):
     # 處理測驗知識點選擇指令
     if user_message.startswith("@測驗 "):
         topic = user_message.replace("@測驗 ", "").strip()
-        print(f"📝 用戶選擇知識點：{topic}")
         
         # 直接調用主代理人生成隨機測驗（不顯示答案）
         if topic == "隨機":
             prompt = "請生成一道隨機測驗題目，題型隨機（選擇題或知識問答題），適合 LINE Bot 顯示。要求：1. 直接生成題目內容，不要有任何前綴說明如「好的，這是一道...」或「---」等 2. 只顯示題目和選項，絕對不要顯示正確答案 3. 如果是選擇題，提供4個選項（A、B、C、D） 4. 如果是知識問答題，只顯示問題 5. 內容要專注於資管相關的計算機科學知識 6. 包含適當的表情符號和格式 7. 重要：不要顯示「正確答案：」或任何答案相關信息"
         else:
             prompt = f"請生成一道關於「{topic}」的隨機測驗題目，題型隨機（選擇題或知識問答題），適合 LINE Bot 顯示。要求：1. 直接生成題目內容，不要有任何前綴說明如「好的，這是一道...」或「---」等 2. 只顯示題目和選項，絕對不要顯示正確答案 3. 如果是選擇題，提供4個選項（A、B、C、D） 4. 如果是知識問答題，只顯示問題 5. 內容要專注於資管相關的計算機科學知識 6. 包含適當的表情符號和格式 7. 重要：不要顯示「正確答案：」或任何答案相關信息"
+        
+        # 發送思考中提示
+        send_thinking_message(event.reply_token)
         
         response = call_main_agent(prompt, user_id)
         
@@ -250,20 +481,22 @@ def handle_message(event: MessageEvent):
             response += "\n\n💡 請輸入您的答案（A、B、C 或 D）："
         else:
             response += "\n\n💡 請輸入您的答案："
-        
-        reply_text(event.reply_token, response)
+        push_text_message(user_id, response)
         return
     
     # 直接調用現有的主代理人處理所有其他訊息
+    # 發送思考中提示
+    send_thinking_message(event.reply_token)
+    
     response = call_main_agent(user_message, user_id)
-    reply_text(event.reply_token, response)
+    # 使用推播訊息發送最終回應（因為 reply_token 已經用過）
+    push_text_message(user_id, response)
 
 def handle_postback(event: PostbackEvent):
     """處理用戶按鈕點擊事件"""
     data = event.postback.data
     user_id = event.source.user_id
     
-    print(f"📱 收到 postback: {data}")
     
     # 將按鈕點擊事件交給主代理人處理
     user_message = f"按鈕點擊: {data}"
@@ -280,6 +513,67 @@ def handle_message_event(event):
 def handle_postback_event(event):
     """LINE Bot 按鈕點擊事件處理"""
     handle_postback(event)
+
+# 添加 Follow 事件處理器
+from linebot.v3.webhooks import FollowEvent
+
+@handler.add(FollowEvent)
+def handle_follow_event(event):
+    """處理用戶加好友事件"""
+    try:
+        user_id = event.source.user_id
+        
+        # 檢查用戶是否已經綁定
+        from accessories import mongo
+        user = mongo.db.user.find_one({"lineId": user_id})
+        
+        if user:
+            # 用戶已綁定
+            welcome_message = f"""🎉 歡迎回來，{user.get('name', '用戶')}！
+
+✅ 您已經成功綁定 MIS 教學助手
+📧 綁定帳號：{user.get('email', '未知')}
+
+💡 現在您可以使用所有功能：
+• 問我任何資管相關問題
+• 生成隨機測驗題目
+• 獲得學習建議
+
+直接發送訊息開始使用吧！"""
+        else:
+            # 用戶未綁定
+            redis_client.setex(f"line_user:{user_id}", 3600, "pending_binding")
+            
+            welcome_message = """🎉 歡迎使用 MIS 教學助手！
+
+📋 綁定步驟：
+1. 在網站設定頁面生成 QR Code
+2. 複製顯示的綁定碼
+3. 直接發送綁定碼（以 bind_ 開頭）
+
+💡 例如：bind_1757907057155_e47dt5lib
+
+🔧 如果沒有綁定碼，請先在網站上生成 QR Code"""
+        
+        reply_text(event.reply_token, welcome_message)
+        
+    except Exception as e:
+        print(f"❌ 處理加好友事件失敗: {e}")
+
+# 添加 Unfollow 事件處理器
+from linebot.v3.webhooks import UnfollowEvent
+
+@handler.add(UnfollowEvent)
+def handle_unfollow_event(event):
+    """處理用戶取消好友事件"""
+    try:
+        user_id = event.source.user_id
+        
+        # 清除相關記錄
+        redis_client.delete(f"line_user:{user_id}")
+        
+    except Exception as e:
+        print(f"❌ 處理取消好友事件失敗: {e}")
 
 # ===== Blueprint 路由 =====
 @linebot_bp.route("/webhook", methods=['POST'])
@@ -319,11 +613,12 @@ def generate_quiz_question(requirements: str) -> str:
 需求：{requirements}
 
 要求：
-1. 如果是選擇題，請提供 4 個選項，並標記正確答案
-2. 如果是知識問答題，請提供問題和參考答案
-3. 題目內容要適合 LINE Bot 顯示（簡潔明瞭）
-4. 包含適當的表情符號和格式
-5. 題目內容要專注於資管相關的計算機科學知識，如：
+1. 直接生成題目內容，不要有任何前綴說明如「好的，這是一道...」或「---」等
+2. 如果是選擇題，請提供 4 個選項，並標記正確答案
+3. 如果是知識問答題，請提供問題和參考答案
+4. 題目內容要適合 LINE Bot 顯示（簡潔明瞭）
+5. 包含適當的表情符號和格式
+6. 題目內容要專注於資管相關的計算機科學知識，如：
    - 基本計算機概論
    - 數位邏輯與設計
    - 作業系統原理
@@ -366,14 +661,17 @@ def generate_knowledge_point(query: str) -> str:
         # 構建提示詞
         if query and query.strip():
             # 根據用戶查詢生成相關知識
-            prompt = f"""請根據用戶的查詢「{query}」，生成一個相關的資管計算機科學知識點。
+            prompt = f"""請生成一個關於「{query}」的資管計算機科學知識點。
 
 要求：
-1. 內容要簡潔明瞭，適合 LINE Bot 顯示
-2. 包含適當的表情符號和格式
-3. 提供實用的學習建議
-4. 如果是專業術語，請提供簡單解釋
-5. 專注於資管相關的計算機科學知識
+1. 直接生成知識點內容，不要有任何前綴說明
+2. 內容要簡潔明瞭，適合 LINE Bot 顯示（每行不要太長）
+3. 使用簡單的格式，避免複雜的 Markdown 語法
+4. 包含適當的表情符號
+5. 提供實用的學習建議
+6. 如果是專業術語，請提供簡單解釋
+7. 專注於資管相關的計算機科學知識
+8. 使用換行符號分隔段落，不要使用複雜的列表格式
 
 請生成知識點："""
         else:
@@ -393,10 +691,13 @@ def generate_knowledge_point(query: str) -> str:
 - 軟體工程基礎
 
 要求：
-1. 內容要簡潔明瞭，適合 LINE Bot 顯示
-2. 包含適當的表情符號和格式
-3. 提供實用的學習建議
-4. 知識點要有實用價值，專注於資管領域
+1. 直接生成知識點內容，不要有任何前綴說明如「好的，這是一個...」或「---」等
+2. 內容要簡潔明瞭，適合 LINE Bot 顯示（每行不要太長）
+3. 使用簡單的格式，避免複雜的 Markdown 語法
+4. 包含適當的表情符號
+5. 提供實用的學習建議
+6. 知識點要有實用價值，專注於資管領域
+7. 使用換行符號分隔段落，不要使用複雜的列表格式
 
 請生成知識點："""
         
@@ -434,7 +735,10 @@ def grade_answer(answer: str, correct_answer: str, question: str) -> str:
 2. 如果錯誤，解釋為什麼錯誤
 3. 提供學習建議
 
-要求：內容要簡潔明瞭，適合 LINE Bot 顯示，包含適當的表情符號"""
+要求：
+1. 直接生成批改結果，不要有任何前綴說明如「好的，我來批改...」或「---」等
+2. 內容要簡潔明瞭，適合 LINE Bot 顯示
+3. 包含適當的表情符號"""
         
         response = llm.invoke(prompt)
         return response.content
@@ -469,7 +773,10 @@ def provide_tutoring(question: str, user_answer: str, correct_answer: str) -> st
 3. 相關知識點複習建議
 4. 練習建議
 
-要求：內容要簡潔明瞭，適合 LINE Bot 顯示，包含適當的表情符號"""
+要求：
+1. 直接生成教學指導內容，不要有任何前綴說明如「好的，我來指導...」或「---」等
+2. 內容要簡潔明瞭，適合 LINE Bot 顯示
+3. 包含適當的表情符號"""
         
         response = llm.invoke(prompt)
         return response.content
@@ -477,23 +784,117 @@ def provide_tutoring(question: str, user_answer: str, correct_answer: str) -> st
     except Exception as e:
         return f"❌ 導師指導失敗：{str(e)}"
 
-# ==================== 開發中功能 ====================
 
-def learning_analysis_placeholder() -> str:
-    """學習分析功能 - 開發中"""
-    return "📊 學習分析功能\n\n🚧 此功能正在開發中，敬請期待！\n\n💡 功能預覽：\n• 學習進度追蹤\n• 弱點分析\n• 個人化建議\n• 學習報告"
 
-def goal_setting_placeholder() -> str:
-    """目標設定功能 - 開發中"""
-    return "🎯 目標設定功能\n\n🚧 此功能正在開發中，敬請期待！\n\n💡 功能預覽：\n• 學習目標設定\n• 進度追蹤\n• 提醒通知\n• 成就系統"
+# ==================== 圖文選單功能處理 ====================
 
-def news_exam_info_placeholder() -> str:
-    """最新消息/考試資訊功能 - 開發中"""
-    return "📰 最新消息/考試資訊\n\n🚧 此功能正在開發中，敬請期待！\n\n💡 功能預覽：\n• 考試資訊推送\n• 重要公告\n• 學習資源更新\n• 活動通知"
+def handle_learning_analysis(user_id: str, reply_token: str):
+    """處理學習分析功能 - 通過主代理人"""
+    try:
+        
+        # 檢查用戶是否已綁定
+        from accessories import mongo
+        user = mongo.db.user.find_one({"lineId": user_id})
+        
+        if not user:
+            reply_text(reply_token, "❌ 請先綁定您的帳號才能使用學習分析功能！\n\n請在網站上生成QR Code完成綁定。")
+            return
+        
+        # 發送思考中提示
+        send_thinking_message(reply_token)
+        
+        # 通過主代理人處理學習分析請求
+        response = call_main_agent("請提供我的學習分析報告，包括掌握度、弱點分析和學習建議", user_id)
+        push_text_message(user_id, response)
+        
+    except Exception as e:
+        print(f"❌ 學習分析處理失敗: {e}")
+        reply_text(reply_token, "❌ 學習分析功能暫時無法使用，請稍後再試。")
 
-def calendar_placeholder() -> str:
-    """行事曆功能 - 開發中"""
-    return "📅 行事曆功能\n\n🚧 此功能正在開發中，敬請期待！\n\n💡 功能預覽：\n• 學習計畫排程\n• 考試提醒\n• 作業截止日\n• 個人化行事曆"
+# 移除複雜的格式化函數，讓主代理人處理
+
+def handle_goal_setting(user_id: str, reply_token: str):
+    """處理目標設定功能 - 通過主代理人"""
+    try:
+        
+        # 檢查用戶是否已綁定
+        from accessories import mongo
+        user = mongo.db.user.find_one({"lineId": user_id})
+        
+        if not user:
+            reply_text(reply_token, "❌ 請先綁定您的帳號才能使用目標設定功能！\n\n請在網站上生成QR Code完成綁定。")
+            return
+        
+        # 發送思考中提示
+        send_thinking_message(reply_token)
+        
+        # 通過主代理人處理目標設定請求
+        response = call_main_agent("請幫我查看和設定學習目標，包括每日題數、掌握度目標和學習計畫", user_id)
+        push_text_message(user_id, response)
+        
+    except Exception as e:
+        print(f"❌ 目標設定處理失敗: {e}")
+        reply_text(reply_token, "❌ 目標設定功能暫時無法使用，請稍後再試。")
+
+# 移除複雜的格式化函數，讓主代理人處理
+
+def handle_news(user_id: str, reply_token: str):
+    """處理最新消息功能 - 通過主代理人"""
+    try:
+        
+        # 發送思考中提示
+        send_thinking_message(reply_token)
+        
+        # 通過主代理人處理最新消息請求
+        response = call_main_agent("請提供最新的考試資訊、系統更新和學習資源推薦", user_id)
+        push_text_message(user_id, response)
+        
+    except Exception as e:
+        print(f"❌ 最新消息處理失敗: {e}")
+        reply_text(reply_token, "❌ 最新消息功能暫時無法使用，請稍後再試。")
+
+# 移除複雜的 API 調用函數，讓主代理人處理
+
+def handle_calendar(user_id: str, reply_token: str):
+    """處理行事曆功能 - 通過主代理人"""
+    try:
+        
+        # 檢查用戶是否已綁定
+        from accessories import mongo
+        user = mongo.db.user.find_one({"lineId": user_id})
+        
+        if not user:
+            reply_text(reply_token, "❌ 請先綁定您的帳號才能使用行事曆功能！\n\n請在網站上生成QR Code完成綁定。")
+            return
+        
+        # 發送思考中提示
+        send_thinking_message(reply_token)
+        
+        # 通過主代理人處理行事曆請求
+        response = call_main_agent("請提供我的學習計畫排程、考試提醒和重要日期，並幫我管理行事曆", user_id)
+        push_text_message(user_id, response)
+        
+    except Exception as e:
+        print(f"❌ 行事曆處理失敗: {e}")
+        reply_text(reply_token, "❌ 行事曆功能暫時無法使用，請稍後再試。")
+
+# 移除複雜的選單函數，讓主代理人處理
+
+# 移除複雜的行事曆處理函數，讓主代理人處理
+
+# 移除複雜的事件創建函數，讓主代理人處理
+
+def handle_random_knowledge(user_id: str, reply_token: str):
+    """處理隨機知識功能"""
+    try:
+        
+        # 調用隨機知識工具
+        response = call_main_agent("請提供一個隨機的資管相關知識點，包含詳細說明和學習建議", user_id)
+        reply_text(reply_token, response)
+        
+    except Exception as e:
+        print(f"❌ 隨機知識處理失敗: {e}")
+        reply_text(reply_token, "❌ 隨機知識功能暫時無法使用，請稍後再試。")
 
 # ==================== 測驗輪盤樣板 ====================
 

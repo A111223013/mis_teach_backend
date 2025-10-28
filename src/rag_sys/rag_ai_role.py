@@ -5,7 +5,6 @@ RAG AI 教學系統 - 重構版本
 簡化函數結構，真正實現 RAG 功能
 """
 
-import google.generativeai as genai
 from tool.api_keys import get_api_key
 import json
 import re
@@ -14,6 +13,7 @@ from datetime import datetime
 import logging
 import chromadb
 from chromadb.config import Settings
+from accessories import init_gemini
 
 # 設置日誌
 logging.basicConfig(level=logging.INFO)
@@ -30,77 +30,63 @@ SESSION_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "learnin
 
 def save_sessions_to_file():
     """將會話保存到文件目前先註解掉之後我再看看是不是要用"""
-    try:
-        # 創建可序列化的會話副本
-        serializable_sessions = {}
-        for key, session in learning_sessions.items():
-            serializable_session = session.copy()
-            # 確保 datetime 對象被轉換為字符串
-            if 'created_at' in serializable_session:
-                if isinstance(serializable_session['created_at'], datetime):
-                    serializable_session['created_at'] = serializable_session['created_at'].isoformat()
-            serializable_sessions[key] = serializable_session
-        
-        with open(SESSION_FILE, 'w', encoding='utf-8') as f:
-            json.dump(serializable_sessions, f, ensure_ascii=False, indent=2)
-    except Exception as e:
-        print(f"⚠️ 會話保存失敗：{e}")
+    # 創建可序列化的會話副本
+    serializable_sessions = {}
+    for key, session in learning_sessions.items():
+        serializable_session = session.copy()
+        # 確保 datetime 對象被轉換為字符串
+        if 'created_at' in serializable_session and isinstance(serializable_session['created_at'], datetime):
+            serializable_session['created_at'] = serializable_session['created_at'].isoformat()
+        serializable_sessions[key] = serializable_session
+    
+    with open(SESSION_FILE, 'w', encoding='utf-8') as f:
+        json.dump(serializable_sessions, f, ensure_ascii=False, indent=2)
 
 def load_sessions_from_file():
     """從文件載入會話"""
-    try:
-        if os.path.exists(SESSION_FILE):
-            with open(SESSION_FILE, 'r', encoding='utf-8') as f:
-                sessions = json.load(f)
-                # 轉換回字典
-                for key, value in sessions.items():
-                    # 確保 datetime 字符串被正確處理
-                    if 'created_at' in value and isinstance(value['created_at'], str):
-                        try:
-                            value['created_at'] = datetime.fromisoformat(value['created_at'])
-                        except ValueError:
-                            # 如果解析失敗，使用當前時間
-                            value['created_at'] = datetime.now()
-                    learning_sessions[key] = value
-    except Exception as e:
-        print(f"⚠️ 會話載入失敗：{e}")
+    if not os.path.exists(SESSION_FILE):
+        return
+    
+    with open(SESSION_FILE, 'r', encoding='utf-8') as f:
+        sessions = json.load(f)
+        # 轉換回字典
+        for key, value in sessions.items():
+            # 確保 datetime 字符串被正確處理
+            if 'created_at' in value and isinstance(value['created_at'], str):
+                try:
+                    value['created_at'] = datetime.fromisoformat(value['created_at'])
+                except ValueError:
+                    # 如果解析失敗，使用當前時間
+                    value['created_at'] = datetime.now()
+            learning_sessions[key] = value
 
 # 在模組載入時載入會話
 load_sessions_from_file()
 
 def cleanup_old_sessions(max_age_hours: int = 24):
     """清理過期的會話，避免記憶體洩漏"""
-    try:
-        current_time = datetime.now()
-        expired_sessions = []
-        
-        for session_key, session_data in learning_sessions.items():
-            if 'created_at' in session_data:
-                try:
-                    if isinstance(session_data['created_at'], str):
-                        created_time = datetime.fromisoformat(session_data['created_at'])
-                    else:
-                        created_time = session_data['created_at']
-                    
-                    age_hours = (current_time - created_time).total_seconds() / 3600
-                    if age_hours > max_age_hours:
-                        expired_sessions.append(session_key)
-                except:
-                    # 如果時間解析失敗，保留會話
-                    pass
-        
-        # 刪除過期會話
-        for session_key in expired_sessions:
-            del learning_sessions[session_key]
-        
-        #if expired_sessions:
-        #    save_sessions_to_file()
-        
-        return len(expired_sessions)
-        
-    except Exception as e:
-        print(f"⚠️ 會話清理失敗：{e}")
-        return 0
+    current_time = datetime.now()
+    expired_sessions = []
+    
+    for session_key, session_data in learning_sessions.items():
+        if 'created_at' in session_data:
+            try:
+                created_time = (datetime.fromisoformat(session_data['created_at']) 
+                              if isinstance(session_data['created_at'], str) 
+                              else session_data['created_at'])
+                
+                age_hours = (current_time - created_time).total_seconds() / 3600
+                if age_hours > max_age_hours:
+                    expired_sessions.append(session_key)
+            except:
+                # 如果時間解析失敗，保留會話
+                pass
+    
+    # 刪除過期會話
+    for session_key in expired_sessions:
+        del learning_sessions[session_key]
+    
+    return len(expired_sessions)
 
 # 定期清理會話（每小時清理一次）
 import threading
@@ -415,7 +401,7 @@ def search_knowledge(query: str, top_k: int = 5) -> List[Dict[str, Any]]:
 
 def translate_to_english(text: str) -> str:
     # 使用Gemini進行翻譯
-    model = init_gemini()
+    model = init_gemini(model_name = 'gemini-2.5-flash')
     prompt = f"""請將以下中文問題翻譯成英文，保持專業術語的準確性：
 
 中文問題：{text}
@@ -791,24 +777,11 @@ def init_vector_database():
         logger.warning(f"⚠️ 向量資料庫初始化失敗: {e}")
         return None, None
 
-def init_gemini():
-    """初始化Gemini模型"""
-    try:
-        api_key = get_api_key()
-        genai.configure(api_key=api_key)
-        
-        # 創建模型實例
-        model = genai.GenerativeModel('gemini-1.5-flash')
-        return model
-        
-    except Exception as e:
-        logger.error(f"❌ Gemini初始化失敗: {e}")
-        return None
 
 def call_gemini_api(prompt: str) -> str:
     """調用Gemini API"""
     try:
-        model = init_gemini()
+        model = init_gemini(model_name = 'gemini-2.5-flash')
         if not model:
             return "抱歉，AI服務暫時不可用，請稍後再試。"
         

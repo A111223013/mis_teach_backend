@@ -28,18 +28,12 @@ def verify_token(token):
         return None
 
 def get_user_info(token, key):
-    # 檢查token是否為空或None
-    if not token or token == 'null' or token.strip() == '':
-        raise ValueError("Token is empty or null")
+    decoded_token = jwt.decode(token, current_app.config['SECRET_KEY'], algorithms=["HS256"])
     
-    try:
-        decoded_token = jwt.decode(token, current_app.config['SECRET_KEY'], algorithms=["HS256"])
-        user = mongo.db.students.find_one({"email": decoded_token['user']})
-        if not user:
-            raise ValueError("User not found")
-        return user[key]
-    except jwt.ExpiredSignatureError:
-        raise ValueError("Token has expired")
-    except jwt.InvalidTokenError:
-        raise ValueError("Invalid token")
+    user = mongo.db.user.find_one({"email": decoded_token['user']})
+    if not user:
+        print(f"❌ 找不到用戶: {decoded_token['user']}")
+        raise ValueError("User not found")
+
+    return user[key]
 
