@@ -1079,14 +1079,37 @@ def get_progress_status(progress_id: str) -> dict:
         return None
 
 def _parse_user_answer(user_answer):
-    """解析用戶答案，支援多種格式"""
+    """解析用戶答案，支援多種格式，包括 LONG_ANSWER_ 引用"""
     if isinstance(user_answer, dict):
         return user_answer.get('answer', '')
-    elif isinstance(user_answer, str) and user_answer.startswith('['):
-        try:
-            return json.loads(user_answer)
-        except json.JSONDecodeError:
-            return user_answer
+    elif isinstance(user_answer, str):
+        # 處理 LONG_ANSWER_ 引用
+        if user_answer.startswith('LONG_ANSWER_'):
+            try:
+                long_answer_id = int(user_answer.replace('LONG_ANSWER_', ''))
+                # 從 long_answers 表查詢完整答案
+                with sqldb.engine.connect() as conn:
+                    result = conn.execute(text("""
+                        SELECT full_answer FROM long_answers 
+                        WHERE id = :long_answer_id
+                    """), {
+                        'long_answer_id': long_answer_id
+                    }).fetchone()
+                    
+                    if result:
+                        return result[0]  # 返回完整的答案內容
+                    else:
+                        return f"[長答案載入失敗: {user_answer}]"
+            except (ValueError, Exception) as e:
+                print(f"❌ 解析長答案引用失敗: {e}")
+                return f"[長答案解析錯誤: {user_answer}]"
+        
+        # 處理 JSON 格式
+        elif user_answer.startswith('['):
+            try:
+                return json.loads(user_answer)
+            except json.JSONDecodeError:
+                return user_answer
     return user_answer
 
 def _store_long_answer(user_answer: any, question_type: str, quiz_history_id: int, question_id: str, user_email: str) -> str:

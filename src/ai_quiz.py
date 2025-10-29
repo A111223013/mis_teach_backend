@@ -523,6 +523,40 @@ def get_progress_status(progress_id: str) -> dict:
         print(f"❌ 獲取進度狀態失敗: {e}")
         return None
 
+def _parse_user_answer(user_answer):
+    """解析用戶答案，支援多種格式，包括 LONG_ANSWER_ 引用"""
+    if isinstance(user_answer, dict):
+        return user_answer.get('answer', '')
+    elif isinstance(user_answer, str):
+        # 處理 LONG_ANSWER_ 引用
+        if user_answer.startswith('LONG_ANSWER_'):
+            try:
+                long_answer_id = int(user_answer.replace('LONG_ANSWER_', ''))
+                # 從 long_answers 表查詢完整答案
+                with sqldb.engine.connect() as conn:
+                    result = conn.execute(text("""
+                        SELECT full_answer FROM long_answers 
+                        WHERE id = :long_answer_id
+                    """), {
+                        'long_answer_id': long_answer_id
+                    }).fetchone()
+                    
+                    if result:
+                        return result[0]  # 返回完整的答案內容
+                    else:
+                        return f"[長答案載入失敗: {user_answer}]"
+            except (ValueError, Exception) as e:
+                print(f"❌ 解析長答案引用失敗: {e}")
+                return f"[長答案解析錯誤: {user_answer}]"
+        
+        # 處理 JSON 格式
+        elif user_answer.startswith('['):
+            try:
+                return json.loads(user_answer)
+            except json.JSONDecodeError:
+                return user_answer
+    return user_answer
+
 def _store_long_answer(user_answer: any, question_type: str, quiz_history_id: int, question_id: str, user_email: str) -> str:
     """
     存儲長答案到專門的表中，保持數據完整性
@@ -800,6 +834,7 @@ def get_quiz_result(result_id):
                 
                 if exam_question:
                     question_detail = {
+                        'type': exam_question.get('answer_type', 'single-choice'),  # 添加題目類型
                         'question_text': exam_question.get('question_text', ''),
                         'options': exam_question.get('options', []),
                         'correct_answer': exam_question.get('answer', ''),
@@ -808,6 +843,7 @@ def get_quiz_result(result_id):
                     }
                 else:
                     question_detail = {
+                        'type': 'single-choice',  # 默認類型
                         'question_text': f'題目 {i + 1}',
                         'options': [],
                         'correct_answer': '',
@@ -817,6 +853,7 @@ def get_quiz_result(result_id):
             except Exception as e:
                 print(f"⚠️ 獲取題目詳情失敗: {e}")
                 question_detail = {
+                    'type': 'single-choice',  # 默認類型
                     'question_text': f'題目 {i + 1}',
                     'options': [],
                     'correct_answer': '',
@@ -829,9 +866,13 @@ def get_quiz_result(result_id):
             answer_info = answers_dict.get(question_id_str, {})
             
             # 構建題目資訊
+            raw_user_answer = answer_info.get('user_answer', {})
+            parsed_user_answer = _parse_user_answer(raw_user_answer)
+            
             question_info = {
                 'question_id': question_id_str,
                 'question_index': i,
+                'type': question_detail.get('type', 'single-choice'),  # 添加題目類型
                 'question_text': question_detail.get('question_text', ''),
                 'options': question_detail.get('options', []),
                 'correct_answer': question_detail.get('correct_answer', ''),
@@ -839,7 +880,7 @@ def get_quiz_result(result_id):
                 'key_points': question_detail.get('key_points', ''),
                 'is_correct': answer_info.get('is_correct', False),
                 'is_marked': False,  # 目前沒有標記功能
-                'user_answer': answer_info.get('user_answer', {}).get('answer', ''),
+                'user_answer': parsed_user_answer,
                 'score': answer_info.get('score', 0),
                 'answer_time_seconds': answer_info.get('answer_time_seconds', 0),
                 'answer_time': answer_info.get('answer_time')

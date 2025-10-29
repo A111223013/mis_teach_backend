@@ -125,8 +125,21 @@ def get_quiz_from_database(quiz_ids: List[str]) -> dict:
 
 def _extract_user_answer(user_answer_raw: str) -> str:
     """提取用戶答案的實際內容"""
+    print(f"🔍 _extract_user_answer 輸入: {user_answer_raw[:50]}..." if user_answer_raw else "🔍 _extract_user_answer 輸入: None")
+    
     if not user_answer_raw:
         return '未作答'
+    
+    # 處理 LONG_ANSWER_ 引用
+    if user_answer_raw.startswith('LONG_ANSWER_'):
+        try:
+            from .quiz import _parse_user_answer
+            parsed_answer = _parse_user_answer(user_answer_raw)
+            print(f"✅ LONG_ANSWER_ 解析成功: {parsed_answer[:50]}..." if parsed_answer else "✅ LONG_ANSWER_ 解析成功: None")
+            return parsed_answer
+        except Exception as e:
+            print(f"❌ 解析長答案引用失敗: {e}")
+            return f"[長答案解析錯誤: {user_answer_raw}]"
     
     # 如果是 JSON 格式，提取用戶答案
     if user_answer_raw.startswith('{'):
@@ -321,6 +334,13 @@ def get_quiz_result_data(result_id: str) -> dict:
                 # 解析用戶答案
                 actual_user_answer = _extract_user_answer(user_answer_raw)
                 
+                print(f"🔍 題目 {question_id_str} 數據:", {
+                    'answer_type': question_obj.get('answer_type', 'single-choice'),
+                    'user_answer_raw': user_answer_raw[:50] + '...' if user_answer_raw else 'None',
+                    'actual_user_answer': actual_user_answer[:50] + '...' if actual_user_answer else 'None',
+                    'is_base64': actual_user_answer.startswith('data:image/') if actual_user_answer else False
+                })
+                
                 question_data = {
                     'question_id': str(question_obj['_id']),
                     'question_text': question_obj.get('question_text', ''),
@@ -328,6 +348,7 @@ def get_quiz_result_data(result_id: str) -> dict:
                     'user_answer': actual_user_answer,
                     'is_correct': is_correct,
                     'is_marked': False,
+                    'type': question_obj.get('answer_type', 'single-choice'),  # 添加題目類型
                     'topic': question_obj.get('topic', '計算機概論'),
                     'difficulty': int(question_obj.get('difficulty', 2)),
                     'options': question_obj.get('options', []),
