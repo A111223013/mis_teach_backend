@@ -191,13 +191,19 @@ def handle_tutoring_conversation(user_email: str, question: str, user_answer: st
         conversation_history.append({"role": "assistant", "content": clean_response})
         session['conversation_history'] = conversation_history
         
-        # 8. 更新學習進度（只在非初始化階段）
+        # 8. 更新學習進度
+        # 判斷邏輯：如果有 user_input，說明這是用戶的回答，應該更新評分
+        # 初始化階段（is_initial = True）只有 AI 回應，沒有用戶輸入，所以跳過
         raw_score = None
-        if not is_initial:
+        if user_input:  # 如果有用戶輸入，說明用戶回答了問題，應該評分
             raw_score = extract_score_from_response(ai_response)
-            update_learning_progress(session, question, ai_response, conversation_history)
+            if raw_score is not None:
+                print(f"📊 用戶回答後，提取到AI評分：{raw_score}分，開始更新學習進度")
+                update_learning_progress(session, question, ai_response, conversation_history)
+            else:
+                print(f"⚠️ 用戶回答後未能提取評分，跳過學習進度更新")
         else:
-            print(f"🎯 初始化階段，跳過評分更新")
+            print(f"🎯 初始化階段（無用戶輸入），跳過評分更新")
         
         # 9. 保存會話到全局字典（使用與 get_or_create_session 相同的邏輯）
         clean_question = question.strip().replace('\n', ' ').replace('\r', ' ')
@@ -246,14 +252,18 @@ def update_learning_progress(session: dict, question: str, ai_response: str, con
             return
         
         # 2. 計算對話次數
-        # 對話歷史格式：user, assistant, user, assistant, ...
-        # 所以對話次數 = (總長度 - 1) // 2（減1是因為最後一條是AI回應）
-        conversation_count = (len(conversation_history) - 1) // 2
-
+        # 對話歷史格式：assistant（初始）, user, assistant, user, assistant, ...
+        # 計算實際的對話輪數：統計 user 角色的數量
+        user_count = sum(1 for msg in conversation_history if msg.get('role') == 'user')
+        conversation_count = user_count
         
         # 3. 獲取當前階段（在計算評分前）
         old_level = session.get('understanding_level', 0)
         old_stage = session.get('learning_stage', 'core_concept_confirmation')
+        
+        # 調試信息（在old_level定義後）
+        print(f"📊 計算對話次數：對話歷史長度={len(conversation_history)}, user數量={user_count}, conversation_count={conversation_count}")
+        print(f"📊 當前分數：{old_level}, AI評分：{score}")
         
         # 4. 智能評分計算（傳入當前階段和session，確保不跳階段並支援強制完成）
         # 注意：傳入當前的AI原始評分，用於強制完成判斷
@@ -300,92 +310,125 @@ def calculate_smart_score(current_score: int, ai_score: int, conversation_count:
             return 0
         
         elif conversation_count == 1:
-            # 初始化階段（第一個問題回答）：一定是0分，不管AI給多少分
-            # 這是為了確保學生從真正的學習對話才開始計分
-            print(f"🎯 初始化階段（conversation_count=1），保持0分（AI評分{ai_score}分，但不計入）")
-            return 0
-        
-        # 後續問題（conversation_count >= 2）：開始真正的學習評分
-        else:
-            # conversation_count == 2時，是第一個真正的學習對話，從0分開始，最高39分
-            if conversation_count == 2:
-                # 第一個真正的學習對話：最高分39分（核心概念確認階段上限）
-                base_score = min(39, max(0, ai_score))
-                return base_score
-            
-            # 根據當前分數確定當前階段（conversation_count >= 3）
-            if not current_stage:
-                if current_score >= 90:
-                    current_stage = 'understanding_verification'
-                elif current_score >= 70:
-                    current_stage = 'application_understanding'
-                elif current_score >= 40:
-                    current_stage = 'related_concept_guidance'
-                else:
-                    current_stage = 'core_concept_confirmation'
-            
-            # 獲取當前階段的範圍
-            stage_min, stage_max = stage_ranges.get(current_stage, (0, 99))
-            
-            if ai_score > current_score:
-                # AI 評分更高：不限制加分，但不超過當前階段上限
-                # 特殊處理：理解驗證階段的強制完成機制
-                if current_stage == 'understanding_verification':
-                    # 方案1：如果AI直接給99分，允許達到99分
-                    if ai_score >= 99:
-                        print(f"🎯 AI評分99分，直接完成")
-                        return 99
-                    
-                    # 方案2：如果達到98分且AI評分>=95，直接提升到99分
-                    if current_score >= 98 and ai_score >= 95:
-                        print(f"🎯 達到98分且AI評分{ai_score}分，自動提升到99分（完成）")
-                        return 99
-                    
-                    # 方案3：如果當前分數>=97分且AI評分>=95分，自動提升到99分（強制完成）
-                    if current_score >= 97 and ai_score >= 95:
-                        print(f"🎯 理解驗證階段高分表現（當前{current_score}分，AI評{ai_score}分），自動提升到99分（完成）")
-                        return 99
-                    
-                    # 方案4：追蹤高分成績，如果連續多次高分，自動完成
-                    if session:
-                        concept_progress = session.get('concept_progress', [])
-                        # 檢查最近在理解驗證階段的原始AI評分
-                        recent_scores = [
-                            p.get('score', 0) for p in concept_progress 
-                            if p.get('stage') == 'understanding_verification'
-                        ][-2:]  # 最近2次（不包括當前這次，因為還沒記錄）
-                        
-                        # 如果最近2次AI原始評分都>=95分，且當前也>=95分，自動提升到99分
-                        if len(recent_scores) >= 2 and all(s >= 95 for s in recent_scores) and ai_score >= 95:
-                            print(f"🎯 理解驗證階段連續多次高分（歷史{recent_scores}，當前AI評{ai_score}分），自動提升到99分（完成）")
-                            return 99
-                        
-                        # 方案5：如果在理解驗證階段停留時間過長且表現良好，自動完成
-                        # 統計在理解驗證階段的對話次數
-                        verification_count = len([
-                            p for p in concept_progress 
-                            if p.get('stage') == 'understanding_verification'
-                        ])
-                        
-                        # 如果在理解驗證階段已經有3次以上對話，且當前分數>=95，AI評分>=95，自動完成
-                        if verification_count >= 3 and current_score >= 95 and ai_score >= 95:
-                            print(f"🎯 理解驗證階段已進行{verification_count}次對話，表現良好（當前{current_score}分，AI評{ai_score}分），自動提升到99分（完成）")
-                            return 99
-                
-                # 一般情況：不超過當前階段上限
-                new_score = min(stage_max, ai_score)
-                
-                # 確保新分數不低於當前分數
-                new_score = max(current_score, new_score)
-                return new_score
+            # 第一個問題回答：根據AI評分調整為合理範圍（0-30分）
+            # 將AI評分映射到0-30分的範圍，作為初始評分
+            # 例如：85分 -> 30分，60分 -> 20分，30分 -> 10分
+            if ai_score >= 80:
+                initial_score = 30  # 高分映射到30分
+            elif ai_score >= 60:
+                initial_score = 20  # 中等分映射到20分
+            elif ai_score >= 40:
+                initial_score = 15  # 偏低分映射到15分
+            elif ai_score >= 20:
+                initial_score = 10  # 低分映射到10分
             else:
-                # AI 評分更低：給予扣分（但扣分幅度較小）
-                penalty = min(2, current_score - ai_score)
-                new_score = max(0, current_score - penalty)
-                # 確保扣分後仍在當前階段範圍內（如果可能）
-                if new_score < stage_min:
-                    new_score = max(0, stage_min - 1)
+                initial_score = 5   # 很低分映射到5分
+            
+            print(f"✅ 第一個問題回答（conversation_count=1），AI評分{ai_score}分，調整為初始評分{initial_score}分")
+            print(f"📊 當前分數：{current_score} -> 新分數：{initial_score}")
+            return initial_score
+        
+        # 之後的邏輯完全基於階段，不依賴對話次數
+        # 根據當前分數確定當前階段（如果未提供）
+        if not current_stage:
+            if current_score >= 90:
+                current_stage = 'understanding_verification'
+            elif current_score >= 70:
+                current_stage = 'application_understanding'
+            elif current_score >= 40:
+                current_stage = 'related_concept_guidance'
+            else:
+                current_stage = 'core_concept_confirmation'
+        
+        # 獲取當前階段的範圍
+        stage_min, stage_max = stage_ranges.get(current_stage, (0, 99))
+        
+        print(f"📊 當前階段：{current_stage}，階段範圍：{stage_min}-{stage_max}，當前分數：{current_score}，AI評分：{ai_score}")
+        
+        if ai_score > current_score:
+            # AI 評分更高：不限制加分，但不超過當前階段上限
+            # 特殊處理：理解驗證階段的強制完成機制
+            if current_stage == 'understanding_verification':
+                # 方案1：如果AI直接給99分，允許達到99分
+                if ai_score >= 99:
+                    print(f"🎯 AI評分99分，直接完成")
+                    return 99
+                
+                # 方案2：如果達到98分且AI評分>=95，直接提升到99分
+                if current_score >= 98 and ai_score >= 95:
+                    print(f"🎯 達到98分且AI評分{ai_score}分，自動提升到99分（完成）")
+                    return 99
+                
+                # 方案3：如果當前分數>=97分且AI評分>=95分，自動提升到99分（強制完成）
+                if current_score >= 97 and ai_score >= 95:
+                    print(f"🎯 理解驗證階段高分表現（當前{current_score}分，AI評{ai_score}分），自動提升到99分（完成）")
+                    return 99
+                
+                # 方案4：追蹤高分成績，如果連續多次高分，自動完成
+                if session:
+                    concept_progress = session.get('concept_progress', [])
+                    # 檢查最近在理解驗證階段的原始AI評分
+                    recent_scores = [
+                        p.get('score', 0) for p in concept_progress 
+                        if p.get('stage') == 'understanding_verification'
+                    ][-2:]  # 最近2次（不包括當前這次，因為還沒記錄）
+                    
+                    # 如果最近2次AI原始評分都>=95分，且當前也>=95分，自動提升到99分
+                    if len(recent_scores) >= 2 and all(s >= 95 for s in recent_scores) and ai_score >= 95:
+                        print(f"🎯 理解驗證階段連續多次高分（歷史{recent_scores}，當前AI評{ai_score}分），自動提升到99分（完成）")
+                        return 99
+                    
+                    # 方案5：如果在理解驗證階段停留時間過長且表現良好，自動完成
+                    # 統計在理解驗證階段的對話次數
+                    verification_count = len([
+                        p for p in concept_progress 
+                        if p.get('stage') == 'understanding_verification'
+                    ])
+                    
+                    # 如果在理解驗證階段已經有3次以上對話，且當前分數>=95，AI評分>=95，自動完成
+                    if verification_count >= 3 and current_score >= 95 and ai_score >= 95:
+                        print(f"🎯 理解驗證階段已進行{verification_count}次對話，表現良好（當前{current_score}分，AI評{ai_score}分），自動提升到99分（完成）")
+                        return 99
+            
+            # 一般情況：基於當前階段推進
+            # 如果還沒達到當前階段上限，在階段範圍內提升
+            if current_score < stage_max:
+                new_score = min(stage_max, ai_score)
+                new_score = max(current_score, new_score)
+                print(f"✅ 當前階段{current_stage}內提升：{current_score} -> {new_score}（階段上限：{stage_max}）")
                 return new_score
+            
+            # 如果已經達到當前階段上限，且AI評分更高，進入下一個階段（不能跳階段）
+            elif current_score >= stage_max and ai_score > stage_max:
+                # 已達到階段上限，只允許進入下一個階段（逐步推進）
+                stage_order = ['core_concept_confirmation', 'related_concept_guidance', 'application_understanding', 'understanding_verification', 'completed']
+                current_index = stage_order.index(current_stage) if current_stage in stage_order else 0
+                
+                # 只進入下一個階段，不能跳階段
+                if current_index < len(stage_order) - 1:
+                    next_stage = stage_order[current_index + 1]
+                    # 獲取下一個階段的範圍
+                    next_min, next_max = stage_ranges.get(next_stage, (0, 99))
+                    
+                    # 進入下一個階段時，分數應該是下一個階段的最小值或AI評分（取較高者，但不超過階段上限）
+                    # 例如：從39分（核心概念確認上限）進入下一個階段，應該至少40分（相關概念引導最小值）
+                    new_score = max(next_min, min(next_max, ai_score))
+                    print(f"🎯 達到階段上限{stage_max}分（{current_stage}），AI評{ai_score}分，進入下一個階段{next_stage}，新分數：{new_score}分（範圍：{next_min}-{next_max}）")
+                    return new_score
+                else:
+                    # 已經是最後階段，直接返回階段上限
+                    print(f"🎯 已達最後階段{current_stage}上限{stage_max}分，AI評{ai_score}分，保持{stage_max}分")
+                    return stage_max
+            else:
+                # 已經達到階段上限，但AI評分沒有更高，保持當前分數
+                print(f"⚠️ 已達階段上限{stage_max}分，AI評{ai_score}分 <= 當前{current_score}分，保持當前分數")
+                return current_score
+        else:
+            # AI 評分更低：給予扣分（但扣分幅度較小），確保不低於階段最小值
+            penalty = min(2, current_score - ai_score)
+            new_score = max(stage_min, current_score - penalty)
+            print(f"⚠️ AI評分{ai_score}分 <= 當前{current_score}分，扣分後：{new_score}分（階段範圍：{stage_min}-{stage_max}）")
+            return new_score
             
     except Exception as e:
         logger.error(f"❌ 智能評分計算失敗: {e}")
