@@ -31,7 +31,7 @@ from tool.init_neo4j_knowledge_graph import init_neo4j_knowledge_graph  # 引入
 from accessories import init_neo4j  # 引入Neo4j驅動初始化
 from tool.insert_test_school import check_and_insert_test_school  # 引入測試學校自動檢查
 from src.news_api import news_api_bp  # 引入新聞 API Blueprint
-from tool.init_news_table import init_news_table  # 引入新聞表初始化vssssss
+from tool.init_news_table import init_news_table, migrate_news_data  # 引入新聞表初始化與資料遷移
 from tool.rename_materials import rename_materials
 
 # 定義 BASE_DIR 為 backend 資料夾的絕對路徑
@@ -232,7 +232,8 @@ with app.app_context():
     sqldb.create_all()
     init_quiz_tables() 
     init_calendar_tables()
-    init_news_table()  # 初始化新聞表 
+    init_news_table()  # 初始化新聞表
+    migrate_news_data()  # 自動遷移 ithome_news.json 到資料庫（若尚未導入）
     scheduler_thread = threading.Thread(target=run_scheduler, daemon=True)
     scheduler_thread.start()
     # 初始化MongoDB數據
