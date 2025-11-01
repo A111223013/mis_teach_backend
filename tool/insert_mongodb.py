@@ -13,10 +13,10 @@ def initialize_mis_teach_db(uri="mongodb://localhost:27017/", db_name="MIS_Teach
         blocks_col = db["block"]
         micro_col = db["micro_concept"]
 
-        # 預期數量
-        expected_domains = 10
-        expected_blocks = 55
-        expected_micro = 126
+        # 預期數量（11個domains，包含數學與統計）
+        expected_domains = 11
+        expected_blocks = 60  # 原本55 + 數學與統計的5個blocks
+        expected_micro = 144  # 原本126 + 數學與統計的18個micro concepts
 
         # 目前資料數量
         domain_count = domains_col.count_documents({})
@@ -46,6 +46,7 @@ def initialize_mis_teach_db(uri="mongodb://localhost:27017/", db_name="MIS_Teach
         insert_cloud_domain(db)
         insert_mis_domain(db)
         insert_se_domain(db)
+        insert_math_statistics_domain(db)
 
         return db
 
@@ -606,6 +607,64 @@ def insert_se_domain(db):
 
     except Exception as e:
         print(f"❌ 插入軟體工程與系統開發失敗：{e}")
+
+
+def insert_math_statistics_domain(db):
+    """
+    插入「數學與統計（Mathematics & Statistics）」的 Domain、Blocks、Micro Concepts
+    """
+    try:
+        domains_col = db["domain"]
+        blocks_col = db["block"]
+        micro_col = db["micro_concept"]
+
+        domain_data = {
+            "name": "數學與統計（Mathematics & Statistics）",
+            "description": "介紹微積分、機率統計、線性代數與離散數學的基礎概念",
+            "blocks": []
+        }
+        domain_id = domains_col.insert_one(domain_data).inserted_id
+
+        block_titles = [
+            "微積分基礎",
+            "數列與級數",
+            "機率與統計",
+            "線性代數",
+            "離散數學"
+        ]
+        block_docs = [{"domain_id": domain_id, "title": t, "subtopics": []} for t in block_titles]
+        block_ids = blocks_col.insert_many(block_docs).inserted_ids
+        domains_col.update_one({"_id": domain_id}, {"$set": {"blocks": block_ids}})
+
+        micro_map = [
+            (0, "極限"),
+            (0, "微分"),
+            (0, "積分"),
+            (1, "數列與級數"),
+            (2, "機率"),
+            (2, "統計推論"),
+            (2, "常態分配"),
+            (2, "假設檢定"),
+            (3, "線性代數"),
+            (3, "矩陣"),
+            (3, "向量"),
+            (3, "特徵值"),
+            (4, "集合論"),
+            (4, "數理邏輯"),
+            (4, "離散數學"),
+            (4, "關係"),
+            (4, "函數"),
+            (4, "圖論")
+        ]
+        micro_ids = micro_col.insert_many(
+            [{"block_id": block_ids[idx], "name": name, "dependencies": []} for idx, name in micro_map]
+        ).inserted_ids
+
+        for i, (block_idx, _) in enumerate(micro_map):
+            blocks_col.update_one({"_id": block_ids[block_idx]}, {"$push": {"subtopics": micro_ids[i]}})
+
+    except Exception as e:
+        print(f"❌ 插入數學與統計失敗：{e}")
 
 
 # ---- 使用範例 ----

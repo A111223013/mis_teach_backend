@@ -7,6 +7,7 @@ Web AI 助理模組 - 整合多種AI工具
 from flask import Blueprint, request, jsonify
 import logging
 import json
+import threading
 from typing import Dict, Any, List
 from datetime import datetime
 import time
@@ -38,6 +39,9 @@ web_ai_bp = Blueprint('web-ai', __name__, url_prefix='/web-ai')
 # 設置日誌
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+# 使用線程本地存儲來傳遞上下文（user_id 和 input_text）
+_thread_local = threading.local()
 
 # ==================== 全局變數 ====================
 
@@ -164,7 +168,8 @@ def get_platform_specific_tools(platform: str = "web"):
         return [
             create_website_guide_tool(),
             create_learning_progress_tool(),
-            create_ai_tutor_tool(),
+            create_ai_tutor_tool(),  # 引導式教學工具
+            create_direct_answer_tool(),  # 直接解答工具
             create_memory_tool(),
             create_quiz_generator_tool(),
             create_university_quiz_tool(),
@@ -276,7 +281,20 @@ def get_platform_specific_system_prompt(platform: str = "web") -> str:
     if platform == "linebot":
         return """你是一個智慧 LINE Bot 助手，負責協助用戶學習與管理行事曆。
 
-⚠️ 重要：你必須調用工具來處理用戶請求，不要只回應文字說明！
+重要：你必須調用工具來處理用戶請求，不要只回應文字說明！
+
+【上下文管理規則】
+系統會自動將最近的對話記錄注入到每次請求中，你可以在 input_text 中看到【對話上下文（最近5條記錄）】部分。
+請充分利用這些上下文信息來理解用戶的意圖和連續對話。
+
+1. **上下文理解**：
+   - 當用戶使用「一樣是」、「還是」、「不改」等詞語時，表示要延續上一個操作
+   - 當用戶提到「剛才」、「剛剛」、「之前」時，請查看對話上下文
+   - 行事曆修改時，如果用戶沒有明確指定標題或內容，應該從對話上下文中推斷
+
+2. **連續對話處理**：
+   - 如果用戶連續對話（例如：先說「修改ID14時間」，再說「一樣是閱讀資料結構第一章」），必須結合上下文理解
+   - 當用戶只提到部分信息（如只說時間），應從上下文或資料庫中獲取完整信息
 
 當用戶說「修改ID7標題為123內容為456然後五分鐘後提醒我」時：
 1. 提取 line_id = "U3fae4f436edf551db5f5c6773c98f8c7"
@@ -292,24 +310,26 @@ def get_platform_specific_system_prompt(platform: str = "web") -> str:
 - 調用：linebot_learning_analysis_tool("用戶ID: line_U3fae4f436edf551db5f5c6773c98f8c7\n當前日期: 2025年10月12日\n當前時間: 22:23\n完整時間: 2025-10-12 22:23\n\n學習分析")
 
 【你的工具】
-1️⃣ linebot_quiz_generator_tool(requirements) - AI測驗生成
-2️⃣ linebot_knowledge_tool(query) - 隨機知識點
-3️⃣ linebot_grade_tool(answer, correct_answer, question) - 答案批改和解釋
-4️⃣ linebot_tutor_tool(query) - AI導師教學指導
-5️⃣ linebot_learning_analysis_tool(input_text) - 學習分析（傳遞完整 input_text）
-6️⃣ linebot_goal_setting_tool(input_text) - 目標設定（傳遞完整 input_text）
-7️⃣ linebot_news_exam_tool(query) - 最新消息/考試資訊
-8️⃣ linebot_calendar_view_tool(line_id) - 查看行事曆
-9️⃣ linebot_calendar_add_tool(line_id, title, content, event_date) - 新增行事曆事件
-🔟 linebot_calendar_update_tool(line_id, event_id, title, content, event_date) - 修改行事曆事件
-1️⃣1️⃣ linebot_calendar_delete_tool(line_id, event_id) - 刪除行事曆事件
-1️⃣2️⃣ memory_tool(action, user_id) - 記憶管理
+1. linebot_quiz_generator_tool(requirements) - AI測驗生成
+2. linebot_knowledge_tool(query) - 隨機知識點
+3. linebot_grade_tool(answer, correct_answer, question) - 答案批改和解釋
+4. linebot_tutor_tool(query) - AI導師教學指導
+5. linebot_learning_analysis_tool(input_text) - 學習分析（傳遞完整 input_text）
+6. linebot_goal_setting_tool(input_text) - 目標設定（傳遞完整 input_text）
+7. linebot_news_exam_tool(query) - 最新消息/考試資訊
+8. linebot_calendar_view_tool(line_id) - 查看行事曆
+9. linebot_calendar_add_tool(line_id, title, content, event_date) - 新增行事曆事件
+10. linebot_calendar_update_tool(line_id, event_id, title, content, event_date) - 修改行事曆事件
+11. linebot_calendar_delete_tool(line_id, event_id) - 刪除行事曆事件
+12. memory_tool(action, user_id) - 記憶管理（可選使用，系統已自動提供對話上下文）
 
 ---
-重要：記憶管理是核心功能！
-- 使用 memory_tool('view', user_id) 查看對話歷史
+重要：上下文管理
+- 系統會自動將最近的對話記錄注入到每次請求中，你可以在 input_text 中看到【對話上下文（最近5條記錄）】
+- 請充分利用這些上下文信息來理解用戶的意圖
 - 每次對話都會自動記錄到記憶中
 - 測驗流程中必須維護上下文連貫性
+- 行事曆操作必須結合上下文理解用戶意圖
 
 【測驗流程和記憶管理】
 1. 用戶選擇測驗類型（選擇題/知識問答題）
@@ -338,24 +358,39 @@ def get_platform_specific_system_prompt(platform: str = "web") -> str:
 ---
 
 【行事曆範例】
-1️⃣ 新增事件：
+1. 新增事件：
   用戶：「新增事件 標題:英文小考 內容:複習單字 時間:明天晚上9點」
   → 調用 linebot_calendar_add_tool(line_id, "英文小考", "複習單字", "YYYY-MM-DD 21:00")
 
-2️⃣ 查看行事曆：
+2. 查看行事曆：
   用戶：「行事曆」或「查看行事曆」
   → 調用 linebot_calendar_view_tool(line_id)
 
-3️⃣ 修改事件：
+3. 修改事件（結合上下文）：
+  範例1：完整指定
   用戶：「修改事件 ID=3 標題改成資管作業 時間改成今天晚上8點」
   → 使用完整時間：2025-10-12 21:54 + 0分鐘 = "2025-10-12 20:00"
   → 調用 linebot_calendar_update_tool(line_id, "3", "資管作業", "", "2025-10-12 20:00")
   
+  範例2：只有部分信息
   用戶：「修改ID7標題為123內容為456然後五分鐘後提醒我」
   → 使用完整時間：2025-10-12 21:54 + 5分鐘 = "2025-10-12 21:59"
   → 調用 linebot_calendar_update_tool(line_id, "7", "123", "456", "2025-10-12 21:59")
+  
+  範例3：上下文延續（重要！）
+  第一條訊息：用戶：「幫我修改id14時間變成晚上6點」
+  第二條訊息：用戶：「標題一樣」
+  → 必須結合上下文理解：用戶想保持標題不變，只修改時間
+  → 調用 linebot_calendar_update_tool(line_id, 14, "一樣", "", "2025-11-01 18:00")
+  → 工具會自動從資料庫獲取ID14的原始標題和內容，只更新時間
+  
+  範例4：部分修改
+  第一條訊息：用戶：「修改ID14時間變成今天晚上6點」
+  → 如果用戶沒有提到標題或內容，表示只修改時間，標題和內容保持不變
+  → 調用 linebot_calendar_update_tool(line_id, 14, "", "", "2025-11-01 18:00")
+  → 工具會自動從資料庫獲取原始標題和內容
 
-4️⃣ 刪除事件：
+4. 刪除事件：
   用戶：「刪除事件 ID=5」
   → 調用 linebot_calendar_delete_tool(line_id, "5")
 
@@ -381,11 +416,22 @@ def get_platform_specific_system_prompt(platform: str = "web") -> str:
 ---
 
 【重要規則】
-1️⃣ 一定要呼叫對應工具，不要只回應文字。
-2️⃣ 直接輸出工具結果，不要自行加格式。
-3️⃣ 當用戶說「修改ID7標題為123內容為456然後五分鐘後提醒我」時，必須調用 linebot_calendar_update_tool。
-4️⃣ 時間解析：五分鐘後 = 當前時間 + 5分鐘，直接計算並調用工具。
-5️⃣ 不要要求用戶提供具體時間，AI 應該自己解析自然語言時間表達。
+1. 一定要呼叫對應工具，不要只回應文字。
+2. 直接輸出工具結果，不要自行加格式。
+3. **記憶查詢處理**：
+   - 當用戶問「我剛剛做了什麼」、「我剛才做了什麼」、「剛才我做了什麼」等問題時
+   - 請直接查看 input_text 中的【對話上下文（最近5條記錄）】部分
+   - 根據對話上下文回答用戶最近做了什麼，不要只重複用戶的問題
+   - 不需要額外調用 memory_tool，系統已經自動提供了上下文
+4. 當用戶說「修改ID7標題為123內容為456然後五分鐘後提醒我」時，必須調用 linebot_calendar_update_tool。
+5. 時間解析：五分鐘後 = 當前時間 + 5分鐘，直接計算並調用工具。
+6. 不要要求用戶提供具體時間，AI 應該自己解析自然語言時間表達。
+7. 上下文優先：當用戶使用「一樣是」、「還是」、「不改」、「標題一樣」等詞語時，表示保持原有值不變。
+8. 行事曆修改時，如果用戶沒有明確指定標題或內容，應該：
+   - 調用 linebot_calendar_update_tool 時，將對應參數設為空字符串 "" 或 "一樣"
+   - 工具會自動從資料庫查詢原始事件的標題和內容
+   - 不要要求用戶提供標題或內容，工具會自動處理
+9. 當用戶只提到修改時間時，標題和內容參數都應該為空，讓工具從原始事件獲取。
 
 ---
 
@@ -401,12 +447,24 @@ def get_platform_specific_system_prompt(platform: str = "web") -> str:
        你有以下工具可以使用：
        1. website_guide_tool - 網站導覽和功能介紹
        2. learning_progress_tool - 查詢學習進度和統計
-       3. ai_tutor_tool - AI智能教學指導
-       4. quiz_generator_tool - 考卷生成和測驗
-       5. create_university_quiz_tool - 創建大學考古題測驗
-       6. create_knowledge_quiz_tool - 創建知識點測驗
+       3. ai_tutor_tool - AI引導式教學（透過提問引導學生思考，幫助學生理解概念）
+       4. direct_answer_tool - 直接解答工具（直接給出問題的答案和詳細解釋）
+       5. quiz_generator_tool - 考卷生成和測驗
+       6. create_university_quiz_tool - 創建大學考古題測驗
+       7. create_knowledge_quiz_tool - 創建知識點測驗
 
-請根據用戶的問題，選擇最適合的工具來幫助他們。如果用戶的問題不屬於以上任何類別，請禮貌地引導他們使用適當的功能。
+**重要：兩種教學工具的選擇**
+- **ai_tutor_tool（引導式教學）**：當用戶想要透過提問和思考來理解概念時使用。適合：
+  * 用戶說「引導我理解」、「幫助我思考」、「教我理解」
+  * 學習新概念，需要逐步理解
+  * 學生答錯題目，需要引導找出錯誤
+  
+- **direct_answer_tool（直接解答）**：當用戶想要快速獲得答案和解釋時使用。適合：
+  * 用戶只有問問題時，例如「死鎖是什麼？」
+  * 簡單的概念問題，需要快速了解
+  * 用戶只是想確認答案或解釋
+
+請根據用戶的問題和意圖，選擇最適合的工具來幫助他們。如果用戶的問題不屬於以上任何類別，請禮貌地引導他們使用適當的功能。
 
 關於測驗創建功能：
 - 當用戶要求創建大學考古題測驗時，使用 create_university_quiz_tool 工具
@@ -488,14 +546,49 @@ def process_message(message: str, user_id: str = "default", platform: str = "web
             current_date = now.strftime("%Y年%m月%d日")
             current_datetime = now.strftime("%Y-%m-%d %H:%M")
             current_time = now.strftime("%H:%M")
-            enhanced_input = f"用戶ID: {user_id}\n當前日期: {current_date}\n當前時間: {current_time}\n完整時間: {current_datetime}\n\n{message}"
-        else:
-            enhanced_input = message
             
-        result = platform_executor.invoke({
-            "input": enhanced_input,
-            "context": {"user_id": user_id, "platform": platform}
-        })
+            # 自動獲取對話記憶並注入到輸入中
+            conversation_context = ""
+            try:
+                from src.memory_manager import get_user_memory
+                memory = get_user_memory(user_id)
+                if memory:
+                    # 只使用最近的5條對話記錄作為上下文（避免 token 過多）
+                    recent_messages = memory[-5:]
+                    conversation_context = "\n\n【對話上下文（最近5條記錄）】\n" + "\n".join(recent_messages) + "\n"
+            except Exception as e:
+                logger.warning(f"獲取對話記憶失敗: {e}")
+            
+            enhanced_input = f"用戶ID: {user_id}\n當前日期: {current_date}\n當前時間: {current_time}\n完整時間: {current_datetime}{conversation_context}\n用戶當前訊息: {message}"
+        else:
+            # Web 平台也可以選擇性添加記憶
+            conversation_context = ""
+            try:
+                from src.memory_manager import get_user_memory
+                memory = get_user_memory(user_id)
+                if memory:
+                    recent_messages = memory[-3:]  # Web 平台使用較少的上下文
+                    conversation_context = "\n\n【最近的對話記錄】\n" + "\n".join(recent_messages) + "\n"
+            except Exception as e:
+                logger.warning(f"獲取對話記憶失敗: {e}")
+            
+            enhanced_input = message + conversation_context
+        
+        # 將 user_id 和 enhanced_input 存儲到線程本地變量，供 memory_tool 使用
+        _thread_local.current_user_id = user_id
+        _thread_local.current_input_text = enhanced_input
+        
+        try:
+            result = platform_executor.invoke({
+                "input": enhanced_input,
+                "context": {"user_id": user_id, "platform": platform}
+            })
+        finally:
+            # 清理線程本地變量
+            if hasattr(_thread_local, 'current_user_id'):
+                delattr(_thread_local, 'current_user_id')
+            if hasattr(_thread_local, 'current_input_text'):
+                delattr(_thread_local, 'current_input_text')
         
         # 調試：打印主代理人的完整回應
         
@@ -620,20 +713,24 @@ def create_learning_progress_tool():
     return learning_progress_tool
 
 def create_ai_tutor_tool():
-    """創建AI導師工具引用"""
+    """創建AI導師工具引用（引導式教學）"""
     from langchain_core.tools import tool
     
     @tool
-    def ai_tutor_tool(query: str) -> str:
-        """AI導師工具，提供智能教學指導"""
+    def ai_tutor_tool(query: str, user_answer: str = "", correct_answer: str = "") -> str:
+        """AI導師工具（引導式教學），透過提問引導學生思考，幫助學生理解概念"""
         try:
             # 調用其他.py文件中的實現
             from src.rag_sys.rag_ai_role import handle_tutoring_conversation
             # 為web_ai_assistant提供默認參數
             user_email = "web_user"
             question = query
-            user_answer = "未提供"
-            correct_answer = "未提供"
+            
+            if not user_answer:
+                user_answer = "未提供"
+            if not correct_answer:
+                correct_answer = "未提供"
+            
             user_input = query
             
             result = handle_tutoring_conversation(user_email, question, user_answer, correct_answer, user_input)
@@ -646,22 +743,149 @@ def create_ai_tutor_tool():
     
     return ai_tutor_tool
 
-def create_memory_tool():
-    """創建記憶管理工具引用"""
+def create_direct_answer_tool():
+    """創建直接解答工具引用（直接給答案）"""
     from langchain_core.tools import tool
     
     @tool
-    def memory_tool(action: str, user_id: str = "default") -> str:
-        """記憶管理工具，管理用戶對話記憶"""
+    def direct_answer_tool(question: str) -> str:
+        """直接解答工具，直接給出問題的答案和詳細解釋，不進行引導式提問
+        
+        適用於：
+        - 用戶明確要求「直接解答」、「直接給答案」
+        - 簡單的概念問題
+        - 需要快速獲得答案的情況
+        
+        與引導式教學的區別：
+        - 引導式教學：透過提問幫助學生思考，逐步理解
+        - 直接解答：直接給出答案和解釋，適合快速了解
+        
+        Args:
+            question: 用戶的問題
+            
+        Returns:
+            str: 直接給出的答案和詳細解釋
+        """
         try:
+            logger.info(f"🔧 direct_answer_tool 被調用，問題: {question[:100]}...")
+            from src.ai_teacher import direct_answer_question
+            result = direct_answer_question(question, user_email="web_user")
+            
+            if not result or not result.strip():
+                logger.warning(f"⚠️ direct_answer_tool 返回空結果")
+                return "抱歉，無法生成回答。請重新提問或稍後再試。"
+            
+            logger.info(f"✅ direct_answer_tool 成功返回，長度: {len(result)} 字符")
+            return result
+        except ImportError as e:
+            logger.error(f"❌ 直接解答系統導入失敗: {e}")
+            return "❌ 直接解答系統暫時不可用，請稍後再試。"
+        except Exception as e:
+            logger.error(f"❌ 直接解答工具執行失敗: {e}", exc_info=True)
+            return f"❌ 直接解答失敗：{str(e)}"
+    
+    return direct_answer_tool
+
+def create_memory_tool(input_text_getter=None):
+    """創建記憶管理工具引用
+    
+    Args:
+        input_text_getter: 可選的函數，用於獲取當前的 input_text（用於提取 user_id）
+    """
+    from langchain_core.tools import tool
+    import re
+    
+    @tool
+    def memory_tool(action: str, user_id: str = None) -> str:
+        """記憶管理工具，管理用戶對話記憶
+        
+        當用戶問「我剛剛做了什麼」、「我剛才做了什麼」、「剛才我做了什麼」等問題時，必須使用此工具查看對話歷史。
+        
+        Args:
+            action: 操作類型，必須是 'view'（查看）、'clear'（清除）或 'stats'（統計）
+            user_id: 用戶ID，如果為 None，會自動從 input_text 中提取「用戶ID: line_XXXX」，使用完整的 line_XXXX
+        
+        使用範例：
+        - memory_tool('view') 或 memory_tool('view', 'line_U3fae4f436edf551db5f5c6773c98f8c7') 查看該用戶的對話歷史
+        - memory_tool('clear') 或 memory_tool('clear', 'line_U3fae4f436edf551db5f5c6773c98f8c7') 清除該用戶的對話記憶
+        
+        重要：
+        1. 如果沒有提供 user_id，系統會自動從 input_text 中提取
+        2. 當用戶詢問過去做了什麼時，必須先調用此工具查看記憶，然後根據記憶內容回答
+        3. 建議直接調用 memory_tool('view')，讓系統自動提取 user_id
+        """
+        try:
+            # 如果沒有提供 user_id，嘗試從線程本地變量或 input_text 中提取
+            extracted_user_id = user_id
+            if not extracted_user_id or extracted_user_id == "default":
+                # 優先從線程本地變量獲取
+                if hasattr(_thread_local, 'current_user_id'):
+                    extracted_user_id = _thread_local.current_user_id
+                    logger.info(f"從線程本地變量獲取到 user_id: {extracted_user_id}")
+                
+                # 如果還是沒有，嘗試從線程本地變量的 input_text 中提取
+                if (not extracted_user_id or extracted_user_id == "default") and hasattr(_thread_local, 'current_input_text'):
+                    input_text = _thread_local.current_input_text
+                    user_id_match = re.search(r'用戶ID:\s*(line_[^\s\n]+)', str(input_text))
+                    if user_id_match:
+                        extracted_user_id = user_id_match.group(1)
+                        logger.info(f"從線程本地變量的 input_text 提取到 user_id: {extracted_user_id}")
+                
+                # 如果還是沒有找到，嘗試從調用棧查找（fallback）
+                if not extracted_user_id or extracted_user_id == "default":
+                    import sys
+                    frame = sys._getframe(2)  # 向上查找兩層
+                    
+                    # 在不同層級查找 input_text
+                    for i in range(5):
+                        try:
+                            frame_vars = frame.f_locals
+                            if 'input_text' in frame_vars:
+                                input_text = frame_vars['input_text']
+                                user_id_match = re.search(r'用戶ID:\s*(line_[^\s\n]+)', str(input_text))
+                                if user_id_match:
+                                    extracted_user_id = user_id_match.group(1)
+                                    logger.info(f"從調用棧提取到 user_id: {extracted_user_id}")
+                                    break
+                            elif 'input' in frame_vars:
+                                input_val = frame_vars['input']
+                                if isinstance(input_val, str):
+                                    user_id_match = re.search(r'用戶ID:\s*(line_[^\s\n]+)', input_val)
+                                    if user_id_match:
+                                        extracted_user_id = user_id_match.group(1)
+                                        logger.info(f"從調用棧的 input 提取到 user_id: {extracted_user_id}")
+                                        break
+                        except Exception:
+                            pass
+                        
+                        try:
+                            frame = frame.f_back
+                        except:
+                            break
+                
+                # 如果還是沒有找到，嘗試使用 input_text_getter（如果提供）
+                if (not extracted_user_id or extracted_user_id == "default") and input_text_getter:
+                    try:
+                        input_text = input_text_getter()
+                        user_id_match = re.search(r'用戶ID:\s*(line_[^\s\n]+)', str(input_text))
+                        if user_id_match:
+                            extracted_user_id = user_id_match.group(1)
+                    except Exception:
+                        pass
+            
+            # 如果還是沒有找到，使用 default（但會記錄警告）
+            if not extracted_user_id or extracted_user_id == "default":
+                logger.warning(f"無法提取 user_id，使用 default。action={action}")
+                extracted_user_id = "default"
+            
             # 調用其他.py文件中的實現
             from src.memory_manager import manage_user_memory
-            return manage_user_memory(action, user_id)
+            return manage_user_memory(action, extracted_user_id)
         except ImportError:
-            return "❌ 記憶管理系統暫時不可用，請稍後再試。"
+            return "記憶管理系統暫時不可用，請稍後再試。"
         except Exception as e:
             logger.error(f"記憶管理工具執行失敗: {e}")
-            return "❌ 記憶管理失敗，請稍後再試。"
+            return f"記憶管理失敗：{str(e)}"
     
     return memory_tool
 
@@ -833,11 +1057,11 @@ def create_linebot_calendar_add_tool():
         from src.dashboard import add_calendar_event_for_linebot
         
         if not title:
-            return "❌ 標題為必填欄位！"
+            return "標題為必填欄位！"
         
         # AI 已經計算好時間，直接使用
         if not event_date or event_date == "":
-            return "❌ 請提供事件時間！"
+            return "請提供事件時間！"
         
         return add_calendar_event_for_linebot(line_id, title, content, event_date)
     
@@ -854,20 +1078,18 @@ def create_linebot_calendar_update_tool():
         Args:
             line_id: LINE 用戶 ID
             event_id: 事件 ID
-            title: 事件標題
-            content: 事件內容
+            title: 事件標題（如果為空、'一樣'、'不變'等，會自動從原始事件獲取）
+            content: 事件內容（如果為空，會自動從原始事件獲取）
             event_date: 事件日期時間 (支援格式: 2024-01-01 10:00, 2024-01-01T10:00, 2024-01-01)
         """
         from src.dashboard import update_calendar_event_for_linebot
         
-        if not title:
-            return "❌ 標題為必填欄位！"
-        
         # AI 已經計算好時間，直接使用
         if not event_date or event_date == "":
-            return "❌ 請提供事件時間！"
+            return "請提供事件時間！"
         
-        return update_calendar_event_for_linebot(line_id, event_id, title, content, event_date)
+        # title 和 content 可以為空，工具會自動從原始事件獲取
+        return update_calendar_event_for_linebot(line_id, event_id, title or '', content or '', event_date)
     
     return linebot_calendar_update_tool
 
@@ -1038,7 +1260,7 @@ def quick_action():
         
         # 根據動作類型處理
         if action == 'website_guide':
-            from .website_guide import get_website_guide
+            from src.website_guide import get_website_guide
             response = get_website_guide("網站導覽")
         elif action == 'learning_progress':
             from .dashboard import get_user_progress
@@ -1159,5 +1381,89 @@ def web_get_quiz_from_database():
     except Exception as e:
         logger.error(f"❌ web-ai/get-quiz-from-database 錯誤: {e}")
         return jsonify({'success': False, 'message': f'獲取考卷數據失敗：{str(e)}'}), 500
+
+
+@web_ai_bp.route('/execute-action', methods=['POST', 'OPTIONS'])
+def execute_action_endpoint():
+    """執行操作（供前端調用）"""
+    try:
+        if request.method == 'OPTIONS':
+            return jsonify({'success': True}), 204
+        
+        auth_header = request.headers.get('Authorization')
+        if not auth_header:
+            return jsonify({'success': False, 'message': '未提供token'}), 401
+        
+        token = auth_header.split(" ")[1]
+        
+        data = request.get_json(silent=True) or {}
+        action_id = data.get('action_id')
+        params = data.get('params', {})
+        
+        if not action_id:
+            return jsonify({'success': False, 'message': '缺少操作ID'}), 400
+        
+        # 整合 execute_action 邏輯
+        from .website_guide import get_action, validate_action_params
+        
+        # 獲取操作配置
+        action = get_action(action_id)
+        if not action:
+            return jsonify({
+                'token': refresh_token(token),
+                'success': False,
+                'message': f'找不到操作配置: {action_id}'
+            }), 400
+        
+        # 驗證參數
+        is_valid, missing = validate_action_params(action_id, params)
+        if not is_valid:
+            return jsonify({
+                'token': refresh_token(token),
+                'success': False,
+                'message': f'缺少必要參數: {", ".join(missing)}'
+            }), 400
+        
+        # 根據操作類型構建結果
+        result = {
+            "success": True,
+            "action": action_id,
+            "action_type": action.action_type.value,
+            "params": params
+        }
+        
+        if action.route:
+            result["route"] = action.route
+        
+        if action.api_endpoint:
+            result["api_endpoint"] = action.api_endpoint
+            result["api_method"] = action.api_method or "POST"
+            
+            # 構建 API 請求體
+            api_body = {}
+            if action.id == "create_university_quiz":
+                api_body = {
+                    "type": "pastexam",
+                    "school": params.get("university"),
+                    "year": params.get("year"),
+                    "department": params.get("department")
+                }
+            elif action.id == "create_knowledge_quiz":
+                api_body = {
+                    "type": "knowledge",
+                    "topic": params.get("knowledge_point"),
+                    "difficulty": params.get("difficulty"),
+                    "count": params.get("question_count")
+                }
+            result["api_body"] = api_body
+        
+        return jsonify({
+            'token': refresh_token(token),
+            'success': result.get('success', False),
+            'data': result
+        })
+    except Exception as e:
+        logger.error(f"❌ 執行操作失敗: {e}")
+        return jsonify({'success': False, 'message': f'執行操作失敗：{str(e)}'}), 500
 
 

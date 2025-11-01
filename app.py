@@ -22,8 +22,9 @@ from neo4j.exceptions import ServiceUnavailable
 
 
 from src.ai_teacher import ai_teacher_bp
-from src.user_guide_api import user_guide_bp
+# user_guide_api 已整合到 website_guide
 from src.web_ai_assistant import web_ai_bp
+from src.website_guide import guide_bp
 from src.linebot import linebot_bp  # 新增 LINE Bot Blueprint
 from src.learning_analytics import analytics_bp
 from tool.insert_mongodb import initialize_mis_teach_db # 引入教材資料庫
@@ -82,8 +83,8 @@ app.register_blueprint(dashboard_bp, url_prefix='/dashboard')
 app.register_blueprint(quiz_bp, url_prefix='/quiz')
 app.register_blueprint(ai_quiz_bp, url_prefix='/ai_quiz')
 app.register_blueprint(ai_teacher_bp, url_prefix='/ai_teacher')
-app.register_blueprint(user_guide_bp, url_prefix='/user-guide')
 app.register_blueprint(web_ai_bp, url_prefix='/web-ai')
+app.register_blueprint(guide_bp, url_prefix='/guide')  # 註冊導覽 Blueprint
 app.register_blueprint(linebot_bp, url_prefix='/linebot') # 註冊 LINE Bot Blueprint
 app.register_blueprint(materials_bp, url_prefix="/materials")
 app.register_blueprint(analytics_bp, url_prefix='/api/learning-analytics')  # 註冊學習分析 API Blueprint

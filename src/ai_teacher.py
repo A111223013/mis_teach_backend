@@ -179,6 +179,33 @@ def _extract_user_answer(user_answer_raw: str) -> str:
     
     return user_answer_raw
     
+def direct_answer_question(question: str, user_email: str = None) -> str:
+    """
+    直接解答問題 - 使用RAG系統，直接給出答案和解釋
+    不使用引導式教學，不進行評分，不管理學習進度
+    
+    Args:
+        question: 用戶的問題
+        user_email: 用戶email（可選）
+    
+    Returns:
+        str: AI的直接解答
+    """
+    try:
+        if not RAG_AVAILABLE:
+            return "抱歉，AI 直接解答服務暫時不可用。"
+        
+        # 調用RAG系統的直接解答功能
+        from .rag_sys.rag_ai_role import handle_direct_answer
+        return handle_direct_answer(question, user_email)
+            
+    except ImportError as e:
+        logger.error(f"❌ RAG系統導入失敗: {e}")
+        return "抱歉，AI直接解答系統暫時不可用。"
+    except Exception as e:
+        logger.error(f"❌ 直接解答失敗: {e}")
+        return f"抱歉，處理問題時發生錯誤：{str(e)}"
+
 def chat_with_ai(question: str, conversation_type: str = "general", session_id: str = None, request_data: dict = None, auth_token: str = None) -> dict:
     """AI 對話處理 - 簡化版本"""
     try:

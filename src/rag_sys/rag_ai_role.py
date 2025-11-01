@@ -153,6 +153,57 @@ TEACHER_STYLE = """你是一位經驗豐富的資管系教授，正在一對一�
 
 # ==================== 核心功能 ====================
 
+def handle_direct_answer(question: str, user_email: str = None) -> str:
+    """
+    直接解答問題 - 使用RAG檢索相關知識，直接給出答案和解釋
+    不使用引導式教學，不進行評分，不管理學習進度
+    
+    Args:
+        question: 用戶的問題
+        user_email: 用戶email（可選，用於日誌記錄）
+    
+    Returns:
+        str: 直接給出的答案和詳細解釋
+    """
+    try:
+        logger.info(f"📝 開始直接解答問題: {question[:50]}...")
+        
+        # 構建直接解答的提示詞
+        direct_answer_prompt = f"""你是一位資管系教授，負責直接解答學生的問題。
+
+**你的任務**：
+- 直接回答問題，不需要引導式提問
+- 提供清晰、完整的解釋
+- 如果問題涉及計算或步驟，詳細說明過程
+- 語氣親切自然，但要直接明確
+- 可以使用Markdown格式來增強可讀性（粗體、換行等）
+
+**問題**：
+{question}
+
+請直接給出答案和詳細解釋："""
+
+        # 使用RAG增強提示詞（檢索相關知識）
+        enhanced_prompt = enhance_prompt_with_knowledge(direct_answer_prompt, question)
+        logger.info(f"📚 RAG增強後的提示詞長度: {len(enhanced_prompt)} 字符")
+        
+        # 調用AI獲取回應
+        ai_response = call_gemini_api(enhanced_prompt)
+        
+        # 檢查回應是否有效
+        if not ai_response or not ai_response.strip():
+            logger.warning(f"⚠️ AI回應為空，問題: {question[:50]}...")
+            return "抱歉，AI無法生成回答。請重新提問或稍後再試。"
+        
+        logger.info(f"✅ 成功生成直接解答，回應長度: {len(ai_response)} 字符")
+        
+        # 直接返回回應（不需要清理評分等，因為直接解答不會有評分）
+        return ai_response.strip()
+            
+    except Exception as e:
+        logger.error(f"❌ 直接解答失敗: {e}", exc_info=True)
+        return f"抱歉，處理問題時發生錯誤：{str(e)}"
+
 def handle_tutoring_conversation(user_email: str, question: str, user_answer: str, correct_answer: str, user_input: str = None, grading_feedback: dict = None) -> dict:
     """
     處理AI教學對話 - 重構版本
@@ -966,29 +1017,112 @@ def call_gemini_api(prompt: str) -> str:
         }
         
         response = model.generate_content(prompt, generation_config=generation_config)
+        logger.info(f"📥 Gemini API回應接收，類型: {type(response).__name__}")
         
         # 檢查回應是否有效
-        if not response or not hasattr(response, 'text'):
+        if not response:
+            logger.error("❌ Gemini API返回空回應")
             return "抱歉，AI回應格式不正確，請稍後再試。"
         
-        # 檢查安全評級
-        if hasattr(response, 'candidates') and response.candidates:
-            candidate = response.candidates[0]
-            if hasattr(candidate, 'safety_ratings') and candidate.safety_ratings:
-                # 檢查是否有安全問題
-                for rating in candidate.safety_ratings:
-                    if rating.category in ['HARM_CATEGORY_HARASSMENT', 'HARM_CATEGORY_HATE_SPEECH', 
-                                         'HARM_CATEGORY_SEXUALLY_EXPLICIT', 'HARM_CATEGORY_DANGEROUS_CONTENT']:
-                        if rating.probability in ['HIGH', 'MEDIUM']:
-                            return "抱歉，AI回應被安全過濾器阻擋，請稍後再試。"
+        # 檢查是否為新版SDK的響應結構（可能是GenerateContentResponse或類似）
+        # 新版SDK可能直接有text屬性或者需要從candidates中提取
         
-        # 安全地存取回應文字
+        # 方法1：直接檢查text屬性（舊版SDK和某些新版SDK）
         try:
-            return response.text
-        except Exception as text_error:
-            logger.error(f"無法存取回應文字: {text_error}")
-            return "抱歉，無法存取AI回應，請稍後再試。"
+            if hasattr(response, 'text'):
+                text = response.text
+                if text and text.strip():
+                    logger.info(f"✅ 從response.text獲取回應，長度: {len(text)} 字符")
+                    return text.strip()
+        except Exception as e:
+            logger.debug(f"無法從response.text獲取: {e}")
+        
+        # 方法2：檢查candidates（新版和舊版SDK都可能使用）
+        try:
+            if hasattr(response, 'candidates') and response.candidates:
+                candidate = response.candidates[0]
+                
+                # 檢查是否被阻止
+                finish_reason = None
+                if hasattr(candidate, 'finish_reason'):
+                    finish_reason = candidate.finish_reason
+                elif isinstance(candidate, dict):
+                    finish_reason = candidate.get('finish_reason')
+                
+                if finish_reason == 'SAFETY':
+                    logger.warning("⚠️ 回應被安全過濾器阻止")
+                    return "抱歉，AI回應被安全過濾器阻擋，請稍後再試。"
+                
+                # 檢查安全評級
+                safety_ratings = None
+                if hasattr(candidate, 'safety_ratings') and candidate.safety_ratings:
+                    safety_ratings = candidate.safety_ratings
+                elif isinstance(candidate, dict) and 'safety_ratings' in candidate:
+                    safety_ratings = candidate['safety_ratings']
+                
+                if safety_ratings:
+                    for rating in safety_ratings:
+                        category = rating.category if hasattr(rating, 'category') else rating.get('category', '')
+                        probability = rating.probability if hasattr(rating, 'probability') else rating.get('probability', '')
+                        if category in ['HARM_CATEGORY_HARASSMENT', 'HARM_CATEGORY_HATE_SPEECH', 
+                                     'HARM_CATEGORY_SEXUALLY_EXPLICIT', 'HARM_CATEGORY_DANGEROUS_CONTENT']:
+                            if probability in ['HIGH', 'MEDIUM']:
+                                logger.warning(f"⚠️ 安全評級阻止：{category} = {probability}")
+                                return "抱歉，AI回應被安全過濾器阻擋，請稍後再試。"
+                
+                # 從content.parts中提取文字（新版SDK常用）
+                content = None
+                if hasattr(candidate, 'content'):
+                    content = candidate.content
+                elif isinstance(candidate, dict) and 'content' in candidate:
+                    content = candidate['content']
+                
+                if content:
+                    parts = None
+                    if hasattr(content, 'parts'):
+                        parts = content.parts
+                    elif isinstance(content, dict) and 'parts' in content:
+                        parts = content['parts']
+                    
+                    if parts:
+                        text_parts = []
+                        for part in parts:
+                            part_text = None
+                            if hasattr(part, 'text'):
+                                part_text = part.text
+                            elif isinstance(part, dict) and 'text' in part:
+                                part_text = part['text']
+                            elif isinstance(part, str):
+                                part_text = part
+                            
+                            if part_text:
+                                text_parts.append(str(part_text))
+                        
+                        if text_parts:
+                            full_text = ''.join(text_parts).strip()
+                            if full_text:
+                                logger.info(f"✅ 從candidates.content.parts獲取回應，長度: {len(full_text)} 字符")
+                                return full_text
+        except Exception as e:
+            logger.debug(f"無法從candidates提取: {e}")
+        
+        # 方法3：嘗試將回應轉為字符串（某些情況下可能直接是字符串）
+        try:
+            response_str = str(response)
+            if response_str and response_str.strip() and len(response_str) > 10:  # 避免只是類型名稱
+                logger.info(f"✅ 從字符串轉換獲取回應，長度: {len(response_str)} 字符")
+                return response_str.strip()
+        except Exception as e:
+            logger.debug(f"無法轉換為字符串: {e}")
+        
+        # 如果所有方式都失敗，記錄詳細錯誤
+        logger.error(f"❌ 無法從回應中提取文字")
+        logger.error(f"   回應類型: {type(response).__name__}")
+        logger.error(f"   回應屬性: {[attr for attr in dir(response) if not attr.startswith('_')]}")
+        if hasattr(response, 'candidates') and response.candidates:
+            logger.error(f"   candidates數量: {len(response.candidates)}")
+        return "抱歉，無法存取AI回應，請稍後再試。"
         
     except Exception as e:
-        logger.error(f"❌ Gemini API調用失敗: {e}")
+        logger.error(f"❌ Gemini API調用失敗: {e}", exc_info=True)
         return "抱歉，AI回應生成失敗，請稍後再試。"
