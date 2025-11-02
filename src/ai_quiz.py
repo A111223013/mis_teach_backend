@@ -1875,27 +1875,73 @@ def get_user_submissions_analysis():
                     
                     # 嘗試從MongoDB獲取題目詳情
                     question_detail = {}
+                    exam_question = None
+                    
                     try:
-                        if mongodb_question_id and len(mongodb_question_id) == 24:
-                            exam_question = mongo.db.exam.find_one({"_id": ObjectId(mongodb_question_id)})
-                        else:
-                            exam_question = mongo.db.exam.find_one({"_id": mongodb_question_id})
+                        # 嘗試用 ObjectId 查詢
+                        if mongodb_question_id:
+                            try:
+                                if isinstance(mongodb_question_id, str) and len(mongodb_question_id) == 24:
+                                    exam_question = mongo.db.exam.find_one({"_id": ObjectId(mongodb_question_id)})
+                                else:
+                                    exam_question = mongo.db.exam.find_one({"_id": mongodb_question_id})
+                            except Exception:
+                                # 如果 ObjectId 轉換失敗，嘗試直接查詢
+                                exam_question = mongo.db.exam.find_one({"_id": mongodb_question_id})
                         
                         if exam_question:
+                            # 獲取 micro_concepts（直接存的是名稱字符串數組）
+                            micro_concepts_raw = exam_question.get('micro_concepts', [])
+                            micro_concepts_names = []
+                            
+                            # 處理 micro_concepts，確保是字符串數組
+                            if micro_concepts_raw:
+                                if isinstance(micro_concepts_raw, list):
+                                    # 直接使用，因為 MongoDB 中存的就是名稱字符串
+                                    micro_concepts_names = [str(mc) for mc in micro_concepts_raw if mc]
+                                else:
+                                    # 如果不是數組，轉換為數組
+                                    micro_concepts_names = [str(micro_concepts_raw)] if micro_concepts_raw else []
+                            
+                            # 嘗試多個可能的字段名獲取知識點
+                            topic = (exam_question.get('key-points') or 
+                                    exam_question.get('key_points') or 
+                                    exam_question.get('topic') or 
+                                    'unknown')
+                            if topic and topic.strip():
+                                topic = topic.strip()
+                            else:
+                                topic = 'unknown'
+                            
                             question_detail = {
-                                'question_text': exam_question.get('question_text', ''),
-                                'topic': exam_question.get('key-points', 'unknown'),
-                                'chapter': exam_question.get('章節', 'unknown'),
+                                'question_text': exam_question.get('question_text') or '',
+                                'topic': topic,
+                                'chapter': exam_question.get('章節') or 'unknown',
+                                'micro_concepts': micro_concepts_names,
                                 'options': exam_question.get('options', []),
-                                'correct_answer': exam_question.get('answer', ''),
-                                'image_file': exam_question.get('image_file', '')
+                                'correct_answer': exam_question.get('answer') or '',
+                                'image_file': exam_question.get('image_file') or ''
+                            }
+                        else:
+                            # 如果找不到題目，使用默認值
+                            question_detail = {
+                                'question_text': '',
+                                'topic': 'unknown',
+                                'chapter': 'unknown',
+                                'micro_concepts': [],
+                                'options': [],
+                                'correct_answer': '',
+                                'image_file': ''
                             }
                     except Exception as e:
-                        print(f"⚠️ 獲取題目詳情失敗: {e}")
+                        print(f"⚠️ 獲取題目詳情失敗: {e}, question_id: {mongodb_question_id}")
+                        import traceback
+                        traceback.print_exc()
                         question_detail = {
-                            'question_text': f'題目 {mongodb_question_id}',
+                            'question_text': '',
                             'topic': 'unknown',
                             'chapter': 'unknown',
+                            'micro_concepts': [],
                             'options': [],
                             'correct_answer': '',
                             'image_file': ''
@@ -1904,9 +1950,10 @@ def get_user_submissions_analysis():
                     # 構建答案對象
                     answer_obj = {
                         'question_id': mongodb_question_id,
-                        'question_text': question_detail.get('question_text', ''),
-                        'topic': question_detail.get('topic', 'unknown'),
-                        'chapter': question_detail.get('chapter', 'unknown'),
+                        'question_text': question_detail.get('question_text') or '',
+                        'topic': question_detail.get('topic') or 'unknown',
+                        'chapter': question_detail.get('chapter') or 'unknown',
+                        'micro_concepts': question_detail.get('micro_concepts', []),
                         'user_answer': user_answer,
                         'is_correct': is_correct,
                         'score': score,
@@ -1914,9 +1961,13 @@ def get_user_submissions_analysis():
                         'answer_time_seconds': answer_time_seconds,
                         'answer_time': answer_created_at.isoformat() if answer_created_at else None,
                         'options': question_detail.get('options', []),
-                        'correct_answer': question_detail.get('correct_answer', ''),
-                        'image_file': question_detail.get('image_file', '')
+                        'correct_answer': question_detail.get('correct_answer') or '',
+                        'image_file': question_detail.get('image_file') or ''
                     }
+                    
+                    # 如果題目內容為空，至少顯示一個提示
+                    if not answer_obj['question_text']:
+                        answer_obj['question_text'] = '題目內容載入失敗'
                     answers.append(answer_obj)
                 
                 # 構建提交記錄對象

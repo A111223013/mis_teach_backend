@@ -1010,7 +1010,7 @@ def call_gemini_api(prompt: str) -> str:
         
         # 設置生成參數，確保回應完整
         generation_config = {
-            'max_output_tokens': 4000,  # 增加最大輸出長度
+            'max_output_tokens': 8192,  # 增加最大輸出長度，確保完整回答（特別是錯題解析）
             'temperature': 0.7,
             'top_p': 0.8,
             'top_k': 40

@@ -421,33 +421,118 @@ def remove_notification_from_redis(event_id: int):
 # ==================== LINE Bot 專用函數 ====================
 
 def get_goals_for_linebot(line_id: str) -> str:
-    """LINE Bot 專用的目標設定函數"""
+    """LINE Bot 專用的目標查看函數"""
     try:
         # 通過 line_id 找到用戶
         user = mongo.db.user.find_one({"lineId": line_id})
         if not user:
             return "❌ 請先綁定您的帳號才能使用目標設定功能！"
         
-        user_email = user.get('email')
         user_name = user.get('name', '同學')
+        learning_goals = user.get('learningGoals', [])
         
-        # 這裡可以調用現有的目標設定邏輯
-        # 暫時返回基本資訊
-        return f"""🎯 目標設定 - {user_name}
+        if learning_goals:
+            goals_text = f"🎯 您的學習目標 - {user_name}\n\n"
+            for i, goal in enumerate(learning_goals, 1):
+                goals_text += f"{i}. {goal}\n"
+            
+            goals_text += f"\n總共 {len(learning_goals)}/10 個目標\n"
+            goals_text += "\n💡 使用「新增目標:目標內容」來新增目標\n"
+            goals_text += "使用「刪除目標:編號」來刪除目標"
+            
+            return goals_text
+        else:
+            return f"""🎯 您的學習目標 - {user_name}
 
 📋 您目前還沒有設定學習目標
 
-💡 建議目標：
+💡 建議目標範例：
 • 每日答題數：10-20 題
 • 每週學習天數：5-7 天
 • 目標掌握度：70% 以上
 • 重點領域：根據弱項設定
 
-📱 請至網站設定您的個人化學習目標！"""
+📱 使用「新增目標:目標內容」來設定您的第一個學習目標！"""
         
     except Exception as e:
-        print(f"❌ LINE Bot 目標設定失敗: {e}")
-        return "❌ 目標設定功能暫時無法使用，請稍後再試。"
+        print(f"❌ LINE Bot 查看目標失敗: {e}")
+        return "❌ 查看目標功能暫時無法使用，請稍後再試。"
+
+def add_goal_for_linebot(line_id: str, goal: str) -> str:
+    """LINE Bot 專用的新增目標函數"""
+    try:
+        # 通過 line_id 找到用戶
+        user = mongo.db.user.find_one({"lineId": line_id})
+        if not user:
+            return "❌ 請先綁定您的帳號才能使用目標設定功能！"
+        
+        user_name = user.get('name', '同學')
+        learning_goals = user.get('learningGoals', [])
+        
+        # 檢查目標數量限制
+        if len(learning_goals) >= 10:
+            return "❌ 最多只能設定 10 個學習目標！\n請先刪除一些目標再新增。"
+        
+        # 檢查目標是否已存在
+        if goal in learning_goals:
+            return f"❌ 目標「{goal}」已經存在了！"
+        
+        # 新增目標
+        learning_goals.append(goal)
+        
+        # 更新到資料庫
+        mongo.db.user.update_one(
+            {"lineId": line_id},
+            {"$set": {"learningGoals": learning_goals}}
+        )
+        
+        return f"✅ 成功新增學習目標！\n\n目標: {goal}\n目前共有 {len(learning_goals)}/10 個目標\n\n使用「查看目標」來查看所有目標"
+        
+    except Exception as e:
+        print(f"❌ LINE Bot 新增目標失敗: {e}")
+        return "❌ 新增目標失敗，請稍後再試。"
+
+def delete_goal_for_linebot(line_id: str, goal_index: int) -> str:
+    """LINE Bot 專用的刪除目標函數"""
+    try:
+        # 通過 line_id 找到用戶
+        user = mongo.db.user.find_one({"lineId": line_id})
+        if not user:
+            return "❌ 請先綁定您的帳號才能使用目標設定功能！"
+        
+        user_name = user.get('name', '同學')
+        learning_goals = user.get('learningGoals', [])
+        
+        # 檢查索引是否有效
+        if not learning_goals:
+            return "❌ 您目前沒有任何學習目標！"
+        
+        # 將索引轉換為 0-based（用戶輸入的是 1-based）
+        actual_index = goal_index - 1
+        
+        if actual_index < 0 or actual_index >= len(learning_goals):
+            return f"❌ 目標編號無效！請輸入 1 到 {len(learning_goals)} 之間的數字。\n\n使用「查看目標」來查看所有目標的編號"
+        
+        # 刪除目標
+        deleted_goal = learning_goals.pop(actual_index)
+        
+        # 更新到資料庫
+        mongo.db.user.update_one(
+            {"lineId": line_id},
+            {"$set": {"learningGoals": learning_goals}}
+        )
+        
+        remaining_count = len(learning_goals)
+        result_text = f"✅ 成功刪除學習目標！\n\n已刪除: {deleted_goal}\n目前共有 {remaining_count}/10 個目標"
+        
+        if remaining_count > 0:
+            result_text += "\n\n使用「查看目標」來查看所有目標"
+        
+        return result_text
+        
+    except Exception as e:
+        print(f"❌ LINE Bot 刪除目標失敗: {e}")
+        return "❌ 刪除目標失敗，請稍後再試。"
 
 @dashboard_bp.route('/dashboard-stats', methods=['POST', 'OPTIONS'])
 @cross_origin()

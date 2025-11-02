@@ -74,7 +74,7 @@ def init_llm():
             temperature=0.7,
             top_p=0.8,
             top_k=40,
-            max_output_tokens=2048,
+            max_output_tokens=8192,  # 增加輸出長度限制，確保完整回答（特別是錯題解析）
             convert_system_message_to_human=True
         )
         return llm
@@ -155,7 +155,9 @@ def get_platform_specific_tools(platform: str = "web"):
             create_linebot_grade_tool(),
             create_linebot_tutor_tool(),
             create_linebot_learning_analysis_tool(),
-            create_linebot_goal_setting_tool(),
+            create_linebot_goal_view_tool(),
+            create_linebot_goal_add_tool(),
+            create_linebot_goal_delete_tool(),
             create_linebot_news_exam_tool(),
             create_linebot_calendar_view_tool(),
             create_linebot_calendar_add_tool(),
@@ -166,6 +168,7 @@ def get_platform_specific_tools(platform: str = "web"):
     else:
         # 網站完整工具集
         return [
+            create_website_knowledge_tool(),  # 網站知識檢索工具（新增）
             create_website_guide_tool(),
             create_learning_progress_tool(),
             create_ai_tutor_tool(),  # 引導式教學工具
@@ -315,13 +318,15 @@ def get_platform_specific_system_prompt(platform: str = "web") -> str:
 3. linebot_grade_tool(answer, correct_answer, question) - 答案批改和解釋
 4. linebot_tutor_tool(query) - AI導師教學指導
 5. linebot_learning_analysis_tool(input_text) - 學習分析（傳遞完整 input_text）
-6. linebot_goal_setting_tool(input_text) - 目標設定（傳遞完整 input_text）
-7. linebot_news_exam_tool(query) - 最新消息/考試資訊
-8. linebot_calendar_view_tool(line_id) - 查看行事曆
-9. linebot_calendar_add_tool(line_id, title, content, event_date) - 新增行事曆事件
-10. linebot_calendar_update_tool(line_id, event_id, title, content, event_date) - 修改行事曆事件
-11. linebot_calendar_delete_tool(line_id, event_id) - 刪除行事曆事件
-12. memory_tool(action, user_id) - 記憶管理（可選使用，系統已自動提供對話上下文）
+6. linebot_goal_view_tool(line_id) - 查看學習目標
+7. linebot_goal_add_tool(line_id, goal) - 新增學習目標
+8. linebot_goal_delete_tool(line_id, goal_index) - 刪除學習目標
+9. linebot_news_exam_tool(query) - 最新消息/考試資訊
+10. linebot_calendar_view_tool(line_id) - 查看行事曆
+11. linebot_calendar_add_tool(line_id, title, content, event_date) - 新增行事曆事件
+12. linebot_calendar_update_tool(line_id, event_id, title, content, event_date) - 修改行事曆事件
+13. linebot_calendar_delete_tool(line_id, event_id) - 刪除行事曆事件
+14. memory_tool(action, user_id) - 記憶管理（可選使用，系統已自動提供對話上下文）
 
 ---
 重要：上下文管理
@@ -343,6 +348,39 @@ def get_platform_specific_system_prompt(platform: str = "web") -> str:
 - LINE Bot 會自動提供對話上下文，你不需要主動尋找記憶
 - 當收到包含上下文的測驗批改請求時，直接進行智能批改
 - 如果沒有上下文，正常回應
+
+【目標設定操作邏輯】
+從 input_text 解析出：
+- line_id: 從「用戶ID: line_XXXX」提取並移除 "line_" 前綴
+- 操作類型：
+  - 包含「查看目標」、「目標設定」、「我的目標」→ view
+  - 包含「新增目標」、「設定目標」、「加入目標」→ add
+  - 包含「刪除目標」、「移除目標」→ delete
+
+---
+
+【目標設定範例】
+1. 查看目標：
+  用戶：「查看目標」或「我的學習目標」或「目標設定」
+  → 調用 linebot_goal_view_tool(line_id)
+
+2. 新增目標：
+  用戶：「新增目標:每日答題數10題」或「我想設定目標每日答題數10題」
+  → 提取目標內容：從「新增目標:」後面或「設定目標」後面提取
+  → 調用 linebot_goal_add_tool(line_id, "每日答題數10題")
+
+3. 刪除目標：
+  用戶：「刪除目標:1」或「移除第1個目標」
+  → 提取目標編號：從用戶訊息中提取數字（對應用戶看到的編號，從1開始）
+  → 調用 linebot_goal_delete_tool(line_id, 1)
+
+重要規則：
+- 目標編號從 1 開始，對應用戶看到的編號
+- 最多可以設定 10 個目標
+- 目標內容不能為空
+- 不能新增重複的目標
+
+---
 
 【行事曆操作邏輯】
 從 input_text 解析出：
@@ -445,25 +483,38 @@ def get_platform_specific_system_prompt(platform: str = "web") -> str:
         return """你是一個智能網站助手，能夠幫助用戶了解網站功能、查詢學習進度、提供AI教學指導，以及創建考卷。
 
        你有以下工具可以使用：
-       1. website_guide_tool - 網站導覽和功能介紹
-       2. learning_progress_tool - 查詢學習進度和統計
-       3. ai_tutor_tool - AI引導式教學（透過提問引導學生思考，幫助學生理解概念）
-       4. direct_answer_tool - 直接解答工具（直接給出問題的答案和詳細解釋）
-       5. quiz_generator_tool - 考卷生成和測驗
-       6. create_university_quiz_tool - 創建大學考古題測驗
-       7. create_knowledge_quiz_tool - 創建知識點測驗
+       1. website_knowledge_tool - 網站知識檢索工具（優先使用！當用戶詢問網站功能、操作說明、頁面介紹等問題時，應優先使用此工具）
+       2. website_guide_tool - 網站導覽和功能介紹
+       3. learning_progress_tool - 查詢學習進度和統計
+       4. ai_tutor_tool - AI引導式教學（透過提問引導學生思考，幫助學生理解概念）
+       5. direct_answer_tool - 直接解答工具（直接給出問題的答案和詳細解釋）
+       6. quiz_generator_tool - 考卷生成和測驗
+       7. create_university_quiz_tool - 創建大學考古題測驗
+       8. create_knowledge_quiz_tool - 創建知識點測驗
+
+**重要：網站知識檢索工具的使用時機**
+當用戶詢問以下類型問題時，應優先使用 website_knowledge_tool：
+- 「如何使用測驗功能？」、「測驗中心怎麼用？」
+- 「學習成效分析是什麼？」、「如何查看學習分析？」
+- 「如何新增行事曆事件？」、「行事曆功能介紹」
+- 「系統設定在哪裡？」、「如何修改個人資料？」
+- 「科技趨勢頁面有什麼功能？」
+- 任何關於網站功能、操作步驟、頁面介紹的問題
+
+使用 website_knowledge_tool 後，根據檢索結果回答用戶問題，可以結合其他工具提供更完整的幫助。
 
 **重要：兩種教學工具的選擇**
 - **ai_tutor_tool（引導式教學）**：當用戶想要透過提問和思考來理解概念時使用。適合：
-  * 用戶說「引導我理解」、「幫助我思考」、「教我理解」
+  * 用戶明確說「引導我理解」、「幫助我思考」、「教我理解」、「引導式教學」
   * 學習新概念，需要逐步理解
-  * 學生答錯題目，需要引導找出錯誤
+  * **不適合**：錯題複習、直接分析錯誤原因
   
 - **direct_answer_tool（直接解答）**：當用戶想要快速獲得答案和解釋時使用。適合：
   * 用戶只有問問題時，例如「死鎖是什麼？」
   * 簡單的概念問題，需要快速了解
   * 用戶只是想確認答案或解釋
-
+  * **特別適合**：錯題分析、分析錯誤原因、直接解答錯題（當用戶提到「直接解答」、「直接分析」、「不需要引導」等關鍵詞時，必須使用此工具）
+  * **一般情況優先使用此工具**
 請根據用戶的問題和意圖，選擇最適合的工具來幫助他們。如果用戶的問題不屬於以上任何類別，請禮貌地引導他們使用適當的功能。
 
 關於測驗創建功能：
@@ -673,6 +724,52 @@ def process_message(message: str, user_id: str = "default", platform: str = "web
         }
 
 # ==================== 網站相關工具函數 ====================
+
+def create_website_knowledge_tool():
+    """創建網站知識檢索工具"""
+    from langchain_core.tools import tool
+    
+    @tool
+    def website_knowledge_tool(query: str) -> str:
+        """
+        網站知識檢索工具，用於回答網站功能、操作說明等相關問題
+        
+        使用時機：
+        - 用戶詢問網站功能如何使用
+        - 用戶詢問系統操作說明
+        - 用戶詢問頁面功能介紹
+        - 用戶詢問系統設定、測驗、學習分析等功能
+        
+        這個工具會從網站知識庫中檢索相關資訊，幫助準確回答用戶問題。
+        """
+        try:
+            from src.website_knowledge_db import retrieve_website_knowledge
+            
+            # 檢索網站知識（使用 ChromaDB）
+            results = retrieve_website_knowledge(query, max_results=3)
+            
+            if not results:
+                return "抱歉，我找不到相關的網站資訊。請嘗試使用其他工具或直接詢問我。"
+            
+            # 格式化結果
+            response = "根據網站知識庫，以下是相關資訊：\n\n"
+            for i, result in enumerate(results, 1):
+                response += f"**{i}. {result.get('title', '無標題')}**\n"
+                content = result.get('content', '')
+                # 限制內容長度，避免過長
+                if len(content) > 500:
+                    content = content[:500] + "..."
+                response += f"{content}\n"
+                if result.get('page_path'):
+                    response += f"相關頁面：{result.get('page_path')}\n"
+                response += "\n"
+            
+            return response
+        except Exception as e:
+            logger.error(f"網站知識檢索工具執行失敗: {e}")
+            return f"❌ 網站知識檢索失敗：{str(e)}"
+    
+    return website_knowledge_tool
 
 def create_website_guide_tool():
     """創建網站導覽工具引用"""
@@ -986,31 +1083,64 @@ def create_linebot_learning_analysis_tool():
     
     return linebot_learning_analysis_tool
 
-def create_linebot_goal_setting_tool():
-    """創建 LINE Bot 目標設定工具"""
+def create_linebot_goal_view_tool():
+    """創建 LINE Bot 目標查看工具"""
     from langchain_core.tools import tool
     
     @tool
-    def linebot_goal_setting_tool(input_text: str = "") -> str:
-        """LINE Bot 目標設定工具 - 管理學習目標"""
-        from src.dashboard import get_goals_for_linebot
-        # 從輸入中提取 user_id
-        import re
-        # 嘗試多種格式匹配
-        user_id_match = re.search(r'用戶ID: (line_[^\n]+)', input_text)
-        if not user_id_match:
-            # 如果沒有找到「用戶ID:」格式，直接尋找 line_ 開頭的ID
-            user_id_match = re.search(r'(line_[a-zA-Z0-9]+)', input_text)
+    def linebot_goal_view_tool(line_id: str) -> str:
+        """LINE Bot 目標查看工具 - 查看學習目標
         
-        if user_id_match:
-            user_id = user_id_match.group(1)
-            # 移除 line_ 前綴，獲取純粹的 LINE ID
-            clean_line_id = user_id.replace('line_', '') if user_id.startswith('line_') else user_id
-            return get_goals_for_linebot(clean_line_id)
-        else:
-            return "❌ 無法獲取用戶ID，請重新綁定帳號"
+        Args:
+            line_id: LINE 用戶 ID
+        """
+        from src.dashboard import get_goals_for_linebot
+        
+        return get_goals_for_linebot(line_id)
     
-    return linebot_goal_setting_tool
+    return linebot_goal_view_tool
+
+def create_linebot_goal_add_tool():
+    """創建 LINE Bot 目標新增工具"""
+    from langchain_core.tools import tool
+    
+    @tool
+    def linebot_goal_add_tool(line_id: str, goal: str) -> str:
+        """LINE Bot 目標新增工具 - 新增學習目標
+        
+        Args:
+            line_id: LINE 用戶 ID
+            goal: 要新增的目標內容（從用戶訊息中提取）
+        """
+        from src.dashboard import add_goal_for_linebot
+        
+        if not goal or not goal.strip():
+            return "❌ 請提供目標內容！"
+        
+        return add_goal_for_linebot(line_id, goal.strip())
+    
+    return linebot_goal_add_tool
+
+def create_linebot_goal_delete_tool():
+    """創建 LINE Bot 目標刪除工具"""
+    from langchain_core.tools import tool
+    
+    @tool
+    def linebot_goal_delete_tool(line_id: str, goal_index: int) -> str:
+        """LINE Bot 目標刪除工具 - 刪除學習目標
+        
+        Args:
+            line_id: LINE 用戶 ID
+            goal_index: 目標編號（從 1 開始，對應用戶看到的編號）
+        """
+        from src.dashboard import delete_goal_for_linebot
+        
+        if not goal_index or goal_index < 1:
+            return "❌ 請提供有效的目標編號（從 1 開始）！"
+        
+        return delete_goal_for_linebot(line_id, goal_index)
+    
+    return linebot_goal_delete_tool
 
 def create_linebot_news_exam_tool():
     """創建 LINE Bot 最新消息/考試資訊工具"""
