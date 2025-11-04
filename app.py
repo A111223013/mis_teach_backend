@@ -10,6 +10,7 @@ from src.dashboard import dashboard_bp
 from src.quiz import quiz_bp, init_quiz_tables
 from src.ai_quiz import ai_quiz_bp
 from src.materials_api import materials_bp
+from src.note import note_bp
 import os
 import redis, json ,time
 from datetime import datetime
@@ -87,6 +88,7 @@ app.register_blueprint(web_ai_bp, url_prefix='/web-ai')
 app.register_blueprint(guide_bp, url_prefix='/guide')  # 註冊導覽 Blueprint
 app.register_blueprint(linebot_bp, url_prefix='/linebot') # 註冊 LINE Bot Blueprint
 app.register_blueprint(materials_bp, url_prefix="/materials")
+app.register_blueprint(note_bp, url_prefix="/note")  # 註冊筆記 API Blueprint
 app.register_blueprint(analytics_bp, url_prefix='/api/learning-analytics')  # 註冊學習分析 API Blueprint
 app.register_blueprint(news_api_bp) # 註冊新聞 API Blueprint
 
