@@ -867,6 +867,11 @@ def get_calendar_for_linebot(line_id: str) -> str:
                 content = event.get('content', '')
                 event_id = event.get('id')
                 
+                # 確保 event_id 存在
+                if event_id is None:
+                    print(f"⚠️ 警告：事件 {i} 沒有 ID，標題：{title}")
+                    event_id = "未知"
+                
                 # 格式化日期
                 try:
                     if event_date:
@@ -878,15 +883,22 @@ def get_calendar_for_linebot(line_id: str) -> str:
                 except:
                     formatted_date = str(event_date)
                 
-                calendar_text += f"{i}. {title} (ID:{event_id})\n"
-                calendar_text += f"   {formatted_date}\n"
+                # 改進顯示格式：讓 ID 更明顯
+                calendar_text += f"{i}. {title}\n"
+                calendar_text += f"   📌 事件ID: {event_id}\n"
+                calendar_text += f"   📅 {formatted_date}\n"
                 if content:
-                    calendar_text += f"   {content[:50]}{'...' if len(content) > 50 else ''}\n"
+                    calendar_text += f"   📝 {content[:50]}{'...' if len(content) > 50 else ''}\n"
                 calendar_text += "\n"
             
-            calendar_text += "使用「新增事件:標題|內容|日期時間」來新增事件\n"
-            calendar_text += "使用「修改事件:ID|標題|內容|日期時間」來修改事件\n"
-            calendar_text += "使用「刪除事件:ID」來刪除事件"
+            calendar_text += "━━━━━━━━━━━━━━━━━━━━\n"
+            calendar_text += "📋 操作指令：\n"
+            calendar_text += "• 新增事件:標題|內容|日期時間\n"
+            calendar_text += "• 修改事件:ID|標題|內容|日期時間\n"
+            calendar_text += "• 刪除事件:ID\n"
+            calendar_text += "\n💡 提示：每個事件都有唯一的 ID，請記住要操作的 ID 號碼\n"
+            calendar_text += "\n📱 目前顯示最新 10 筆事件\n"
+            calendar_text += "如需查看更多事件，請至網站查看完整行事曆"
         else:
             calendar_text = f"您的行事曆目前沒有事件 - {user_name}\n\n使用「新增事件:標題|內容|日期時間」來新增您的第一個學習計畫！"
         

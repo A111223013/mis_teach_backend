@@ -489,11 +489,25 @@ def ai_diagnosis():
             return jsonify({'error': '無法獲取用戶信息'}), 401
         
         # 檢查Redis快取
-        cache_key = f"ai_diagnosis:{user_email}:{concept_id}"
+        # 使用標準化的快取鍵格式：learning_analytics:ai_diagnosis:{user_email}:{concept_id}:{concept_name}
+        # 確保每個知識點都有獨立的快取，與前端存儲命名保持一致
+        cache_key = f"learning_analytics:ai_diagnosis:{user_email}:{concept_id}:{concept_name}"
         cached_data = redis_client.get(cache_key)
         if cached_data:
-            logger.info(f"使用AI診斷快取: {cache_key}")
-            return json.loads(cached_data)
+            # 檢查鍵是否還有過期時間（避免使用已過期的快取）
+            ttl = redis_client.ttl(cache_key)
+            if ttl > 0:
+                logger.info(f"✅ 使用AI診斷快取: {cache_key} (剩餘 {ttl} 秒) - 跳過所有查詢")
+                return json.loads(cached_data)
+            else:
+                # 如果鍵存在但已過期，刪除它（Redis 會自動刪除，但我們明確刪除以確保）
+                redis_client.delete(cache_key)
+                logger.info(f"⏰ AI診斷快取已過期，刪除: {cache_key}")
+        else:
+            logger.info(f"❌ AI診斷快取不存在: {cache_key} - 將執行查詢")
+        
+        # 只有在快取不存在時才執行以下查詢
+        logger.info(f"🔄 開始執行AI診斷查詢流程...")
         
         # 獲取該概念的答題記錄
         quiz_records = get_student_quiz_records(user_email)
@@ -580,8 +594,18 @@ def ai_diagnosis():
         }
         
         # 快取診斷結果到Redis（30分鐘）
-        redis_client.setex(cache_key, 30 * 60, json.dumps(diagnosis_result, ensure_ascii=False))
-        logger.info(f"AI診斷已快取: {cache_key}")
+        # 使用 SET ... NX EX 原子操作：只在鍵不存在時設置，並設置過期時間
+        # 避免重複創建相同鍵名，確保所有快取都有過期時間
+        cache_ttl = 30 * 60  # 30分鐘
+        cache_value = json.dumps(diagnosis_result, ensure_ascii=False)
+        
+        # 使用原子操作 SET ... NX EX：只在鍵不存在時創建，並自動設置過期時間
+        set_result = redis_client.set(cache_key, cache_value, ex=cache_ttl, nx=True)
+        if set_result:
+            logger.info(f"AI診斷已快取: {cache_key} (過期時間: {cache_ttl} 秒)")
+        else:
+            # 鍵已存在，可能是並發請求創建的，記錄但不報錯（這是正常情況）
+            logger.debug(f"AI診斷快取鍵已存在（可能是並發請求），跳過創建: {cache_key}")
         
         return jsonify(diagnosis_result)
         
@@ -639,9 +663,13 @@ def init_data():
         
         
         # 構建領域數據 - 包含所有領域，即使沒有答題記錄
+        # 過濾掉「未知領域」
         domains = []
         for domain_doc in all_domains:
-            domain_name = domain_doc.get('name', '未知領域')
+            domain_name = domain_doc.get('name', '')
+            # 跳過「未知領域」
+            if domain_name == '未知領域' or domain_name == '未知' or not domain_name or domain_name.strip() == '':
+                continue
             domain_id = str(domain_doc.get('_id', ''))
             
             # 嘗試匹配領域名稱（處理括號和英文部分）
@@ -1656,15 +1684,29 @@ def generate_ai_coach_analysis(overview_data: Dict, domains: List[Dict], quiz_re
     """生成AI教練分析（使用Redis快取）"""
     try:
         # 生成快取鍵
+        # 使用標準化的快取鍵格式：learning_analytics:ai_coach_analysis:{user_email}:{total_attempts}:{total_mastery}
+        # 與前端存儲命名保持一致
         total_attempts = overview_data.get('total_attempts', 0)
         total_mastery = overview_data.get('total_mastery', 0)
-        cache_key = f"ai_coach_analysis:{user_email or 'anonymous'}:{total_attempts}:{total_mastery:.2f}"
+        cache_key = f"learning_analytics:ai_coach_analysis:{user_email or 'anonymous'}:{total_attempts}:{total_mastery:.2f}"
         
         # 檢查Redis快取
         cached_data = redis_client.get(cache_key)
         if cached_data:
-            logger.info(f"使用AI教練分析快取: {cache_key}")
-            return json.loads(cached_data)
+            # 檢查鍵是否還有過期時間（避免使用已過期的快取）
+            ttl = redis_client.ttl(cache_key)
+            if ttl > 0:
+                logger.info(f"✅ 使用AI教練分析快取: {cache_key} (剩餘 {ttl} 秒) - 跳過所有查詢")
+                return json.loads(cached_data)
+            else:
+                # 如果鍵存在但已過期，刪除它
+                redis_client.delete(cache_key)
+                logger.info(f"⏰ AI教練分析快取已過期，刪除: {cache_key}")
+        else:
+            logger.info(f"❌ AI教練分析快取不存在: {cache_key} - 將執行查詢")
+        
+        # 只有在快取不存在時才執行以下查詢
+        logger.info(f"🔄 開始執行AI教練分析查詢流程...")
         
         # 初始化Gemini模型
         model = init_gemini('gemini-2.5-flash')
@@ -1732,8 +1774,18 @@ def generate_ai_coach_analysis(overview_data: Dict, domains: List[Dict], quiz_re
         }
         
         # 快取結果到Redis（2小時）
-        redis_client.setex(cache_key, 2 * 60 * 60, json.dumps(result, ensure_ascii=False))
-        logger.info(f"AI教練分析已快取: {cache_key}")
+        # 使用 SET ... NX EX 原子操作：只在鍵不存在時設置，並設置過期時間
+        # 避免重複創建相同鍵名，確保所有快取都有過期時間
+        cache_ttl = 2 * 60 * 60  # 2小時
+        cache_value = json.dumps(result, ensure_ascii=False)
+        
+        # 使用原子操作 SET ... NX EX：只在鍵不存在時創建，並自動設置過期時間
+        set_result = redis_client.set(cache_key, cache_value, ex=cache_ttl, nx=True)
+        if set_result:
+            logger.info(f"AI教練分析已快取: {cache_key} (過期時間: {cache_ttl} 秒)")
+        else:
+            # 鍵已存在，可能是並發請求創建的，記錄但不報錯（這是正常情況）
+            logger.debug(f"AI教練分析快取鍵已存在（可能是並發請求），跳過創建: {cache_key}")
         
         return result
         
@@ -2149,9 +2201,32 @@ def generate_learning_path_recommendations(concept_id: str, concept_relations: D
         prerequisites = concept_relations.get('prerequisites', [])
         related_concepts = concept_relations.get('related_concepts', [])
         
-        # 準備AI提示詞
+        # 準備AI提示詞 - 強化Neo4j關聯要求
+        # 構建詳細的關聯資訊
+        relations_context = ""
+        if concept_relations and concept_relations.get('has_relations', False):
+            prereqs = concept_relations.get('prerequisites', [])
+            related = concept_relations.get('related_concepts', [])
+            leads_to = concept_relations.get('leads_to', [])
+            
+            if prereqs:
+                prereq_list = [f"{p['name']}(強度:{p.get('strength', 0.5):.2f})" for p in prereqs[:5]]
+                relations_context += f"\n- **前置知識點**（必須先掌握，按強度排序）：{', '.join(prereq_list)}"
+            
+            if related:
+                related_list = [f"{r['name']}(強度:{r.get('strength', 0.5):.2f})" for r in related[:5]]
+                relations_context += f"\n- **相關知識點**（可同時學習）：{', '.join(related_list)}"
+            
+            if leads_to:
+                leads_list = [f"{l['name']}(強度:{l.get('strength', 0.5):.2f})" for l in leads_to[:5]]
+                relations_context += f"\n- **後續知識點**（掌握後可學習）：{', '.join(leads_list)}"
+        else:
+            relations_context = "\n- ⚠️ **無Neo4j關聯數據**：此知識點在知識圖譜中沒有關聯關係。"
+        
         prompt = f"""
-你是個性化學習路徑設計AI。請為學生設計3個具體的學習步驟，幫助他們系統性地掌握知識。
+你是個性化學習路徑設計AI。請為學生設計3-5個具體的學習步驟，幫助他們系統性地掌握知識。
+
+**⚠️ 重要：學習路徑設計必須嚴格遵循Neo4j知識圖譜的關聯關係！**
 
 學生資料：
 - 概念：{current_concept_name}
@@ -2160,8 +2235,22 @@ def generate_learning_path_recommendations(concept_id: str, concept_relations: D
 - 最近7天答題：{recent_attempts}次
 - 平均答題時間：{avg_time_per_question:.1f}分鐘
 - 常見錯誤：{', '.join(common_errors) if common_errors else '無'}
-- 前置知識點：{[p.get('name', '未知') for p in prerequisites[:3]]}
-- 相關概念：{[r.get('name', '未知') for r in related_concepts[:3]]}
+
+**Neo4j知識圖譜關聯關係（必須參考）：**
+{relations_context}
+
+**設計要求（必須遵守）：**
+1. **如果有前置知識點且掌握度低**：
+   - 第一步必須是「先學習前置知識點：[具體知識點名稱]」
+   - 必須按照前置知識點的強度順序安排學習
+   - 如果有多個前置知識點，必須先學習強度最高的
+
+2. **學習順序必須符合知識圖譜邏輯**：
+   - 前置知識點 → 當前概念基礎 → 當前概念應用 → 相關知識點拓展 → 後續知識點預習
+
+3. **如果沒有Neo4j關聯數據**：
+   - 基於一般教學原則設計學習路徑
+   - 在step_info中說明「缺少知識圖譜數據，使用一般學習順序」
 
 請返回JSON格式的學習路徑，包含3個步驟，每個步驟需要：
 - step_info: 學習任務描述（如"去課程觀看二維陣列基礎知識"）
@@ -2399,6 +2488,9 @@ def generate_improvement_items(domains: List[Dict], quiz_records: List[Dict]) ->
     
     # 為每個領域分析進步情況
     for domain_name, records in domain_records.items():
+        # 跳過「未知領域」
+        if domain_name == '未知領域' or domain_name == '未知' or not domain_name or domain_name.strip() == '':
+            continue
         if len(records) < 3:
             continue
             
@@ -2439,7 +2531,7 @@ def generate_improvement_items(domains: List[Dict], quiz_records: List[Dict]) ->
     return improvement_items[:5]  # 返回前5個
 
 def get_concept_name_by_id(concept_id: str) -> str:
-    """根據概念ID獲取概念名稱"""
+    """根據概念ID獲取概念名稱 - 改進版本，支援多種查找方式"""
     try:
         from accessories import mongo
         
@@ -2447,20 +2539,52 @@ def get_concept_name_by_id(concept_id: str) -> str:
             logger.warning("MongoDB未初始化，返回默認概念名稱")
             return f"概念_{concept_id[-6:]}"
         
-        # 從MongoDB查詢概念名稱
-        concept_doc = mongo.db.micro_concept.find_one({'_id': ObjectId(concept_id)})
-        if concept_doc:
-            return concept_doc.get('name', f"概念_{concept_id[-6:]}")
-        else:
-            logger.warning(f"未找到概念ID {concept_id}，返回默認名稱")
-            return f"概念_{concept_id[-6:]}"
+        # 方法1：嘗試使用 ObjectId 查詢（標準方式）
+        try:
+            if len(concept_id) == 24:  # MongoDB ObjectId 長度
+                concept_doc = mongo.db.micro_concept.find_one({'_id': ObjectId(concept_id)})
+                if concept_doc:
+                    concept_name = concept_doc.get('name', '')
+                    if concept_name:
+                        logger.debug(f"✅ 找到概念名稱（ObjectId）: {concept_id} -> {concept_name}")
+                        return concept_name
+        except Exception as e:
+            logger.debug(f"ObjectId 查詢失敗: {e}")
+        
+        # 方法2：嘗試使用概念ID作為名稱直接查詢（某些情況下 micro_concept_id 就是名稱）
+        try:
+            concept_doc = mongo.db.micro_concept.find_one({'name': concept_id})
+            if concept_doc:
+                concept_name = concept_doc.get('name', '')
+                if concept_name:
+                    logger.debug(f"✅ 找到概念名稱（名稱查詢）: {concept_id} -> {concept_name}")
+                    return concept_name
+        except Exception as e:
+            logger.debug(f"名稱查詢失敗: {e}")
+        
+        # 方法3：嘗試使用 _id 字串匹配（某些情況下可能是字串格式的ID）
+        try:
+            concept_doc = mongo.db.micro_concept.find_one({'_id': concept_id})
+            if concept_doc:
+                concept_name = concept_doc.get('name', '')
+                if concept_name:
+                    logger.debug(f"✅ 找到概念名稱（字串ID）: {concept_id} -> {concept_name}")
+                    return concept_name
+        except Exception as e:
+            logger.debug(f"字串ID查詢失敗: {e}")
+        
+        # 如果都找不到，返回警告和默認名稱
+        logger.warning(f"⚠️ 未找到概念ID {concept_id}，返回默認名稱。這可能導致 Neo4j 查詢失敗。")
+        default_name = f"概念_{concept_id[-6:]}"
+        logger.warning(f"   默認名稱: {default_name}（此名稱在 Neo4j 中可能不存在）")
+        return default_name
             
     except Exception as e:
-        logger.error(f"獲取概念名稱失敗: {e}")
+        logger.error(f"❌ 獲取概念名稱失敗: {e}", exc_info=True)
         return f"概念_{concept_id[-6:]}"
 
 def get_knowledge_relations_from_neo4j(concept_name: str) -> Dict[str, Any]:
-    """從Neo4j獲取知識點關聯數據"""
+    """從Neo4j獲取知識點關聯數據 - 改進版本，使用 elementId 並增強關聯資訊"""
     try:
         from accessories import neo4j_driver
         
@@ -2469,49 +2593,152 @@ def get_knowledge_relations_from_neo4j(concept_name: str) -> Dict[str, Any]:
             return {
                 'prerequisites': [],
                 'related_concepts': [],
-                'leads_to': []
+                'leads_to': [],
+                'all_relations': [],
+                'relation_graph': {}
             }
         
         with neo4j_driver.session() as session:
-            # 查詢該概念的關聯知識點 - 使用Section節點類型
+            # 改進查詢：使用 elementId 替代已棄用的 id()，不查詢不存在的 strength 屬性
+            # 注意：Neo4j 關聯關係可能沒有 strength 屬性，我們在程式碼中根據類型設定默認值
             query = """
-            MATCH (c:Section {name: $concept_name})-[r:PREREQUISITE|SIMILAR_TO|CROSS_DOMAIN_LINK]-(related:Section)
+            MATCH (c:Section {name: $concept_name})-[r:PREREQUISITE|SIMILAR_TO|CROSS_DOMAIN_LINK|LEADS_TO]-(related:Section)
             RETURN 
                 related.name as related_name,
                 type(r) as relation_type,
-                id(related) as related_id
-            LIMIT 10
+                elementId(related) as related_id,
+                elementId(c) as current_id,
+                c.name as current_name
+            ORDER BY 
+                CASE type(r)
+                    WHEN 'PREREQUISITE' THEN 1
+                    WHEN 'SIMILAR_TO' THEN 2
+                    WHEN 'CROSS_DOMAIN_LINK' THEN 3
+                    WHEN 'LEADS_TO' THEN 4
+                END
+            LIMIT 20
             """
             
             result = session.run(query, concept_name=concept_name)
             relations = []
+            relation_graph = {
+                'current_concept': concept_name,
+                'current_id': None,
+                'nodes': [],
+                'edges': []
+            }
             
-            logger.debug(f"Neo4j查詢結果: concept_name={concept_name}")
+            logger.info(f"🔍 [Neo4j] 查詢知識點關聯: {concept_name}")
+            
             for record in result:
+                # 根據關聯類型設定默認強度（因為 Neo4j 關聯關係中沒有 strength 屬性）
+                rel_type = record['relation_type']
+                if rel_type == 'PREREQUISITE':
+                    relation_strength = 0.9  # 前置知識點強度較高
+                elif rel_type == 'SIMILAR_TO':
+                    relation_strength = 0.7
+                elif rel_type == 'CROSS_DOMAIN_LINK':
+                    relation_strength = 0.6
+                elif rel_type == 'LEADS_TO':
+                    relation_strength = 0.8
+                else:
+                    relation_strength = 0.5
+                
                 relation = {
-                    'id': str(record['related_id']),  # 使用Neo4j的節點ID
+                    'id': str(record['related_id']),
                     'name': record['related_name'],
                     'type': record['relation_type'],
-                    'strength': 0.5  # 默認強度
+                    'strength': float(relation_strength),
+                    'type_display': get_relation_type_display(record['relation_type'])
                 }
                 relations.append(relation)
-                logger.debug(f"  找到關聯: {relation['name']} ({relation['type']})")
+                
+                # 構建關聯圖數據
+                if not relation_graph['current_id']:
+                    relation_graph['current_id'] = str(record.get('current_id', ''))
+                
+                relation_graph['nodes'].append({
+                    'id': str(record['related_id']),
+                    'name': record['related_name'],
+                    'type': record['relation_type']
+                })
+                
+                relation_graph['edges'].append({
+                    'source': str(record.get('current_id', '')),
+                    'target': str(record['related_id']),
+                    'type': record['relation_type'],
+                    'strength': float(relation_strength),
+                    'label': get_relation_type_display(record['relation_type'])
+                })
+                
+                logger.debug(f"  ✅ 找到關聯: {relation['name']} ({relation['type_display']}, 強度: {relation['strength']:.2f})")
             
-            logger.debug(f"總共找到 {len(relations)} 個關聯知識點")
+            # 分類關聯關係
+            prerequisites = [r for r in relations if r['type'] == 'PREREQUISITE']
+            related = [r for r in relations if r['type'] in ['SIMILAR_TO', 'CROSS_DOMAIN_LINK']]
+            leads_to = [r for r in relations if r['type'] == 'LEADS_TO']
+            
+            # 去重處理：如果同一個知識點有多種類型的關聯，合併關聯類型並保留最高強度
+            def deduplicate_relations(relation_list):
+                """去重關聯關係，合併多種類型並保留最高強度"""
+                seen = {}
+                for rel in relation_list:
+                    key = rel['id']  # 使用知識點ID作為唯一標識
+                    if key not in seen:
+                        # 首次出現，初始化
+                        seen[key] = rel.copy()
+                        seen[key]['types'] = [rel['type']]
+                    else:
+                        # 已存在，合併關聯類型
+                        if rel['type'] not in seen[key]['types']:
+                            seen[key]['types'].append(rel['type'])
+                        
+                        # 更新為最高強度
+                        if rel['strength'] > seen[key]['strength']:
+                            seen[key]['strength'] = rel['strength']
+                        
+                        # 更新顯示類型（合併所有類型）
+                        seen[key]['type'] = seen[key]['types'][0]  # 保留第一個類型作為主要類型
+                        seen[key]['type_display'] = '、'.join([get_relation_type_display(t) for t in seen[key]['types']])
+                
+                return list(seen.values())
+            
+            # 對各類關聯進行去重
+            prerequisites = deduplicate_relations(prerequisites)
+            related = deduplicate_relations(related)
+            leads_to = deduplicate_relations(leads_to)
+            
+            logger.info(f"📊 [Neo4j] 關聯統計（去重後）: 前置={len(prerequisites)}, 相關={len(related)}, 後續={len(leads_to)}, 總計={len(prerequisites) + len(related) + len(leads_to)}")
             
             return {
-                'prerequisites': [r for r in relations if r['type'] == 'PREREQUISITE'],
-                'related_concepts': [r for r in relations if r['type'] in ['SIMILAR_TO', 'CROSS_DOMAIN_LINK']],
-                'leads_to': [r for r in relations if r['type'] == 'LEADS_TO']
+                'prerequisites': prerequisites,
+                'related_concepts': related,
+                'leads_to': leads_to,
+                'all_relations': relations,
+                'relation_graph': relation_graph,
+                'has_relations': len(relations) > 0
             }
             
     except Exception as e:
-        logger.error(f"Neo4j查詢失敗: {e}")
+        logger.error(f"❌ Neo4j查詢失敗: {e}", exc_info=True)
         return {
             'prerequisites': [],
             'related_concepts': [],
-            'leads_to': []
+            'leads_to': [],
+            'all_relations': [],
+            'relation_graph': {},
+            'has_relations': False
         }
+
+def get_relation_type_display(relation_type: str) -> str:
+    """獲取關聯類型的中文顯示名稱"""
+    type_mapping = {
+        'PREREQUISITE': '前置知識點',
+        'SIMILAR_TO': '相似概念',
+        'CROSS_DOMAIN_LINK': '跨領域關聯',
+        'LEADS_TO': '後續知識點'
+    }
+    return type_mapping.get(relation_type, relation_type)
 
 def generate_ai_diagnosis(concept_name: str, domain_name: str, mastery: float, 
                          total_attempts: int, correct_attempts: int, recent_accuracy: float,
@@ -2534,24 +2761,46 @@ def generate_ai_diagnosis(concept_name: str, domain_name: str, mastery: float,
             if error_types:
                 error_analysis = f"常見錯誤類型：{', '.join(set(error_types))}"
         
-        # 準備知識點關聯數據
+        # 準備知識點關聯數據 - 增強版本，包含關聯強度和類型
         relations_info = ""
-        if knowledge_relations:
+        relations_detail = {}
+        if knowledge_relations and knowledge_relations.get('has_relations', False):
             prereqs = knowledge_relations.get('prerequisites', [])
             related = knowledge_relations.get('related_concepts', [])
             leads_to = knowledge_relations.get('leads_to', [])
+            all_relations = knowledge_relations.get('all_relations', [])
             
+            # 構建詳細的關聯資訊
             if prereqs:
-                prereq_names = [r['name'] for r in prereqs[:3]]
-                relations_info += f"\n- 前置知識點：{', '.join(prereq_names)}"
+                prereq_details = [f"{r['name']}(強度:{r['strength']:.2f})" for r in prereqs[:5]]
+                relations_info += f"\n- **前置知識點**（必須先掌握）：{', '.join(prereq_details)}"
+                relations_detail['prerequisites'] = [
+                    {'name': r['name'], 'strength': r['strength'], 'type': r['type_display']} 
+                    for r in prereqs[:5]
+                ]
             
             if related:
-                related_names = [r['name'] for r in related[:3]]
-                relations_info += f"\n- 相關知識點：{', '.join(related_names)}"
+                related_details = [f"{r['name']}(強度:{r['strength']:.2f})" for r in related[:5]]
+                relations_info += f"\n- **相關知識點**（可同時學習）：{', '.join(related_details)}"
+                relations_detail['related'] = [
+                    {'name': r['name'], 'strength': r['strength'], 'type': r['type_display']} 
+                    for r in related[:5]
+                ]
             
             if leads_to:
-                leads_names = [r['name'] for r in leads_to[:3]]
-                relations_info += f"\n- 後續知識點：{', '.join(leads_names)}"
+                leads_details = [f"{r['name']}(強度:{r['strength']:.2f})" for r in leads_to[:5]]
+                relations_info += f"\n- **後續知識點**（掌握後可學習）：{', '.join(leads_details)}"
+                relations_detail['leads_to'] = [
+                    {'name': r['name'], 'strength': r['strength'], 'type': r['type_display']} 
+                    for r in leads_to[:5]
+                ]
+            
+            # 添加關聯圖數據
+            relations_detail['relation_graph'] = knowledge_relations.get('relation_graph', {})
+            relations_detail['total_relations'] = len(all_relations)
+        else:
+            relations_info = "\n- ⚠️ **無Neo4j關聯數據**：此知識點在知識圖譜中沒有關聯關係，請基於一般教學原則進行診斷。"
+            relations_detail = {'has_relations': False}
         
         # 準備難易度分析數據
         difficulty_info = ""
@@ -2574,7 +2823,9 @@ def generate_ai_diagnosis(concept_name: str, domain_name: str, mastery: float,
         import json
         
         prompt = f"""
-你是教學診斷AI。只輸出JSON，遵守schema: summary(<=20中文字), metrics, root_causes[], top_actions[<=3], practice_examples[<=3], evidence[], confidence. 如果資料不足設定confidence=low並回傳baseline plan。不要多說話。
+你是教學診斷AI。只輸出JSON，遵守schema: summary(<=20中文字), metrics, root_causes[], top_actions[<=3], practice_examples[<=3], evidence[], confidence, knowledge_relations. 如果資料不足設定confidence=low並回傳baseline plan。不要多說話。
+
+**⚠️ 重要：你必須基於Neo4j知識圖譜的關聯關係進行診斷！**
 
 學生資料:
 {{
@@ -2587,12 +2838,32 @@ def generate_ai_diagnosis(concept_name: str, domain_name: str, mastery: float,
         "avg_time": 22
     }},
     "recent_wrong_questions": {json.dumps([{"q_id": f"q{i}", "err": r.get('error_reason', '未知錯誤'), "text": "題目內容"} for i, r in enumerate(wrong_records[:3])])},
-    "dependency": {json.dumps([{"id": r['id'], "name": r['name'], "mastery": r['strength']} for r in knowledge_relations.get('prerequisites', [])])},
     "difficulty_stats": {json.dumps(difficulty_stats)},
-    "relations_info": "{relations_info if relations_info else '無關聯數據'}",
     "learning_path": {json.dumps(learning_path[:5]) if learning_path else '[]'},
     "learning_path_info": "{learning_path_info if learning_path_info else '無學習路徑數據'}"
 }}
+
+**Neo4j知識圖譜關聯數據（必須參考）：**
+{relations_info}
+
+**關聯數據詳細資訊：**
+{json.dumps(relations_detail, ensure_ascii=False, indent=2)}
+
+**診斷要求（必須遵守）：**
+1. **必須分析Neo4j關聯關係**：
+   - 如果有前置知識點，必須在root_causes中分析是否因為前置知識不足導致當前概念理解困難
+   - 如果有相關知識點，必須在top_actions中建議同時複習相關概念
+   - 如果有後續知識點，必須在evidence中說明掌握當前概念對後續學習的重要性
+
+2. **學習路徑設計必須基於關聯關係**：
+   - 如果有前置知識點且掌握度低，必須先建議學習前置知識點
+   - 如果有相關知識點，可以建議同時學習以加深理解
+   - 學習順序必須符合知識圖譜的邏輯關係
+
+3. **如果沒有Neo4j關聯數據**：
+   - 在confidence中標記為"low"
+   - 在evidence中說明"缺少知識圖譜關聯數據，診斷基於一般教學原則"
+   - 仍然提供基礎的學習建議
 
 請返回以下格式的JSON，top_actions的action字段必須使用以下標準化類型之一：
 - "REVIEW_BASICS" (AI基礎教學)
@@ -2623,8 +2894,34 @@ def generate_ai_diagnosis(concept_name: str, domain_name: str, mastery: float,
     "evidence": ["string1", "string2"],
     "confidence": "high/medium/low",
     "learning_path": {json.dumps(learning_path[:5]) if learning_path else '[]'},
-    "full_text": "string (<=500字)"
+    "full_text": "string (200-300字，給學生看的親切診斷報告)"
 }}
+
+**full_text 格式要求（非常重要）：**
+- **語氣**：親切、鼓勵、像老師在跟學生說話，不要用學術論文語氣
+- **長度**：200-300字，簡潔明瞭，不要冗長
+- **結構**：
+  1. 開頭：簡短總結學習狀況（1-2句）
+  2. 問題：用簡單的話說明主要問題（2-3點，每點1句）
+  3. 建議：具體的學習建議（2-3點，每點1句）
+  4. 結尾：鼓勵的話（1句）
+- **避免**：
+  - ❌ 不要用「精熟度」、「關聯強度為0.6」等技術術語
+  - ❌ 不要用「為有效提升學習成效」等學術化表達
+  - ❌ 不要過度解釋知識圖譜的技術細節
+  - ❌ 不要用「持續的學習與反思，將是突破當前學習困境的關鍵」等空泛的話
+- **應該**：
+  - ✅ 用「掌握度14%」、「答題正確率20%」等簡單數字
+  - ✅ 用「建議你先...」、「你可以試試...」等親切語氣
+  - ✅ 用「這個概念和XX有關，一起學習會更容易理解」等簡單說明
+  - ✅ 用「加油！多練習幾次就會進步」等鼓勵的話
+
+**範例（好的 full_text）：**
+「你在「AI 工程崛起」這個概念上還需要多加強。目前掌握度只有14%，答題正確率20%，顯示對基本概念還不夠熟悉。
+
+主要問題是基礎概念理解不足，特別是中等難度的題目答錯較多。建議你先透過AI導師重新學習基本定義，然後多做一些練習題來鞏固。
+
+這個概念和「知識管理與 AI」有關聯，可以一起學習會更容易理解。記住，學習需要時間，多練習幾次就會進步，加油！」
 
 重要：action字段必須嚴格使用上述4個標準化類型之一，不要使用其他文字。
 """
@@ -2641,9 +2938,60 @@ def generate_ai_diagnosis(concept_name: str, domain_name: str, mastery: float,
             if ai_response.endswith('```'):
                 ai_response = ai_response[:-3]
             
-            ai_data = json.loads(ai_response)
+            # 處理控制字符（換行符等）- 使用更可靠的方法
+            import re
+            import sys
             
-            # 驗證並返回新的schema格式
+            # 方法1：嘗試使用 strict=False（Python 3.9+）
+            try:
+                if sys.version_info >= (3, 9):
+                    ai_data = json.loads(ai_response, strict=False)
+                else:
+                    raise TypeError("Python < 3.9")
+            except (TypeError, json.JSONDecodeError) as e:
+                # 方法2：手動修復 full_text 字段中的控制字符
+                # 使用正則表達式找到 "full_text" 字段並修復其中的換行符
+                try:
+                    # 匹配 "full_text": "..." 模式（支持多行）
+                    # 使用非貪婪匹配和 DOTALL 模式
+                    pattern = r'"full_text"\s*:\s*"((?:[^"\\]|\\.)*)"'
+                    
+                    def fix_control_chars(match):
+                        """修復字串值中的控制字符"""
+                        content = match.group(1)
+                        # 轉義控制字符（但保留已轉義的字符）
+                        # 只替換未轉義的控制字符
+                        content = re.sub(r'(?<!\\)\n', '\\n', content)
+                        content = re.sub(r'(?<!\\)\r', '\\r', content)
+                        content = re.sub(r'(?<!\\)\t', '\\t', content)
+                        return f'"full_text": "{content}"'
+                    
+                    ai_response_cleaned = re.sub(pattern, fix_control_chars, ai_response, flags=re.DOTALL)
+                    ai_data = json.loads(ai_response_cleaned)
+                except json.JSONDecodeError:
+                    # 方法3：最後嘗試 - 使用更寬鬆的修復
+                    # 直接替換所有控制字符（可能破壞結構，但作為最後手段）
+                    try:
+                        ai_response_cleaned = ai_response.replace('\n', ' ').replace('\r', ' ').replace('\t', ' ')
+                        # 但這會破壞 full_text 的格式，所以我們需要更智能的方法
+                        # 改用：只替換字串值中的控制字符
+                        # 簡單方法：找到所有字串值並修復
+                        def escape_string_value(match):
+                            quote = match.group(1)
+                            content = match.group(2)
+                            # 轉義控制字符
+                            content = content.replace('\n', '\\n').replace('\r', '\\r').replace('\t', '\\t')
+                            return f'{quote}{content}{quote}'
+                        
+                        # 匹配字串值（簡化版本）
+                        ai_response_cleaned = re.sub(r'(")((?:[^"\\]|\\.)*)(")', escape_string_value, ai_response)
+                        ai_data = json.loads(ai_response_cleaned)
+                    except json.JSONDecodeError as final_error:
+                        logger.error(f"所有 JSON 修復方法都失敗: {final_error}")
+                        logger.error(f"原始響應前1000字符: {ai_response[:1000]}")
+                        raise
+            
+            # 驗證並返回新的schema格式，包含Neo4j關聯資訊
             return {
                 'summary': ai_data.get('summary', f'{concept_name}掌握度{mastery:.1%}，需重點關注'),
                 'metrics': {
@@ -2663,6 +3011,16 @@ def generate_ai_diagnosis(concept_name: str, domain_name: str, mastery: float,
                     {"q_id": "q101", "difficulty": "easy", "text": "基礎概念題"},
                     {"q_id": "q102", "difficulty": "medium", "text": "應用練習題"}
                 ]),
+                # 使用後端準備的 relations_detail，而不是 AI 返回的格式
+                # AI 可能返回錯誤格式的 knowledge_relations，我們忽略它
+                'knowledge_relations': {
+                    'has_relations': knowledge_relations.get('has_relations', False) if knowledge_relations else False,
+                    'prerequisites': relations_detail.get('prerequisites', []) if relations_detail else [],
+                    'related_concepts': relations_detail.get('related', []) if relations_detail else [],
+                    'leads_to': relations_detail.get('leads_to', []) if relations_detail else [],
+                    'relation_graph': relations_detail.get('relation_graph', {}) if relations_detail else {},
+                    'total_relations': relations_detail.get('total_relations', 0) if relations_detail else 0
+                },
                 'evidence': ai_data.get('evidence', [f'答題{total_attempts}次', f'正確率{recent_accuracy:.1%}']),
                 'confidence': ai_data.get('confidence', 'medium'),
                 'learning_path': ai_data.get('learning_path', learning_path or []),  # 優先使用AI生成的學習路徑
@@ -2696,9 +3054,69 @@ def generate_ai_diagnosis(concept_name: str, domain_name: str, mastery: float,
             
         except json.JSONDecodeError as e:
             logger.error(f"解析Gemini響應失敗: {e}")
-            logger.error(f"原始響應: {ai_response}")
+            logger.error(f"原始響應: {ai_response[:2000] if len(ai_response) > 2000 else ai_response}")
+            # 返回默認診斷結果
+            return {
+                'summary': f'{concept_name}掌握度{mastery:.1%}，需重點關注',
+                'metrics': {
+                    'domain': domain_name,
+                    'concept': concept_name,
+                    'mastery': mastery,
+                    'attempts': total_attempts,
+                    'recent_accuracy': recent_accuracy
+                },
+                'root_causes': ['基礎概念不牢固', '練習不足'],
+                'top_actions': [
+                    {"action": "REVIEW_BASICS", "detail": "AI導師進行基礎概念教學", "est_min": 15},
+                    {"action": "PRACTICE", "detail": "AI生成相關練習題進行練習", "est_min": 20},
+                    {"action": "SEEK_HELP", "detail": "觀看相關教材內容", "est_min": 10}
+                ],
+                'practice_examples': [],
+                'knowledge_relations': {
+                    'has_relations': knowledge_relations.get('has_relations', False) if knowledge_relations else False,
+                    'prerequisites': relations_detail.get('prerequisites', []) if relations_detail else [],
+                    'related_concepts': relations_detail.get('related', []) if relations_detail else [],
+                    'leads_to': relations_detail.get('leads_to', []) if relations_detail else [],
+                    'relation_graph': relations_detail.get('relation_graph', {}) if relations_detail else {},
+                    'total_relations': relations_detail.get('total_relations', 0) if relations_detail else 0
+                },
+                'evidence': [f'答題{total_attempts}次', f'正確率{recent_accuracy:.1%}'],
+                'confidence': 'low',
+                'learning_path': learning_path or [],
+                'full_text': f'你在「{concept_name}」這個概念上還需要多加強。目前掌握度{mastery:.1%}，答題正確率{recent_accuracy:.1%}。建議你先透過AI導師重新學習基本概念，然後多做一些練習題來鞏固。'
+            }
     except Exception as e:
-        logger.error(f"Gemini API調用失敗: {e}")
+        logger.error(f"AI診斷失敗: {e}", exc_info=True)
+        # 返回默認診斷結果
+        return {
+            'summary': f'{concept_name}掌握度{mastery:.1%}，需重點關注',
+            'metrics': {
+                'domain': domain_name,
+                'concept': concept_name,
+                'mastery': mastery,
+                'attempts': total_attempts,
+                'recent_accuracy': recent_accuracy
+            },
+            'root_causes': ['基礎概念不牢固', '練習不足'],
+            'top_actions': [
+                {"action": "REVIEW_BASICS", "detail": "AI導師進行基礎概念教學", "est_min": 15},
+                {"action": "PRACTICE", "detail": "AI生成相關練習題進行練習", "est_min": 20},
+                {"action": "SEEK_HELP", "detail": "觀看相關教材內容", "est_min": 10}
+            ],
+            'practice_examples': [],
+            'knowledge_relations': {
+                'has_relations': knowledge_relations.get('has_relations', False) if knowledge_relations else False,
+                'prerequisites': relations_detail.get('prerequisites', []) if relations_detail else [],
+                'related_concepts': relations_detail.get('related', []) if relations_detail else [],
+                'leads_to': relations_detail.get('leads_to', []) if relations_detail else [],
+                'relation_graph': relations_detail.get('relation_graph', {}) if relations_detail else {},
+                'total_relations': relations_detail.get('total_relations', 0) if relations_detail else 0
+            },
+            'evidence': [f'答題{total_attempts}次', f'正確率{recent_accuracy:.1%}'],
+            'confidence': 'low',
+            'learning_path': learning_path or [],
+            'full_text': f'你在「{concept_name}」這個概念上還需要多加強。目前掌握度{mastery:.1%}，答題正確率{recent_accuracy:.1%}。建議你先透過AI導師重新學習基本概念，然後多做一些練習題來鞏固。'
+        }
 
 def generate_attention_items(domains: List[Dict], quiz_records: List[Dict]) -> List[Dict]:
     """生成需要關注的知識點數據 - 基於答題記錄分析退步情況"""
@@ -2714,6 +3132,9 @@ def generate_attention_items(domains: List[Dict], quiz_records: List[Dict]) -> L
     
     # 為每個領域分析退步情況
     for domain_name, records in domain_records.items():
+        # 跳過「未知領域」
+        if domain_name == '未知領域' or domain_name == '未知' or not domain_name or domain_name.strip() == '':
+            continue
         if len(records) < 3:
             continue
             

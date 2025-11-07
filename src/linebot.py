@@ -340,26 +340,45 @@ def handle_test_binding(user_id: str, reply_token: str):
         user = mongo.db.user.find_one({"lineId": user_id})
         
         if user:
-            # 用戶已綁定
-            test_message = f"""綁定狀態測試成功！
+            # 用戶已綁定，返回完整用戶資料
+            user_name = user.get('name', '未知')
+            user_email = user.get('email', '未知')
+            user_school = user.get('school', '未知')
+            user_birthday = user.get('birthday', '未知')
+            
+            # 構建詳細的用戶資料訊息
+            test_message = f"""👤 您的個人資料
 
-用戶姓名：{user.get('name', '未知')}
-綁定帳號：{user.get('email', '未知')}
-學校：{user.get('school', '未知')}
-LINE ID：{user_id}
+📝 姓名：{user_name}
+📧 帳號：{user_email}
+🏫 學校：{user_school}"""
+            
+            if user_birthday and user_birthday != '未知':
+                test_message += f"\n🎂 生日：{user_birthday}"
+            
+            test_message += f"\n🆔 LINE ID：{user_id[:20]}..."  # 只顯示前20個字符
+            
+            test_message += f"""
 
-您已成功綁定 MIS 教學助手！
-現在可以使用所有功能了。"""
+✅ 綁定狀態：已綁定
+💡 您可以使用所有功能：
+• 問我任何資管相關問題
+• 生成隨機測驗題目
+• 獲得學習建議
+• 查看學習分析
+• 設定學習目標
+• 管理行事曆"""
         else:
             # 用戶未綁定
-            test_message = """您尚未綁定 MIS 教學助手
+            test_message = """❌ 您尚未綁定 MIS 教學助手
 
-綁定步驟：
+📋 綁定步驟：
 1. 在網站設定頁面生成 QR Code
-2. 複製顯示的綁定碼
+2. 掃描 QR Code 後點擊一鍵綁定按鈕
+   或複製顯示的綁定碼
 3. 直接發送綁定碼（以 bind_ 開頭）
 
-例如：bind_1757907057155_e47dt5lib"""
+💡 例如：bind_1757907057155_e47dt5lib"""
         
         reply_text(reply_token, test_message)
         
@@ -382,8 +401,16 @@ def handle_message(event: MessageEvent):
         handle_binding_command(user_id, binding_token, event.reply_token)
         return
     
-    # 檢查是否為測試指令
-    if user_message.lower() in ['測試綁定', 'test', '檢查綁定', '我是誰']:
+    # 檢查是否為測試指令或查詢用戶資料
+    # 支持多種問法：「我是誰」、「我名稱是誰」、「我的資料」、「查詢我的資料」等
+    user_query_patterns = [
+        '我是誰', '我名稱是誰', '我的名稱', '我的名字', '我叫什麼',
+        '我的資料', '查詢我的資料', '我的資訊', '我的信息',
+        '測試綁定', 'test', '檢查綁定', '綁定狀態'
+    ]
+    
+    # 檢查是否匹配任何查詢模式
+    if any(pattern in user_message for pattern in user_query_patterns):
         handle_test_binding(user_id, event.reply_token)
         return
     
@@ -633,6 +660,7 @@ def handle_follow_event(event):
     """處理用戶加好友事件 - 支援自動綁定"""
     try:
         user_id = event.source.user_id
+        print(f"🔔 [FollowEvent] 收到加好友事件，user_id: {user_id}")
         
         # 先檢查是否有待綁定記錄（優先處理待綁定狀態）
         # 查找是否有待綁定的記錄（通過掃描 QR Code 產生的記錄）
@@ -640,26 +668,37 @@ def handle_follow_event(event):
         try:
             # 獲取所有待綁定記錄，按創建時間排序（最接近當前的優先）
             all_keys = redis_client.keys("line_pending_binding:*")
+            print(f"🔍 [FollowEvent] 找到 {len(all_keys)} 個待綁定記錄")
+            
             for key in all_keys:
+                key_str = key.decode('utf-8') if isinstance(key, bytes) else key
                 binding_token = redis_client.get(key)
                 if binding_token:
-                    binding_token = binding_token.decode('utf-8')
+                    binding_token = binding_token.decode('utf-8') if isinstance(binding_token, bytes) else binding_token
                     # 檢查這個綁定 token 是否仍然有效
                     email_key = redis_client.get(f"line_binding:{binding_token}")
                     if email_key:
-                        email_key = email_key.decode('utf-8')
+                        email_key = email_key.decode('utf-8') if isinstance(email_key, bytes) else email_key
                         # 獲取 TTL 來判斷優先級（TTL 越大表示越新）
                         ttl = redis_client.ttl(f"line_binding:{binding_token}")
+                        print(f"  ✅ 找到有效綁定記錄: {key_str} -> token={binding_token}, email={email_key}, ttl={ttl}")
                         pending_bindings.append({
                             'token': binding_token,
                             'email': email_key,
                             'ttl': ttl  # 用於排序，TTL 越大表示越新
                         })
+                    else:
+                        print(f"  ⚠️ 綁定 token 無效或已過期: {binding_token}")
+                else:
+                    print(f"  ⚠️ 無法獲取綁定 token: {key_str}")
             
             # 按照 TTL 降序排序（最新的在前）
             pending_bindings.sort(key=lambda x: x['ttl'], reverse=True)
+            print(f"📊 [FollowEvent] 有效待綁定記錄數: {len(pending_bindings)}")
         except Exception as e:
-            print(f"🔍 查詢待綁定記錄時發生錯誤: {e}")
+            print(f"❌ [FollowEvent] 查詢待綁定記錄時發生錯誤: {e}")
+            import traceback
+            traceback.print_exc()
         
         # 檢查用戶是否已經綁定
         from accessories import mongo
@@ -669,6 +708,8 @@ def handle_follow_event(event):
         if pending_bindings:
             binding_info = pending_bindings[0]
             binding_token = binding_info['token']
+            email = binding_info['email']
+            
             
             # 儲存 user_id -> binding_token 的映射，供 Postback 使用
             redis_client.setex(f"line_user_binding:{user_id}", 180, binding_token)
@@ -737,9 +778,12 @@ def handle_follow_event(event):
                         messages=[flex_message]
                     )
                 )
+                print(f"✅ [FollowEvent] 成功發送綁定按鈕訊息給 user_id: {user_id}")
                 return
             except Exception as e:
-                print(f"❌ 發送 Flex 訊息失敗，回退到文字訊息: {e}")
+                print(f"❌ [FollowEvent] 發送 Flex 訊息失敗，回退到文字訊息: {e}")
+                import traceback
+                traceback.print_exc()
                 # 回退到文字訊息
                 welcome_message = f"""🎉 歡迎使用 MIS 教學助手！
 
@@ -817,9 +861,29 @@ def webhook():
     body = request.get_data(as_text=True)
     
     try:
+        # 解析事件類型以便日誌記錄
+        try:
+            import json
+            events_data = json.loads(body)
+            events = events_data.get('events', [])
+            for event in events:
+                event_type = event.get('type', 'unknown')
+                print(f"📨 [Webhook] 收到事件: {event_type}")
+                if event_type == 'follow':
+                    user_id = event.get('source', {}).get('userId', 'unknown')
+                    print(f"   - FollowEvent user_id: {user_id}")
+        except Exception as parse_error:
+            print(f"⚠️ [Webhook] 解析事件失敗（繼續處理）: {parse_error}")
+        
         handler.handle(body, signature)
     except InvalidSignatureError:
+        print(f"❌ [Webhook] Invalid signature")
         return jsonify({'error': 'Invalid signature'}), 400
+    except Exception as e:
+        print(f"❌ [Webhook] 處理事件時發生錯誤: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': 'Internal server error'}), 500
     
     return jsonify({'status': 'OK'})
 
@@ -897,47 +961,97 @@ def generate_knowledge_point(query: str) -> str:
             # 根據用戶查詢生成相關知識
             prompt = f"""請生成一個關於「{query}」的資管計算機科學知識點。
 
-要求：
-1. 直接生成知識點內容，不要有任何前綴說明
-2. 內容要簡潔明瞭，適合 LINE Bot 顯示（每行不要太長）
-3. 使用簡單的格式，避免複雜的 Markdown 語法
-4. 包含適當的表情符號
-5. 提供實用的學習建議
-6. 如果是專業術語，請提供簡單解釋
-7. 專注於資管相關的計算機科學知識
-8. 使用換行符號分隔段落，不要使用複雜的列表格式
+⚠️ 重要格式要求（必須遵守）：
+1. 只返回純文字內容，絕對不要使用 HTML 標籤（如 <h1>, <p>, <strong> 等）
+2. 絕對不要使用 Markdown 語法（如 **粗體**, # 標題, - 列表, ``` 代碼塊 等）
+3. 直接生成知識點內容，不要有任何前綴說明
+4. 內容要簡潔明瞭，適合 LINE Bot 顯示（每行不要太長，建議每行不超過 50 字）
+5. 使用簡單的換行符號分隔段落，不要使用複雜的列表格式
+6. 包含適當的表情符號（如 📚、💡、🔍 等）
+7. 提供實用的學習建議
+8. 如果是專業術語，請提供簡單解釋
+9. 專注於資管相關的計算機科學知識
+10. 使用簡單的數字編號（如 1. 2. 3.）或表情符號來組織內容，不要使用 Markdown 列表語法
+
+範例格式（正確）：
+📚 知識點名稱
+
+1. 核心定義
+這裡是定義內容，使用簡單的文字說明。
+
+2. 關鍵要點
+這裡是要點內容，每行不要太長。
+
+💡 學習建議
+這裡是學習建議。
+
+範例格式（錯誤，不要使用）：
+**知識點名稱**（不要用 Markdown）
+# 標題（不要用 Markdown）
+- 列表項（不要用 Markdown）
+<strong>粗體</strong>（不要用 HTML）
 
 請生成知識點："""
         else:
             # 隨機生成一個知識點
             prompt = """請隨機生成一個資管計算機科學的知識點，主題可以是：
-- 基本計算機概論
-- 數位邏輯與設計
-- 作業系統原理
-- 程式語言基礎
-- 資料結構與演算法
-- 網路通訊技術
-- 資料庫系統
-- 人工智慧與機器學習
-- 資訊安全基礎
-- 雲端運算概念
-- 管理資訊系統(MIS)
-- 軟體工程基礎
+基本計算機概論、數位邏輯與設計、作業系統原理、程式語言基礎、資料結構與演算法、網路通訊技術、資料庫系統、人工智慧與機器學習、資訊安全基礎、雲端運算概念、管理資訊系統(MIS)、軟體工程基礎
 
-要求：
-1. 直接生成知識點內容，不要有任何前綴說明如「好的，這是一個...」或「---」等
-2. 內容要簡潔明瞭，適合 LINE Bot 顯示（每行不要太長）
-3. 使用簡單的格式，避免複雜的 Markdown 語法
-4. 包含適當的表情符號
-5. 提供實用的學習建議
-6. 知識點要有實用價值，專注於資管領域
-7. 使用換行符號分隔段落，不要使用複雜的列表格式
+⚠️ 重要格式要求（必須遵守）：
+1. 只返回純文字內容，絕對不要使用 HTML 標籤（如 <h1>, <p>, <strong> 等）
+2. 絕對不要使用 Markdown 語法（如 **粗體**, # 標題, - 列表, ``` 代碼塊 等）
+3. 直接生成知識點內容，不要有任何前綴說明如「好的，這是一個...」或「---」等
+4. 內容要簡潔明瞭，適合 LINE Bot 顯示（每行不要太長，建議每行不超過 50 字）
+5. 使用簡單的換行符號分隔段落，不要使用複雜的列表格式
+6. 包含適當的表情符號（如 📚、💡、🔍 等）
+7. 提供實用的學習建議
+8. 知識點要有實用價值，專注於資管領域
+9. 使用簡單的數字編號（如 1. 2. 3.）或表情符號來組織內容，不要使用 Markdown 列表語法
+
+範例格式（正確）：
+📚 知識點名稱
+
+1. 核心定義
+這裡是定義內容，使用簡單的文字說明。
+
+2. 關鍵要點
+這裡是要點內容，每行不要太長。
+
+💡 學習建議
+這裡是學習建議。
+
+範例格式（錯誤，不要使用）：
+**知識點名稱**（不要用 Markdown）
+# 標題（不要用 Markdown）
+- 列表項（不要用 Markdown）
+<strong>粗體</strong>（不要用 HTML）
 
 請生成知識點："""
         
         # 調用 Gemini API
         response = llm.invoke(prompt)
-        return response.content
+        content = response.content
+        
+        # 清理 HTML 和 Markdown 標記（以防萬一 AI 沒有遵守格式要求）
+        import re
+        # 移除 HTML 標籤
+        content = re.sub(r'<[^>]+>', '', content)
+        # 移除 Markdown 標題符號
+        content = re.sub(r'^#+\s+', '', content, flags=re.MULTILINE)
+        # 移除 Markdown 粗體/斜體
+        content = re.sub(r'\*\*([^*]+)\*\*', r'\1', content)
+        content = re.sub(r'\*([^*]+)\*', r'\1', content)
+        # 移除 Markdown 列表符號（保留內容）
+        content = re.sub(r'^[-*+]\s+', '', content, flags=re.MULTILINE)
+        # 移除 Markdown 代碼塊
+        content = re.sub(r'```[^`]*```', '', content, flags=re.DOTALL)
+        content = re.sub(r'`([^`]+)`', r'\1', content)
+        # 移除多餘的換行
+        content = re.sub(r'\n{3,}', '\n\n', content)
+        # 移除分隔線
+        content = re.sub(r'^---+$', '', content, flags=re.MULTILINE)
+        
+        return content.strip()
         
     except Exception as e:
         print(f"知識點生成失敗: {e}")
