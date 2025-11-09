@@ -1644,20 +1644,47 @@ def create_quiz():
             if not all([school, year, department]):
                 return jsonify({'token': None, 'message': '考古題測驗必須填寫學校、年份、系所'}), 400
             
-
-            # 從MongoDB獲取符合條件的考古題
-            query = {
-                "school": school,
-                "year": year,
-                "department": department
-            }
-            selected_exams = list(mongo.db.exam.find(query))
-            
-            if not selected_exams:
-                print(f"❌ 找不到符合條件的考題: {query}")
-                return jsonify({'token': None, 'message': '找不到符合條件的考題'}), 404
-            
-            quiz_title = f"{school} - {year}年 - {department}"
+            # 特殊處理 demo 選項
+            if school == 'demo' and year == '114' and department == 'demo':
+                # 返回固定的 7 題 demo 題目
+                demo_question_ids = [
+                    "6905deac7292fdbd94102c01",
+                    "6905deac7292fdbd94102c02",
+                    "6905deac7292fdbd94102c03",
+                    "6905deac7292fdbd94102c04",
+                    "6905deac7292fdbd94102c05",
+                    "6905deac7292fdbd94102c06",
+                    "6905deac7292fdbd94102c07"
+                ]
+                selected_exams = []
+                for q_id in demo_question_ids:
+                    try:
+                        object_id = ObjectId(q_id)
+                        question_doc = mongo.db.exam.find_one({"_id": object_id})
+                        if question_doc:
+                            selected_exams.append(question_doc)
+                    except Exception as e:
+                        print(f"⚠️ 載入 demo 題目失敗 (ID: {q_id}): {e}")
+                        continue
+                
+                if not selected_exams:
+                    return jsonify({'token': None, 'message': '找不到 demo 題目'}), 404
+                
+                quiz_title = f"Demo - 114年 - Demo"
+            else:
+                # 從MongoDB獲取符合條件的考古題
+                query = {
+                    "school": school,
+                    "year": year,
+                    "department": department
+                }
+                selected_exams = list(mongo.db.exam.find(query))
+                
+                if not selected_exams:
+                    print(f"❌ 找不到符合條件的考題: {query}")
+                    return jsonify({'token': None, 'message': '找不到符合條件的考題'}), 404
+                
+                quiz_title = f"{school} - {year}年 - {department}"
 
         else:
             return jsonify({'token': None, 'message': '無效的測驗類型'}), 400
