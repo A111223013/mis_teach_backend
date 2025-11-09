@@ -1913,14 +1913,77 @@ def get_user_submissions_analysis():
                             else:
                                 topic = 'unknown'
                             
+                            # 處理題目文字：優先使用 question_text，如果是群組題則使用 group_question_text
+                            exam_type = exam_question.get('type', 'single')
+                            question_text = ''
+                            
+                            if exam_type == 'group':
+                                # 群組題：使用 group_question_text
+                                question_text = exam_question.get('group_question_text') or exam_question.get('question_text') or ''
+                                # 如果還是為空，嘗試從子題中組合
+                                if not question_text:
+                                    sub_questions = exam_question.get('sub_questions', [])
+                                    if sub_questions:
+                                        sub_texts = []
+                                        for sub in sub_questions[:3]:  # 最多取前3個子題
+                                            sub_text = sub.get('question_text', '')
+                                            if sub_text and sub_text.strip():
+                                                sub_texts.append(sub_text.strip())
+                                        if sub_texts:
+                                            question_text = f"題組：{'；'.join(sub_texts)}"
+                                        else:
+                                            question_text = '題組（無題目文字）'
+                                    else:
+                                        question_text = '題組（無題目文字）'
+                            else:
+                                # 單題：使用 question_text
+                                question_text = exam_question.get('question_text') or ''
+                            
+                            # 處理圖片檔案 - 轉換為 base64
+                            image_file = exam_question.get('image_file', '')
+                            image_data_list = []
+                            negative_values = ['沒有圖片', '不需要圖片', '不須圖片', '不須照片', '沒有考卷', '']
+                            
+                            if image_file and image_file not in negative_values:
+                                image_filenames = []
+                                if isinstance(image_file, list):
+                                    image_filenames = [img for img in image_file if img and img not in negative_values]
+                                elif isinstance(image_file, str):
+                                    image_filenames = [image_file]
+                                
+                                # 將每個圖片檔案轉換為 base64
+                                for image_filename in image_filenames:
+                                    image_base64 = get_image_base64(image_filename)
+                                    if image_base64:
+                                        # 判斷圖片格式
+                                        import os
+                                        image_ext = os.path.splitext(image_filename)[1].lower()
+                                        mime_type = 'image/jpeg'
+                                        if image_ext in ['.png']:
+                                            mime_type = 'image/png'
+                                        elif image_ext in ['.gif']:
+                                            mime_type = 'image/gif'
+                                        elif image_ext in ['.webp']:
+                                            mime_type = 'image/webp'
+                                        
+                                        image_data_list.append(f"data:{mime_type};base64,{image_base64}")
+                            
+                            # 如果只有一張圖片，直接返回字串；多張圖片返回陣列
+                            if len(image_data_list) == 1:
+                                image_file_final = image_data_list[0]
+                            elif len(image_data_list) > 1:
+                                image_file_final = image_data_list
+                            else:
+                                image_file_final = ''
+                            
                             question_detail = {
-                                'question_text': exam_question.get('question_text') or '',
+                                'question_text': question_text,
                                 'topic': topic,
                                 'chapter': exam_question.get('章節') or 'unknown',
                                 'micro_concepts': micro_concepts_names,
                                 'options': exam_question.get('options', []),
                                 'correct_answer': exam_question.get('answer') or '',
-                                'image_file': exam_question.get('image_file') or ''
+                                'image_file': image_file_final
                             }
                         else:
                             # 如果找不到題目，使用默認值
@@ -1965,9 +2028,10 @@ def get_user_submissions_analysis():
                         'image_file': question_detail.get('image_file') or ''
                     }
                     
-                    # 如果題目內容為空，至少顯示一個提示
-                    if not answer_obj['question_text']:
-                        answer_obj['question_text'] = '題目內容載入失敗'
+                    # 如果題目內容為空，嘗試從其他來源獲取或使用預設值
+                    if not answer_obj['question_text'] or answer_obj['question_text'].strip() == '':
+                        # 如果還是為空，使用預設值（但不要顯示「載入失敗」，因為這會讓用戶困惑）
+                        answer_obj['question_text'] = '題目內容未提供'
                     answers.append(answer_obj)
                 
                 # 構建提交記錄對象
