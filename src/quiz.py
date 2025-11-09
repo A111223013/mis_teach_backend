@@ -450,12 +450,40 @@ def submit_quiz():
                             'sub_questions': sub_qs
                         }
 
-                        # 題組外層若也有圖片，可選擇性帶出第一張供群組敘述參考
+                        # 題組外層若也有圖片，轉換為 base64
                         group_image_file = exam_question.get('image_file', '')
-                        if isinstance(group_image_file, list) and len(group_image_file) > 0:
-                            group_question['image_file'] = group_image_file
-                        elif isinstance(group_image_file, str) and group_image_file:
-                            group_question['image_file'] = group_image_file
+                        group_image_data_list = []
+                        negative_values = ['沒有圖片', '不需要圖片', '不須圖片', '不須照片', '沒有考卷', '']
+                        if group_image_file and group_image_file not in negative_values:
+                            group_image_filenames = []
+                            if isinstance(group_image_file, list):
+                                group_image_filenames = [img for img in group_image_file if img and img not in negative_values]
+                            elif isinstance(group_image_file, str):
+                                group_image_filenames = [group_image_file]
+                            
+                            # 將每個圖片檔案轉換為 base64
+                            for group_image_filename in group_image_filenames:
+                                group_image_base64 = get_image_base64(group_image_filename)
+                                if group_image_base64:
+                                    # 判斷圖片格式
+                                    image_ext = os.path.splitext(group_image_filename)[1].lower()
+                                    mime_type = 'image/jpeg'
+                                    if image_ext in ['.png']:
+                                        mime_type = 'image/png'
+                                    elif image_ext in ['.gif']:
+                                        mime_type = 'image/gif'
+                                    elif image_ext in ['.webp']:
+                                        mime_type = 'image/webp'
+                                    
+                                    group_image_data_list.append(f"data:{mime_type};base64,{group_image_base64}")
+                            
+                            # 如果只有一張圖片，直接返回字串；多張圖片返回陣列
+                            if len(group_image_data_list) == 1:
+                                group_question['image_file'] = group_image_data_list[0]
+                            elif len(group_image_data_list) > 1:
+                                group_question['image_file'] = group_image_data_list
+                            else:
+                                group_question['image_file'] = ''
                         else:
                             group_question['image_file'] = ''
 
@@ -495,16 +523,40 @@ def submit_quiz():
                         elif not isinstance(question['options'], list):
                             question['options'] = []
                         
-                        # 處理圖片檔案（單題，放寬條件：允許直接透傳檔名/URL）
+                        # 處理圖片檔案（單題）- 轉換為 base64
                         image_file = exam_question.get('image_file', '')
                         negative_values = ['沒有圖片', '不需要圖片', '不須圖片', '不須照片', '沒有考卷', '']
+                        image_data_list = []
                         if image_file and image_file not in negative_values:
+                            image_filenames = []
                             if isinstance(image_file, list):
-                                # 保留第一張作為主要顯示
-                                question['image_file'] = image_file[0] if len(image_file) > 0 else ''
+                                image_filenames = [img for img in image_file if img and img not in negative_values]
+                            elif isinstance(image_file, str):
+                                image_filenames = [image_file]
+                            
+                            # 將每個圖片檔案轉換為 base64
+                            for image_filename in image_filenames:
+                                image_base64 = get_image_base64(image_filename)
+                                if image_base64:
+                                    # 判斷圖片格式
+                                    image_ext = os.path.splitext(image_filename)[1].lower()
+                                    mime_type = 'image/jpeg'
+                                    if image_ext in ['.png']:
+                                        mime_type = 'image/png'
+                                    elif image_ext in ['.gif']:
+                                        mime_type = 'image/gif'
+                                    elif image_ext in ['.webp']:
+                                        mime_type = 'image/webp'
+                                    
+                                    image_data_list.append(f"data:{mime_type};base64,{image_base64}")
+                            
+                            # 如果只有一張圖片，直接返回字串；多張圖片返回陣列
+                            if len(image_data_list) == 1:
+                                question['image_file'] = image_data_list[0]
+                            elif len(image_data_list) > 1:
+                                question['image_file'] = image_data_list
                             else:
-                                # 字串可為檔名或 URL，直接透傳，不再強制檢查檔案存在
-                                question['image_file'] = str(image_file)
+                                question['image_file'] = ''
                         else:
                             question['image_file'] = ''
 
@@ -1641,7 +1693,38 @@ def create_quiz():
                         sub_options = []
 
                     sub_image = sub.get('image_file', '')
-                    # 保留子題的 image_file 結構（有可能為 list 或 str），前端自行處理
+                    # 處理子題圖片 - 轉換為 base64
+                    sub_image_data_list = []
+                    if sub_image and sub_image not in ['沒有圖片', '不需要圖片', '不須圖片', '不須照片', '沒有考卷', '']:
+                        sub_image_filenames = []
+                        if isinstance(sub_image, list):
+                            sub_image_filenames = [img for img in sub_image if img and img not in ['沒有圖片', '不需要圖片', '不須圖片', '不須照片', '沒有考卷', '']]
+                        elif isinstance(sub_image, str):
+                            sub_image_filenames = [sub_image]
+                        
+                        # 將每個圖片檔案轉換為 base64
+                        for sub_image_filename in sub_image_filenames:
+                            sub_image_base64 = get_image_base64(sub_image_filename)
+                            if sub_image_base64:
+                                # 判斷圖片格式
+                                image_ext = os.path.splitext(sub_image_filename)[1].lower()
+                                mime_type = 'image/jpeg'
+                                if image_ext in ['.png']:
+                                    mime_type = 'image/png'
+                                elif image_ext in ['.gif']:
+                                    mime_type = 'image/gif'
+                                elif image_ext in ['.webp']:
+                                    mime_type = 'image/webp'
+                                
+                                sub_image_data_list.append(f"data:{mime_type};base64,{sub_image_base64}")
+                    
+                    # 如果只有一張圖片，直接返回字串；多張圖片返回陣列
+                    if len(sub_image_data_list) == 1:
+                        sub_image_final = sub_image_data_list[0]
+                    elif len(sub_image_data_list) > 1:
+                        sub_image_final = sub_image_data_list
+                    else:
+                        sub_image_final = ''
 
                     # 處理子題的 key-points
                     sub_key_points = sub.get('key-points', '')
@@ -1654,7 +1737,7 @@ def create_quiz():
                         'options': sub_options,
                         'answer': sub.get('answer', ''),
                         'answer_type': sub.get('answer_type', 'single-choice'),
-                        'image_file': sub_image,
+                        'image_file': sub_image_final,
                         'detail_answer': sub.get('detail-answer', ''),
                         'key_points': sub_key_points,
                         'difficulty_level': sub.get('difficulty level', sub.get('difficulty_level', '')),
@@ -1671,12 +1754,39 @@ def create_quiz():
                     'sub_questions': sub_qs
                 }
 
-                # 題組外層若也有圖片，可選擇性帶出第一張供群組敘述參考
+                # 題組外層若也有圖片，轉換為 base64
                 group_image_file = exam.get('image_file', '')
-                if isinstance(group_image_file, list) and len(group_image_file) > 0:
-                    group_question['image_file'] = group_image_file
-                elif isinstance(group_image_file, str) and group_image_file:
-                    group_question['image_file'] = group_image_file
+                group_image_data_list = []
+                if group_image_file and group_image_file not in ['沒有圖片', '不需要圖片', '不須圖片', '不須照片', '沒有考卷', '']:
+                    group_image_filenames = []
+                    if isinstance(group_image_file, list):
+                        group_image_filenames = [img for img in group_image_file if img and img not in ['沒有圖片', '不需要圖片', '不須圖片', '不須照片', '沒有考卷', '']]
+                    elif isinstance(group_image_file, str):
+                        group_image_filenames = [group_image_file]
+                    
+                    # 將每個圖片檔案轉換為 base64
+                    for group_image_filename in group_image_filenames:
+                        group_image_base64 = get_image_base64(group_image_filename)
+                        if group_image_base64:
+                            # 判斷圖片格式
+                            image_ext = os.path.splitext(group_image_filename)[1].lower()
+                            mime_type = 'image/jpeg'
+                            if image_ext in ['.png']:
+                                mime_type = 'image/png'
+                            elif image_ext in ['.gif']:
+                                mime_type = 'image/gif'
+                            elif image_ext in ['.webp']:
+                                mime_type = 'image/webp'
+                            
+                            group_image_data_list.append(f"data:{mime_type};base64,{group_image_base64}")
+                    
+                    # 如果只有一張圖片，直接返回字串；多張圖片返回陣列
+                    if len(group_image_data_list) == 1:
+                        group_question['image_file'] = group_image_data_list[0]
+                    elif len(group_image_data_list) > 1:
+                        group_question['image_file'] = group_image_data_list
+                    else:
+                        group_question['image_file'] = ''
                 else:
                     group_question['image_file'] = ''
 
@@ -1717,24 +1827,37 @@ def create_quiz():
                 elif not isinstance(question['options'], list):
                     question['options'] = []
 
-                # 處理圖片檔案（單題）
+                # 處理圖片檔案（單題）- 轉換為 base64
                 image_file = exam.get('image_file', '')
-                image_filename = ''
+                image_data_list = []
                 if image_file and image_file not in ['沒有圖片', '不需要圖片', '不須圖片', '不須照片', '沒有考卷', '']:
-                    if isinstance(image_file, list) and len(image_file) > 0:
-                        question['image_file'] = image_file[0]
+                    image_filenames = []
+                    if isinstance(image_file, list):
+                        image_filenames = [img for img in image_file if img and img not in ['沒有圖片', '不需要圖片', '不須圖片', '不須照片', '沒有考卷', '']]
                     elif isinstance(image_file, str):
-                        image_filename = image_file
-                    else:
-                        image_filename = ''
-
-                    if image_filename:
-                        current_dir = os.path.dirname(os.path.abspath(__file__))
-                        image_path = os.path.join(current_dir, 'picture', image_filename)
-                        if os.path.exists(image_path):
-                            question['image_file'] = image_filename
-                        else:
-                            question['image_file'] = ''
+                        image_filenames = [image_file]
+                    
+                    # 將每個圖片檔案轉換為 base64
+                    for image_filename in image_filenames:
+                        image_base64 = get_image_base64(image_filename)
+                        if image_base64:
+                            # 判斷圖片格式
+                            image_ext = os.path.splitext(image_filename)[1].lower()
+                            mime_type = 'image/jpeg'
+                            if image_ext in ['.png']:
+                                mime_type = 'image/png'
+                            elif image_ext in ['.gif']:
+                                mime_type = 'image/gif'
+                            elif image_ext in ['.webp']:
+                                mime_type = 'image/webp'
+                            
+                            image_data_list.append(f"data:{mime_type};base64,{image_base64}")
+                    
+                    # 如果只有一張圖片，直接返回字串；多張圖片返回陣列
+                    if len(image_data_list) == 1:
+                        question['image_file'] = image_data_list[0]
+                    elif len(image_data_list) > 1:
+                        question['image_file'] = image_data_list
                     else:
                         question['image_file'] = ''
                 else:
