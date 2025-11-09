@@ -2325,6 +2325,80 @@ def generate_learning_path_recommendations(concept_id: str, concept_relations: D
     except Exception as e:
         logger.error(f"AI生成學習路徑失敗: {e}")
 
+def ensure_diverse_action_types(top_actions: List[Dict], learning_path: List[Dict]) -> List[Dict]:
+    """
+    確保 top_actions 包含三種不同類型（SEEK_HELP, REVIEW_BASICS, PRACTICE）
+    如果 AI 返回的類型重複，根據 learning_path 自動修正
+    
+    Args:
+        top_actions: AI 生成的 top_actions 列表
+        learning_path: 學習路徑步驟列表
+        
+    Returns:
+        修正後的 top_actions 列表，確保包含三種不同類型
+    """
+    if not top_actions or not learning_path:
+        return top_actions
+    
+    # 定義關鍵字映射
+    def infer_type(step_info: str) -> str:
+        if not step_info:
+            return "SEEK_HELP"
+        step_lower = step_info.lower()
+        # 練習優先
+        if any(kw in step_info for kw in ['練習', '答題', '應用', '嘗試', '回答', '問題', '情境']):
+            return "PRACTICE"
+        # 理解/掌握
+        if any(kw in step_info for kw in ['深入理解', '理解', '掌握', '鞏固']):
+            return "REVIEW_BASICS"
+        # 觀看/閱讀
+        if any(kw in step_info for kw in ['觀看', '閱讀', '課程']):
+            return "SEEK_HELP"
+        # 學習
+        if any(kw in step_info for kw in ['學習']):
+            return "REVIEW_BASICS"
+        return "SEEK_HELP"
+    
+    # 檢查現有類型
+    existing_types = [action.get('action', '') for action in top_actions[:3]]
+    required_types = ['SEEK_HELP', 'REVIEW_BASICS', 'PRACTICE']
+    missing_types = [t for t in required_types if t not in existing_types]
+    
+    # 如果已經有三種不同類型，直接返回
+    if len(set(existing_types)) == 3:
+        return top_actions[:3]
+    
+    # 需要修正：根據 learning_path 重新分配類型
+    fixed_actions = []
+    used_types = set()
+    
+    for i in range(min(3, len(learning_path))):
+        step = learning_path[i]
+        step_info = step.get('step_info', '')
+        estimated_time = step.get('estimated_time', 15)
+        
+        # 優先使用缺失的類型
+        inferred_type = infer_type(step_info)
+        
+        # 如果這個類型已經用過，且還有缺失的類型，優先使用缺失的
+        if inferred_type in used_types and missing_types:
+            inferred_type = missing_types[0]
+            missing_types.remove(inferred_type)
+        
+        used_types.add(inferred_type)
+        
+        # 使用原始 detail 或 step_info
+        original_action = top_actions[i] if i < len(top_actions) else {}
+        detail = original_action.get('detail', step_info)
+        
+        fixed_actions.append({
+            'action': inferred_type,
+            'detail': detail,
+            'est_min': estimated_time
+        })
+    
+    return fixed_actions
+
 def analyze_prerequisites(prerequisites: List[Dict], quiz_records: List[Dict]) -> List[Dict]:
     """分析前置知識點掌握情況"""
     analysis = []
@@ -2866,10 +2940,38 @@ def generate_ai_diagnosis(concept_name: str, domain_name: str, mastery: float,
    - 仍然提供基礎的學習建議
 
 請返回以下格式的JSON，top_actions的action字段必須使用以下標準化類型之一：
-- "REVIEW_BASICS" (AI基礎教學)
-- "PRACTICE" (AI出題練習) 
-- "SEEK_HELP" (教材觀看)
-- "ADD_TO_CALENDAR" (加入行事曆)
+- "REVIEW_BASICS" (AI基礎教學) - 用於需要AI導師教學、深入理解的步驟
+- "PRACTICE" (AI出題練習) - 用於需要練習題目、實際應用的步驟
+- "SEEK_HELP" (教材觀看) - 用於需要觀看課程、閱讀教材的步驟
+- "ADD_TO_CALENDAR" (加入行事曆) - 用於需要安排時間的步驟
+
+**⚠️ 重要：top_actions 必須嚴格遵守以下規則！**
+
+1. **必須包含三種不同類型**：
+   - top_actions 必須包含至少一個 "SEEK_HELP" (教材觀看)
+   - top_actions 必須包含至少一個 "REVIEW_BASICS" (AI基礎教學)
+   - top_actions 必須包含至少一個 "PRACTICE" (AI出題練習)
+   - 總共3個 actions，每個類型各一個，不能重複
+
+2. **必須根據 learning_path 生成**：
+   - 仔細分析 learning_path 中每個步驟的 step_info
+   - 為前3個步驟生成對應的 top_actions
+   - 每個 top_actions[i] 對應 learning_path[i]
+   - action.detail = learning_path[i].step_info（直接使用，不要修改）
+   - action.est_min = learning_path[i].estimated_time（直接使用，不要修改）
+
+3. **類型判斷規則（必須遵守）**：
+   - 如果 step_info 包含「觀看」、「閱讀」、「課程」等關鍵字 → 使用 "SEEK_HELP" (教材觀看)
+   - 如果 step_info 包含「深入理解」、「理解」、「掌握」、「學習」等關鍵字 → 使用 "REVIEW_BASICS" (AI基礎教學)
+   - 如果 step_info 包含「練習」、「答題」、「應用」、「嘗試」、「回答」、「問題」等關鍵字 → 使用 "PRACTICE" (AI出題練習)
+   - 如果一個步驟包含多個關鍵字，優先順序：PRACTICE > REVIEW_BASICS > SEEK_HELP
+
+4. **類型分配策略**：
+   - 如果 learning_path 有3個步驟，必須確保三個步驟分別對應三種不同類型
+   - 如果前3個步驟類型重複，必須調整分配，確保三種類型都有
+   - 優先將包含「練習」、「回答」等關鍵字的步驟分配為 PRACTICE
+   - 優先將包含「觀看」、「閱讀」等關鍵字的步驟分配為 SEEK_HELP
+   - 優先將包含「理解」、「掌握」等關鍵字的步驟分配為 REVIEW_BASICS
 
 {{
     "summary": "string (<=20中文字)",
@@ -2882,9 +2984,9 @@ def generate_ai_diagnosis(concept_name: str, domain_name: str, mastery: float,
     }},
     "root_causes": ["string1", "string2", "string3"],
     "top_actions": [
-        {{"action": "REVIEW_BASICS", "detail": "AI導師進行基礎概念教學", "est_min": 15}},
-        {{"action": "PRACTICE", "detail": "AI生成相關練習題進行練習", "est_min": 20}},
-        {{"action": "SEEK_HELP", "detail": "觀看相關教材內容", "est_min": 10}}
+        {{"action": "SEEK_HELP", "detail": "根據learning_path[0]的step_info", "est_min": learning_path[0].estimated_time}},
+        {{"action": "REVIEW_BASICS", "detail": "根據learning_path[1]的step_info", "est_min": learning_path[1].estimated_time}},
+        {{"action": "PRACTICE", "detail": "根據learning_path[2]的step_info", "est_min": learning_path[2].estimated_time}}
     ],
     "practice_examples": [
         {{"q_id": "q101", "difficulty": "easy", "text": "string"}},
@@ -2991,6 +3093,17 @@ def generate_ai_diagnosis(concept_name: str, domain_name: str, mastery: float,
                         logger.error(f"原始響應前1000字符: {ai_response[:1000]}")
                         raise
             
+            # 獲取 learning_path 和 top_actions
+            ai_learning_path = ai_data.get('learning_path', learning_path or [])
+            ai_top_actions = ai_data.get('top_actions', [
+                {"action": "複習基礎", "detail": "重新學習基本概念", "est_min": 10},
+                {"action": "做練習", "detail": "完成相關練習題", "est_min": 20},
+                {"action": "尋求幫助", "detail": "重新複習課程", "est_min": 5}
+            ])
+            
+            # 確保 top_actions 包含三種不同類型
+            fixed_top_actions = ensure_diverse_action_types(ai_top_actions, ai_learning_path)
+            
             # 驗證並返回新的schema格式，包含Neo4j關聯資訊
             return {
                 'summary': ai_data.get('summary', f'{concept_name}掌握度{mastery:.1%}，需重點關注'),
@@ -3002,11 +3115,7 @@ def generate_ai_diagnosis(concept_name: str, domain_name: str, mastery: float,
                     'recent_accuracy': recent_accuracy
                 },
                 'root_causes': ai_data.get('root_causes', ['基礎概念不牢固', '練習不足']),
-                'top_actions': ai_data.get('top_actions', [
-                    {"action": "複習基礎", "detail": "重新學習基本概念", "est_min": 10},
-                    {"action": "做練習", "detail": "完成相關練習題", "est_min": 20},
-                    {"action": "尋求幫助", "detail": "重新複習課程", "est_min": 5}
-                ]),
+                'top_actions': fixed_top_actions,
                 'practice_examples': ai_data.get('practice_examples', [
                     {"q_id": "q101", "difficulty": "easy", "text": "基礎概念題"},
                     {"q_id": "q102", "difficulty": "medium", "text": "應用練習題"}
@@ -3023,7 +3132,7 @@ def generate_ai_diagnosis(concept_name: str, domain_name: str, mastery: float,
                 },
                 'evidence': ai_data.get('evidence', [f'答題{total_attempts}次', f'正確率{recent_accuracy:.1%}']),
                 'confidence': ai_data.get('confidence', 'medium'),
-                'learning_path': ai_data.get('learning_path', learning_path or []),  # 優先使用AI生成的學習路徑
+                'learning_path': ai_learning_path,  # 優先使用AI生成的學習路徑
                 'full_text': ai_data.get('full_text', f'''
 ## 詳細診斷分析
 

@@ -346,7 +346,9 @@ def get_platform_specific_system_prompt(platform: str = "web") -> str:
 
 測驗上下文維護：
 - LINE Bot 會自動提供對話上下文，你不需要主動尋找記憶
-- 當收到包含上下文的測驗批改請求時，直接進行智能批改
+- 當收到包含上下文的測驗批改請求時，直接調用 linebot_grade_tool 進行批改
+- **重要：測驗批改時，只返回 linebot_grade_tool 的結果，不要添加任何額外的教學內容或解釋**
+- linebot_grade_tool 已經會返回簡潔的批改結果，直接返回即可，不要重新格式化或添加內容
 - 如果沒有上下文，正常回應
 
 【目標設定操作邏輯】
