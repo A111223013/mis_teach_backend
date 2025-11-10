@@ -208,7 +208,7 @@ def call_main_agent(user_message: str, user_id: str) -> str:
         return f"抱歉，主代理人系統暫時無法使用。錯誤：{str(e)}"
 
 # ===== 消息處理 =====
-def reply_text(reply_token: str, text: str):
+def reply_text(reply_token: str, text: str, user_id: str = None):
     """發送文字回覆"""
     try:
         # 檢查消息是否為空
@@ -221,6 +221,15 @@ def reply_text(reply_token: str, text: str):
                 messages=[TextMessage(text=text)]
             )
         )
+        
+        # 如果提供了 user_id，將助手的回應存儲到記憶中（用於批改答案時提取題目）
+        if user_id:
+            try:
+                from src.memory_manager import add_ai_message
+                user_memory_key = f"line_{user_id}"
+                add_ai_message(user_memory_key, text)
+            except Exception as e:
+                print(f"⚠️ 存儲助手回應到記憶失敗: {e}")
     except Exception as e:
         print(f"❌ 發送消息失敗: {e}")
 
@@ -250,6 +259,14 @@ def push_text_message(user_id: str, text: str):
                 messages=[TextMessage(text=text)]
             )
         )
+        
+        # 將助手的回應存儲到記憶中（重要：用於後續的題目提取）
+        try:
+            from src.memory_manager import add_ai_message
+            user_memory_key = f"line_{user_id}"
+            add_ai_message(user_memory_key, text)
+        except Exception as e:
+            print(f"⚠️ 存儲助手回應到記憶失敗: {e}")
     except Exception as e:
         print(f"❌ 發送推播消息失敗: {e}")
 
@@ -506,40 +523,91 @@ def handle_message(event: MessageEvent):
                 import re
                 question = ""
                 
-                # 尋找題目（通常包含 A. B. C. D. 選項）
+                # 尋找題目：只查找最近的一條包含選項的訊息（即當前題目）
+                # 從最近的訊息開始反向查找，找到第一條包含選項的訊息就停止
                 for msg in reversed(recent_messages):
+                    # 跳過用戶的答案（通常是簡短的 A、B、C、D 或簡短文字）
+                    msg_stripped = msg.strip()
+                    if len(msg_stripped) <= 5 and msg_stripped.upper() in ['A', 'B', 'C', 'D', 'A.', 'B.', 'C.', 'D.']:
+                        continue
+                    
+                    # 檢查是否包含完整的選擇題格式（A. B. C. D.）
                     if "A." in msg and "B." in msg and "C." in msg and "D." in msg:
-                        # 提取題目（從問題開始到選項之前）
-                        question_match = re.search(r'(.+?)(?=\s*A\.)', msg, re.DOTALL)
-                        if question_match:
-                            question = question_match.group(1).strip()
-                            # 移除表情符號和提示文字
-                            question = re.sub(r'[💡🤔❓]', '', question)
-                            question = re.sub(r'請輸入您的答案.*', '', question, flags=re.IGNORECASE)
-                            question = question.strip()
+                        # 提取完整的題目（包括問題和選項，但移除提示文字）
+                        # 移除提示文字和表情符號
+                        question = msg
+                        question = re.sub(r'💡\s*請輸入您的答案.*', '', question, flags=re.IGNORECASE | re.DOTALL)
+                        question = re.sub(r'請輸入您的答案.*', '', question, flags=re.IGNORECASE | re.DOTALL)
+                        question = question.strip()
+                        
+                        # 確保題目包含選項（至少包含 A. 和 B.）
+                        if "A." in question and "B." in question:
+                            break
                         else:
-                            # 如果沒有匹配到，使用整條訊息但移除提示文字
-                            question = msg
-                            question = re.sub(r'[💡🤔❓]', '', question)
-                            question = re.sub(r'請輸入您的答案.*', '', question, flags=re.IGNORECASE)
-                            question = question.strip()
-                        break
+                            question = ""  # 如果移除後沒有選項，重置
                 
-                # 如果沒有找到完整題目，使用最近的包含選項的訊息
+                # 如果沒有找到完整題目，使用最近的包含選項的訊息（但不是用戶答案）
                 if not question:
                     for msg in reversed(recent_messages):
+                        # 跳過用戶的答案
+                        msg_stripped = msg.strip()
+                        if len(msg_stripped) <= 5 and msg_stripped.upper() in ['A', 'B', 'C', 'D', 'A.', 'B.', 'C.', 'D.']:
+                            continue
+                        
                         if any(opt in msg for opt in ["A.", "B.", "C.", "D."]):
                             question = msg
                             # 移除表情符號和提示文字
-                            question = re.sub(r'[💡🤔❓]', '', question)
-                            question = re.sub(r'請輸入您的答案.*', '', question, flags=re.IGNORECASE)
+                            question = re.sub(r'💡\s*請輸入您的答案.*', '', question, flags=re.IGNORECASE | re.DOTALL)
+                            question = re.sub(r'請輸入您的答案.*', '', question, flags=re.IGNORECASE | re.DOTALL)
                             question = question.strip()
-                            break
+                            
+                            # 確保題目包含選項
+                            if "A." in question or "B." in question:
+                                break
+                            else:
+                                question = ""
+                
+                # 如果還是沒有找到題目，嘗試從更早的對話中查找（最多查找最近10條）
+                if not question and len(memory) > 5:
+                    extended_messages = memory[-10:]
+                    for msg in reversed(extended_messages):
+                        # 跳過用戶的答案
+                        msg_stripped = msg.strip()
+                        if len(msg_stripped) <= 5 and msg_stripped.upper() in ['A', 'B', 'C', 'D', 'A.', 'B.', 'C.', 'D.']:
+                            continue
+                        
+                        if "A." in msg and "B." in msg and "C." in msg and "D." in msg:
+                            question = msg
+                            question = re.sub(r'💡\s*請輸入您的答案.*', '', question, flags=re.IGNORECASE | re.DOTALL)
+                            question = re.sub(r'請輸入您的答案.*', '', question, flags=re.IGNORECASE | re.DOTALL)
+                            question = question.strip()
+                            
+                            # 確保題目包含選項
+                            if "A." in question and "B." in question:
+                                break
+                            else:
+                                question = ""
+                
+                # 調試輸出
+                if not question:
+                    print(f"⚠️ 題目提取失敗 - 用戶答案: {user_message}")
+                    print(f"⚠️ 最近5條訊息: {recent_messages}")
                 
                 # 直接調用批改工具，不通過主代理人，避免輸出過長
                 # 正確答案暫時為空，讓 AI 根據題目和用戶答案判斷
-                response = grade_answer(user_message, "", question)
-                reply_text(event.reply_token, response)
+                if question:
+                    response = grade_answer(user_message, "", question)
+                    reply_text(event.reply_token, response, user_id)
+                else:
+                    # 如果還是找不到題目，嘗試使用完整的上下文
+                    print(f"⚠️ 嘗試使用完整上下文進行批改")
+                    full_context = "\n".join(recent_messages[-3:])  # 使用最近3條
+                    # 如果上下文包含選項，直接使用
+                    if "A." in full_context or "B." in full_context:
+                        response = grade_answer(user_message, "", full_context)
+                        reply_text(event.reply_token, response, user_id)
+                    else:
+                        reply_text(event.reply_token, "❌ 無法識別題目內容，請重新發送題目後再回答。", user_id)
                 return
             else:
                 print(f"❌ 沒有找到對話記憶，按一般訊息處理")
@@ -1113,11 +1181,28 @@ def grade_answer(answer: str, correct_answer: str, question: str) -> str:
         else:
             correct_answer_hint = correct_answer
         
+        # 確保問題和答案的對應關係正確
+        # 如果問題為空或不明確，在提示詞中強調要根據題目內容判斷
+        if not question:
+            return "❌ 無法識別題目內容，請重新發送題目後再回答。"
+        
+        # 檢查題目是否包含選項（至少要有 A. 或 B.）
+        if "A." not in question and "B." not in question:
+            return "❌ 無法識別題目內容，請重新發送題目後再回答。"
+        
+        # 如果題目太短（少於5個字），可能是提取錯誤
+        if len(question.strip()) < 5:
+            return "❌ 無法識別題目內容，請重新發送題目後再回答。"
+        
         prompt = f"""請批改以下測驗答案，輸出必須簡潔明瞭，適合 LINE Bot 顯示：
+
+**重要：請仔細閱讀題目內容，確保批改的是與題目相關的答案。**
 
 問題：{question}
 用戶答案：{answer}
 {'正確答案：' + correct_answer if correct_answer else '請根據題目內容判斷正確答案'}
+
+**注意：如果用戶答案與題目內容無關，請明確指出答案錯誤，並解釋為什麼錯誤。**
 
 **輸出格式要求（嚴格遵守）：**
 1. 第一行：答案是否正確（✅ 答案正確 或 ❌ 答案錯誤）

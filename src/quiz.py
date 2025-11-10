@@ -2044,6 +2044,10 @@ def create_quiz():
 def get_image_base64(image_filename):
     """讀取圖片檔案並轉換為 base64 編碼"""
     try:
+        # 檢查檔案名稱是否為空
+        if not image_filename or not image_filename.strip():
+            return None
+        
         # 取得當前檔案所在目錄，圖片在同層的 picture 資料夾
         current_dir = os.path.dirname(os.path.abspath(__file__))
         image_path = os.path.join(current_dir, 'picture', image_filename)

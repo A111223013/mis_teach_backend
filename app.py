@@ -40,11 +40,8 @@ from tool.rename_materials import rename_materials
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 # Initialize Flask app
-app = Flask(
-    __name__,
-    static_folder=os.path.join(BASE_DIR, "data", "courses_picture"),
-    static_url_path="/static"
-)
+# 明確禁用 Flask 的默認 static 文件處理，使用自定義路由
+app = Flask(__name__, static_folder=None, static_url_path=None)
 
 # Load configuration based on environment
 cfg = Config()
@@ -64,8 +61,8 @@ domain_name_config = app.config.get('DOMAIN_NAME')
 
 # Enable CORS
 CORS(app, resources={r"/*": {"origins": app.config['DOMAIN_NAME']}},
-     methods=["GET", "POST", "OPTIONS"],
-     allow_headers=["Content-Type", "Authorization"], supports_credentials=True)
+     methods=["GET", "POST", "OPTIONS", "PUT", "DELETE", "PATCH"],
+     allow_headers=["Content-Type", "Authorization", "ngrok-skip-browser-warning"], supports_credentials=True)
 
 # 初始化數據庫
 sqldb.init_app(app)  # 啟用SQL數據庫
@@ -92,25 +89,108 @@ app.register_blueprint(note_bp, url_prefix="/note")  # 註冊筆記 API Blueprin
 app.register_blueprint(analytics_bp, url_prefix='/api/learning-analytics')  # 註冊學習分析 API Blueprint
 app.register_blueprint(news_api_bp) # 註冊新聞 API Blueprint
 
-# 創建靜態文件服務路由 (用於圖片)
+# 創建靜態文件服務路由 (用於題目圖片)
 @app.route('/static/images/<path:filename>')
 def serve_static_image(filename):
-    """提供靜態圖片文件服務"""
+    """提供靜態圖片文件服務（題目圖片）"""
     try:
         import os
+        import mimetypes
         from flask import send_from_directory
         
         # 圖片文件位於 backend/src/picture 目錄
-        image_dir = os.path.join(os.path.dirname(__file__), 'src', 'picture')
+        # 使用絕對路徑，確保路徑正確
+        base_dir = os.path.dirname(os.path.abspath(__file__))
+        image_dir = os.path.join(base_dir, 'src', 'picture')
+        image_path = os.path.join(image_dir, filename)
         
-        if os.path.exists(os.path.join(image_dir, filename)):
-            return send_from_directory(image_dir, filename)
+        # 確定 MIME 類型
+        mime_type, _ = mimetypes.guess_type(filename)
+        if not mime_type:
+            # 根據副檔名設定預設 MIME 類型
+            ext = os.path.splitext(filename)[1].lower()
+            mime_map = {
+                '.jpg': 'image/jpeg',
+                '.jpeg': 'image/jpeg',
+                '.png': 'image/png',
+                '.gif': 'image/gif',
+                '.webp': 'image/webp',
+                '.svg': 'image/svg+xml'
+            }
+            mime_type = mime_map.get(ext, 'image/jpeg')
+        
+        if os.path.exists(image_path):
+            response = send_from_directory(image_dir, filename, mimetype=mime_type)
+            # 設置 CORS 頭
+            response.headers['Access-Control-Allow-Origin'] = app.config['DOMAIN_NAME']
+            response.headers['Access-Control-Allow-Methods'] = 'GET, OPTIONS'
+            response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization, ngrok-skip-browser-warning'
+            response.headers['Content-Type'] = mime_type
+            return response
         else:
             return jsonify({'error': 'Image not found'}), 404
             
     except Exception as e:
         print(f"靜態圖片服務錯誤: {e}")
         return jsonify({'error': 'Image service error'}), 500
+
+# 創建課程圖片服務路由
+@app.route('/static/<path:filename>')
+def serve_course_image(filename):
+    """提供課程圖片文件服務"""
+    try:
+        import os
+        import mimetypes
+        from flask import send_from_directory, Response
+        
+        # 課程圖片文件位於 backend/data/courses_picture 目錄
+        # 使用絕對路徑，確保路徑正確
+        base_dir = os.path.dirname(os.path.abspath(__file__))
+        course_image_dir = os.path.join(base_dir, 'data', 'courses_picture')
+        image_path = os.path.join(course_image_dir, filename)
+        
+        # 確定 MIME 類型
+        mime_type, _ = mimetypes.guess_type(filename)
+        if not mime_type:
+            # 根據副檔名設定預設 MIME 類型
+            ext = os.path.splitext(filename)[1].lower()
+            mime_map = {
+                '.jpg': 'image/jpeg',
+                '.jpeg': 'image/jpeg',
+                '.png': 'image/png',
+                '.gif': 'image/gif',
+                '.webp': 'image/webp',
+                '.svg': 'image/svg+xml'
+            }
+            mime_type = mime_map.get(ext, 'image/jpeg')
+        
+        if os.path.exists(image_path):
+            response = send_from_directory(course_image_dir, filename, mimetype=mime_type)
+            # 設置 CORS 頭
+            response.headers['Access-Control-Allow-Origin'] = app.config['DOMAIN_NAME']
+            response.headers['Access-Control-Allow-Methods'] = 'GET, OPTIONS'
+            response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization, ngrok-skip-browser-warning'
+            response.headers['Content-Type'] = mime_type
+            return response
+        else:
+            # 如果課程圖片不存在，嘗試從題目圖片目錄查找
+            base_dir = os.path.dirname(os.path.abspath(__file__))
+            question_image_dir = os.path.join(base_dir, 'src', 'picture')
+            question_image_path = os.path.join(question_image_dir, filename)
+            if os.path.exists(question_image_path):
+                response = send_from_directory(question_image_dir, filename, mimetype=mime_type)
+                response.headers['Access-Control-Allow-Origin'] = app.config['DOMAIN_NAME']
+                response.headers['Access-Control-Allow-Methods'] = 'GET, OPTIONS'
+                response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization, ngrok-skip-browser-warning'
+                response.headers['Content-Type'] = mime_type
+                return response
+            return jsonify({'error': 'Image not found', 'filename': filename}), 404
+            
+    except Exception as e:
+        print(f"❌ 課程圖片服務錯誤: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': 'Image service error', 'message': str(e)}), 500
 
 def check_calendar_notifications():
     """檢查 Redis 中的行事曆通知並發送郵件"""
