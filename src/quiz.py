@@ -2127,6 +2127,106 @@ def get_exam():
     return jsonify({'token': refresh_token(token), 'exams': exam_list}), 200
 
 
+@quiz_bp.route('/get-exam-filters', methods=['POST', 'OPTIONS'])
+def get_exam_filters():
+    """獲取考題篩選選項（輕量級，不包含題目內容和圖片）"""
+    if request.method == 'OPTIONS':
+        return '', 204
+    auth_header = request.headers.get('Authorization')
+    
+    if not auth_header:
+        return jsonify({'token': None, 'message': '未提供token', 'code': 'NO_TOKEN'}), 401
+    
+    try:
+        token = auth_header.split(" ")[1]
+        decoded_token = jwt.decode(token, current_app.config['SECRET_KEY'], algorithms=['HS256'])
+        user_email = decoded_token.get('user')
+        
+        if not user_email:
+            return jsonify({'token': None, 'message': '無效的token', 'code': 'TOKEN_INVALID'}), 401
+    except jwt.ExpiredSignatureError:
+        return jsonify({'token': None, 'message': 'Token已過期，請重新登錄', 'code': 'TOKEN_EXPIRED'}), 401
+    except jwt.InvalidTokenError:
+        return jsonify({'token': None, 'message': '無效的token', 'code': 'TOKEN_INVALID'}), 401
+    except Exception as e:
+        print(f"驗證token時發生錯誤: {str(e)}")
+        return jsonify({'token': None, 'message': '認證失敗', 'code': 'AUTH_FAILED'}), 401
+    
+    try:
+        # 只查詢需要的欄位，不包含題目內容和圖片
+        examdata = mongo.db.exam.find(
+            {},
+            {
+                'school': 1,
+                'department': 1,
+                'year': 1,
+                'key-points': 1,
+                '_id': 0
+            }
+        )
+        
+        # 使用集合來去重並收集資料
+        schools = set()
+        departments = set()
+        years = set()
+        subjects = set()
+        subject_count_map = {}
+        
+        # 統計每個學校-年度-系所組合的題目數量
+        school_year_dept_count = {}
+        
+        for exam in examdata:
+            # 收集學校
+            if exam.get('school'):
+                schools.add(exam.get('school'))
+            
+            # 收集系所
+            if exam.get('department'):
+                departments.add(exam.get('department'))
+            
+            # 收集年度
+            if exam.get('year'):
+                years.add(str(exam.get('year')))
+            
+            # 收集知識點/科目
+            key_points = exam.get('key-points', [])
+            if isinstance(key_points, list):
+                for subject in key_points:
+                    if subject and subject != '其他':
+                        subjects.add(subject)
+                        subject_count_map[subject] = subject_count_map.get(subject, 0) + 1
+            elif key_points and key_points != '其他':
+                subjects.add(key_points)
+                subject_count_map[key_points] = subject_count_map.get(key_points, 0) + 1
+            
+            # 統計學校-年度-系所組合的題目數量
+            school = exam.get('school', '')
+            year = str(exam.get('year', ''))
+            dept = exam.get('department', '')
+            if school and year and dept:
+                key = f"{school}|{year}|{dept}"
+                school_year_dept_count[key] = school_year_dept_count.get(key, 0) + 1
+        
+        # 轉換為排序後的列表
+        result = {
+            'token': refresh_token(token),
+            'filters': {
+                'schools': sorted(list(schools)),
+                'departments': sorted(list(departments)),
+                'years': sorted(list(years)),
+                'subjects': sorted(list(subjects)),
+                'subject_counts': subject_count_map,
+                'school_year_dept_counts': school_year_dept_count
+            }
+        }
+        
+        return jsonify(result), 200
+        
+    except Exception as e:
+        logger.error(f"獲取篩選選項時發生錯誤: {str(e)}")
+        return jsonify({'token': refresh_token(token), 'message': '獲取篩選選項失敗', 'error': str(e)}), 500
+
+
 @quiz_bp.route('/grading-progress/<template_id>', methods=['GET', 'OPTIONS'])
 def get_grading_progress(template_id):
     """獲取測驗批改進度 API"""

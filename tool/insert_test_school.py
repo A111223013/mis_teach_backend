@@ -14,16 +14,92 @@ from pymongo import MongoClient
 # 添加父目錄到路徑
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-# 定義要使用的題型對應關係
-TARGET_ANSWER_TYPES = {
-    'Long-answer': 'short-answer',
-    'Coding': 'coding-answer',
-    'Diagram Drawing': 'draw-answer',
-    'Multiple-select': 'true-false',
-    'Fill-in-the-Blank': ' single-choice',
-    'Math': 'choice-answer',
-    'Multiple-choice': 'multiple-choice'
+# 定義有效的 answer_type 值
+VALID_ANSWER_TYPES = {
+    'single-choice',
+    'multiple-choice',
+    'fill-in-the-blank',
+    'true-false',
+    'short-answer',
+    'long-answer',
+    'choice-answer',
+    'draw-answer',
+    'coding-answer',
+    'group'
 }
+
+# 定義要使用的題型（確保包含所有題型）
+TARGET_ANSWER_TYPES = {
+    'single-choice': 'single-choice',
+    'multiple-choice': 'multiple-choice',
+    'fill-in-the-blank': 'fill-in-the-blank',
+    'true-false': 'true-false',
+    'short-answer': 'short-answer',
+    'long-answer': 'long-answer',
+    'choice-answer': 'choice-answer',
+    'draw-answer': 'draw-answer',
+    'coding-answer': 'coding-answer',
+    'group': 'group'
+}
+
+def normalize_answer_type(answer_type: str) -> str:
+    """
+    標準化 answer_type，確保符合系統定義的格式
+    
+    Args:
+        answer_type: 原始 answer_type 值
+        
+    Returns:
+        標準化的 answer_type 值
+    """
+    if not answer_type:
+        return 'single-choice'  # 預設值
+    
+    # 移除前後空格
+    answer_type = answer_type.strip()
+    
+    # 轉換為小寫
+    answer_type = answer_type.lower()
+    
+    # 處理常見的變體
+    type_mapping = {
+        'single': 'single-choice',
+        'single-choice': 'single-choice',
+        'multiple': 'multiple-choice',
+        'multiple-choice': 'multiple-choice',
+        'fill': 'fill-in-the-blank',
+        'fill_in_the_blank': 'fill-in-the-blank',
+        'fill-in-blank': 'fill-in-the-blank',
+        'fill-in-the-blank': 'fill-in-the-blank',
+        'truefalse': 'true-false',
+        'true_false': 'true-false',
+        'true-false': 'true-false',
+        'short': 'short-answer',
+        'short-answer': 'short-answer',
+        'long': 'long-answer',
+        'long-answer': 'long-answer',
+        'choice': 'choice-answer',
+        'choice-answer': 'choice-answer',
+        'draw': 'draw-answer',
+        'drawing': 'draw-answer',
+        'draw-answer': 'draw-answer',
+        'code': 'coding-answer',
+        'coding': 'coding-answer',
+        'coding-answer': 'coding-answer',
+        'programming': 'coding-answer',
+        'group': 'group',
+    }
+    
+    # 先檢查映射表
+    if answer_type in type_mapping:
+        answer_type = type_mapping[answer_type]
+    
+    # 驗證是否為有效的 answer_type
+    if answer_type not in VALID_ANSWER_TYPES:
+        print(f"⚠️ 警告：無效的 answer_type '{answer_type}'，將使用預設值 'single-choice'")
+        return 'single-choice'
+    
+    return answer_type
 
 def get_mongo_connection():
     """使用 config.py 獲取 MongoDB 連接"""
@@ -79,23 +155,28 @@ def insert_test_school_data(auto_mode=False):
                     print("取消插入操作")
                     return True
         
-        # 只使用指定的題型
-        target_types = list(TARGET_ANSWER_TYPES.values())
-        print(f"目標題型: {list(TARGET_ANSWER_TYPES.keys())}")
-        print(f"對應的 answer_type: {target_types}\n")
+        # 使用所有有效的題型
+        target_types = list(VALID_ANSWER_TYPES)
+        print(f"目標題型: {sorted(target_types)}\n")
         
         # 檢查哪些題型在資料庫中存在
         available_types = []
-        for display_name, answer_type in TARGET_ANSWER_TYPES.items():
+        for answer_type in target_types:
+            # 查詢資料庫（同時查詢標準化和原始格式，以處理資料不一致的情況）
             count = db.exam.count_documents({
-                'answer_type': answer_type,
+                '$or': [
+                    {'answer_type': answer_type},
+                    {'answer_type': answer_type.strip()},  # 處理空格
+                    {'answer_type': answer_type.lower()},  # 處理大小寫
+                ],
                 'school': {'$ne': '測試學校(全題型)'}
             })
+            
             if count > 0:
                 available_types.append(answer_type)
-                print(f"  {display_name} ({answer_type}): {count} 題可用")
+                print(f"  {answer_type}: {count} 題可用")
             else:
-                print(f"  {display_name} ({answer_type}): 0 題可用（跳過）")
+                print(f"  {answer_type}: 0 題可用（跳過）")
         
         if not available_types:
             print("沒有找到任何可用的題型")
@@ -106,15 +187,19 @@ def insert_test_school_data(auto_mode=False):
         selected_questions = []
         used_answer_types = set()  # 記錄已使用的題型
         
-        # 第一階段：前7題，選擇7種不同題型各1題
-        print("第一階段：選擇前7種不同題型各1題")
+        # 第一階段：確保每種題型至少有一題
+        print("第一階段：確保每種題型至少有一題")
         print("-" * 60)
-        first_seven_types = available_types[:7]  # 取前7種題型
         
-        for answer_type in first_seven_types:
+        for answer_type in available_types:
             # 從該 answer_type 中隨機選擇 1 題（排除測試學校）
+            # 使用 $in 查詢以處理可能的變體格式
             questions = list(db.exam.find({
-                'answer_type': answer_type,
+                '$or': [
+                    {'answer_type': answer_type},
+                    {'answer_type': answer_type.strip()},  # 處理空格
+                    {'answer_type': answer_type.lower()},  # 處理大小寫
+                ],
                 'school': {'$ne': '測試學校(全題型)'}
             }).limit(50))
             
@@ -124,20 +209,24 @@ def insert_test_school_data(auto_mode=False):
                 used_answer_types.add(answer_type)
                 print(f"題目 {len(selected_questions)}: {answer_type}")
         
-        # 第二階段：第8題之後，從指定題型中隨機選擇
-        print(f"\n第二階段：第8題之後，從指定題型中隨機選擇")
+        # 第二階段：補充到目標數量（20題）
+        print(f"\n第二階段：補充到目標數量（20題）")
         print("-" * 60)
         remaining_questions = []
         for answer_type in available_types:
+            # 使用 $in 查詢以處理可能的變體格式
             questions = list(db.exam.find({
-                'answer_type': answer_type,
+                '$or': [
+                    {'answer_type': answer_type},
+                    {'answer_type': answer_type.strip()},  # 處理空格
+                    {'answer_type': answer_type.lower()},  # 處理大小寫
+                ],
                 'school': {'$ne': '測試學校(全題型)'}
             }).limit(100))
             remaining_questions.extend(questions)
         
-        # 隨機選擇題目（第8題之後），只從指定題型中選擇
-        # 目標總數約15題，所以再選8題
-        target_count = 15
+        # 隨機選擇題目補充到20題
+        target_count = 20
         remaining_count = target_count - len(selected_questions)
         
         if remaining_count > 0 and len(remaining_questions) >= remaining_count:
@@ -150,12 +239,16 @@ def insert_test_school_data(auto_mode=False):
         for question in random_selected:
             if len(selected_questions) >= target_count:
                 break
-            # 確保只選擇指定題型
+            # 確保只選擇指定題型（標準化後比較）
             q_type = question.get('answer_type', '')
-            if q_type in available_types:
+            normalized_q_type = normalize_answer_type(q_type)
+            if normalized_q_type in available_types:
                 selected_questions.append(question)
-                used_answer_types.add(q_type)
-                print(f"題目 {len(selected_questions)}: {q_type}")
+                used_answer_types.add(normalized_q_type)
+                if q_type != normalized_q_type:
+                    print(f"題目 {len(selected_questions)}: {normalized_q_type} (原始: {q_type})")
+                else:
+                    print(f"題目 {len(selected_questions)}: {normalized_q_type}")
         
         if not selected_questions:
             print("沒有找到任何題目")
@@ -167,23 +260,58 @@ def insert_test_school_data(auto_mode=False):
         # 轉換為測試學校格式
         test_questions = []
         for i, question in enumerate(selected_questions):
+            # 獲取並標準化 answer_type
+            raw_answer_type = question.get('answer_type', 'single-choice')
+            normalized_answer_type = normalize_answer_type(raw_answer_type)
+            options = question.get('options', [])
+            question_text = question.get('question_text', '')
+            
+            # 檢查題目文字是否包含「題目檔」，如果是單選題應該改為簡答題
+            if '題目檔' in question_text and normalized_answer_type == 'single-choice':
+                normalized_answer_type = 'short-answer'
+            
+            # 檢查多選題是否有選項，如果沒有選項應該改為簡答題
+            if normalized_answer_type == 'multiple-choice':
+                has_options = False
+                if isinstance(options, list) and len(options) > 0:
+                    has_options = True
+                elif isinstance(options, str) and options.strip():
+                    has_options = True
+                
+                if not has_options:
+                    normalized_answer_type = 'short-answer'
+            
+            # 確保 question_number 是正確的（從 1 開始）
+            question_number = str(i + 1)
+            
             # 創建測試學校格式的題目
             test_question = {
                 'type': question.get('type', 'single'),
                 'school': '測試學校(全題型)',
                 'department': '資訊管理學系',
                 'year': '114',
-                'question_number': str(i + 1),
-                'question_text': question.get('question_text', ''),
-                'options': question.get('options', []),
+                'question_number': question_number,  # 確保從 1 開始
+                'question_text': question_text,
+                'options': options,
                 'answer': question.get('answer', ''),
-                'answer_type': question.get('answer_type', ''),
+                'answer_type': normalized_answer_type,  # 使用標準化的 answer_type
                 'image_file': question.get('image_file', ''),
                 'detail-answer': question.get('detail-answer', ''),
                 'key-points': question.get('key-points', ''),
                 'difficulty level': question.get('difficulty level', 'medium'),
                 'created_at': datetime.now()
             }
+            
+            # 如果 answer_type 被修改，記錄警告
+            if raw_answer_type != normalized_answer_type:
+                reason = []
+                if '題目檔' in question_text and raw_answer_type == 'single-choice':
+                    reason.append("包含「題目檔」")
+                if raw_answer_type == 'multiple-choice' and not (isinstance(options, list) and len(options) > 0 or (isinstance(options, str) and options.strip())):
+                    reason.append("多選題沒有選項")
+                reason_str = f" ({', '.join(reason)})" if reason else ""
+                print(f"⚠️ 題目 {question_number}: answer_type 從 '{raw_answer_type}' 標準化為 '{normalized_answer_type}'{reason_str}")
+            
             test_questions.append(test_question)
         
         # 所有測試資料都從資料庫選擇，不包含硬編碼資料
