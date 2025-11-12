@@ -59,10 +59,41 @@ else:
 
 domain_name_config = app.config.get('DOMAIN_NAME')
 
-# Enable CORS
-CORS(app, resources={r"/*": {"origins": app.config['DOMAIN_NAME']}},
-     methods=["GET", "POST", "OPTIONS", "PUT", "DELETE", "PATCH"],
-     allow_headers=["Content-Type", "Authorization", "ngrok-skip-browser-warning"], supports_credentials=True)
+# 定義允許的來源（包含所有 ngrok instant endpoints 和 localhost）
+def is_allowed_origin(origin):
+    """檢查來源是否為允許的域名"""
+    if not origin:
+        return False
+    # 允許 localhost（開發環境）
+    if origin.startswith('http://localhost:') or origin.startswith('https://localhost:'):
+        return True
+    # 允許所有 .ngrok-free.app 和 .ngrok.io 域名（Docker Desktop instant endpoints）
+    if origin.endswith('.ngrok-free.app') or origin.endswith('.ngrok.io'):
+        return True
+    # 也允許配置的特定域名
+    if origin == app.config.get('DOMAIN_NAME'):
+        return True
+    return False
+
+# Enable CORS - 手動處理，避免 Flask-CORS 函數參數的兼容性問題
+# 使用 after_request 鉤子完全控制 CORS 頭的設置
+@app.after_request
+def handle_cors(response):
+    """手動處理 CORS 頭，只允許通過檢查的來源"""
+    origin = request.headers.get('Origin', '')
+    
+    # 只對通過檢查的來源設置 CORS 頭
+    if is_allowed_origin(origin):
+        response.headers['Access-Control-Allow-Origin'] = origin
+        response.headers['Access-Control-Allow-Credentials'] = 'true'
+        response.headers['Access-Control-Allow-Methods'] = 'GET, POST, OPTIONS, PUT, DELETE, PATCH'
+        response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization, ngrok-skip-browser-warning'
+    
+    # 處理 OPTIONS 預檢請求
+    if request.method == 'OPTIONS':
+        response.status_code = 200
+    
+    return response
 
 # 初始化數據庫
 sqldb.init_app(app)  # 啟用SQL數據庫
@@ -121,8 +152,12 @@ def serve_static_image(filename):
         
         if os.path.exists(image_path):
             response = send_from_directory(image_dir, filename, mimetype=mime_type)
-            # 設置 CORS 頭
-            response.headers['Access-Control-Allow-Origin'] = app.config['DOMAIN_NAME']
+            # 設置 CORS 頭 - 動態允許 ngrok 域名
+            origin = request.headers.get('Origin', '')
+            if is_allowed_origin(origin):
+                response.headers['Access-Control-Allow-Origin'] = origin
+            else:
+                response.headers['Access-Control-Allow-Origin'] = app.config.get('DOMAIN_NAME', '*')
             response.headers['Access-Control-Allow-Methods'] = 'GET, OPTIONS'
             response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization, ngrok-skip-browser-warning'
             response.headers['Content-Type'] = mime_type
@@ -166,8 +201,12 @@ def serve_course_image(filename):
         
         if os.path.exists(image_path):
             response = send_from_directory(course_image_dir, filename, mimetype=mime_type)
-            # 設置 CORS 頭
-            response.headers['Access-Control-Allow-Origin'] = app.config['DOMAIN_NAME']
+            # 設置 CORS 頭 - 動態允許 ngrok 域名
+            origin = request.headers.get('Origin', '')
+            if is_allowed_origin(origin):
+                response.headers['Access-Control-Allow-Origin'] = origin
+            else:
+                response.headers['Access-Control-Allow-Origin'] = app.config.get('DOMAIN_NAME', '*')
             response.headers['Access-Control-Allow-Methods'] = 'GET, OPTIONS'
             response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization, ngrok-skip-browser-warning'
             response.headers['Content-Type'] = mime_type
@@ -179,7 +218,11 @@ def serve_course_image(filename):
             question_image_path = os.path.join(question_image_dir, filename)
             if os.path.exists(question_image_path):
                 response = send_from_directory(question_image_dir, filename, mimetype=mime_type)
-                response.headers['Access-Control-Allow-Origin'] = app.config['DOMAIN_NAME']
+                origin = request.headers.get('Origin', '')
+                if is_allowed_origin(origin):
+                    response.headers['Access-Control-Allow-Origin'] = origin
+                else:
+                    response.headers['Access-Control-Allow-Origin'] = app.config.get('DOMAIN_NAME', '*')
                 response.headers['Access-Control-Allow-Methods'] = 'GET, OPTIONS'
                 response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization, ngrok-skip-browser-warning'
                 response.headers['Content-Type'] = mime_type
