@@ -10,6 +10,7 @@ from src.dashboard import dashboard_bp
 from src.quiz import quiz_bp, init_quiz_tables
 from src.ai_quiz import ai_quiz_bp
 from src.materials_api import materials_bp
+from src.note import note_bp
 import os
 import redis, json ,time
 from datetime import datetime
@@ -22,8 +23,9 @@ from neo4j.exceptions import ServiceUnavailable
 
 
 from src.ai_teacher import ai_teacher_bp
-from src.user_guide_api import user_guide_bp
+# user_guide_api 已整合到 website_guide
 from src.web_ai_assistant import web_ai_bp
+from src.website_guide import guide_bp
 from src.linebot import linebot_bp  # 新增 LINE Bot Blueprint
 from src.learning_analytics import analytics_bp
 from tool.insert_mongodb import initialize_mis_teach_db # 引入教材資料庫
@@ -31,17 +33,15 @@ from tool.init_neo4j_knowledge_graph import init_neo4j_knowledge_graph  # 引入
 from accessories import init_neo4j  # 引入Neo4j驅動初始化
 from tool.insert_test_school import check_and_insert_test_school  # 引入測試學校自動檢查
 from src.news_api import news_api_bp  # 引入新聞 API Blueprint
-from tool.init_news_table import init_news_table  # 引入新聞表初始化vssssss
+from tool.init_news_table import init_news_table, migrate_news_data  # 引入新聞表初始化與資料遷移
+from tool.rename_materials import rename_materials
 
 # 定義 BASE_DIR 為 backend 資料夾的絕對路徑
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 # Initialize Flask app
-app = Flask(
-    __name__,
-    static_folder=os.path.join(BASE_DIR, "data", "courses_picture"),
-    static_url_path="/static"
-)
+# 明確禁用 Flask 的默認 static 文件處理，使用自定義路由
+app = Flask(__name__, static_folder=None, static_url_path=None)
 
 # Load configuration based on environment
 cfg = Config()
@@ -59,10 +59,41 @@ else:
 
 domain_name_config = app.config.get('DOMAIN_NAME')
 
-# Enable CORS
-CORS(app, resources={r"/*": {"origins": app.config['DOMAIN_NAME']}},
-     methods=["GET", "POST", "OPTIONS"],
-     allow_headers=["Content-Type", "Authorization"], supports_credentials=True)
+# 定義允許的來源（包含所有 ngrok instant endpoints 和 localhost）
+def is_allowed_origin(origin):
+    """檢查來源是否為允許的域名"""
+    if not origin:
+        return False
+    # 允許 localhost（開發環境）
+    if origin.startswith('http://localhost:') or origin.startswith('https://localhost:'):
+        return True
+    # 允許所有 .ngrok-free.app 和 .ngrok.io 域名（Docker Desktop instant endpoints）
+    if origin.endswith('.ngrok-free.app') or origin.endswith('.ngrok.io'):
+        return True
+    # 也允許配置的特定域名
+    if origin == app.config.get('DOMAIN_NAME'):
+        return True
+    return False
+
+# Enable CORS - 手動處理，避免 Flask-CORS 函數參數的兼容性問題
+# 使用 after_request 鉤子完全控制 CORS 頭的設置
+@app.after_request
+def handle_cors(response):
+    """手動處理 CORS 頭，只允許通過檢查的來源"""
+    origin = request.headers.get('Origin', '')
+    
+    # 只對通過檢查的來源設置 CORS 頭
+    if is_allowed_origin(origin):
+        response.headers['Access-Control-Allow-Origin'] = origin
+        response.headers['Access-Control-Allow-Credentials'] = 'true'
+        response.headers['Access-Control-Allow-Methods'] = 'GET, POST, OPTIONS, PUT, DELETE, PATCH'
+        response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization, ngrok-skip-browser-warning'
+    
+    # 處理 OPTIONS 預檢請求
+    if request.method == 'OPTIONS':
+        response.status_code = 200
+    
+    return response
 
 # 初始化數據庫
 sqldb.init_app(app)  # 啟用SQL數據庫
@@ -81,32 +112,128 @@ app.register_blueprint(dashboard_bp, url_prefix='/dashboard')
 app.register_blueprint(quiz_bp, url_prefix='/quiz')
 app.register_blueprint(ai_quiz_bp, url_prefix='/ai_quiz')
 app.register_blueprint(ai_teacher_bp, url_prefix='/ai_teacher')
-app.register_blueprint(user_guide_bp, url_prefix='/user-guide')
 app.register_blueprint(web_ai_bp, url_prefix='/web-ai')
+app.register_blueprint(guide_bp, url_prefix='/guide')  # 註冊導覽 Blueprint
 app.register_blueprint(linebot_bp, url_prefix='/linebot') # 註冊 LINE Bot Blueprint
 app.register_blueprint(materials_bp, url_prefix="/materials")
+app.register_blueprint(note_bp, url_prefix="/note")  # 註冊筆記 API Blueprint
 app.register_blueprint(analytics_bp, url_prefix='/api/learning-analytics')  # 註冊學習分析 API Blueprint
 app.register_blueprint(news_api_bp) # 註冊新聞 API Blueprint
 
-# 創建靜態文件服務路由 (用於圖片)
+# 創建靜態文件服務路由 (用於題目圖片)
 @app.route('/static/images/<path:filename>')
 def serve_static_image(filename):
-    """提供靜態圖片文件服務"""
+    """提供靜態圖片文件服務（題目圖片）"""
     try:
         import os
+        import mimetypes
         from flask import send_from_directory
         
         # 圖片文件位於 backend/src/picture 目錄
-        image_dir = os.path.join(os.path.dirname(__file__), 'src', 'picture')
+        # 使用絕對路徑，確保路徑正確
+        base_dir = os.path.dirname(os.path.abspath(__file__))
+        image_dir = os.path.join(base_dir, 'src', 'picture')
+        image_path = os.path.join(image_dir, filename)
         
-        if os.path.exists(os.path.join(image_dir, filename)):
-            return send_from_directory(image_dir, filename)
+        # 確定 MIME 類型
+        mime_type, _ = mimetypes.guess_type(filename)
+        if not mime_type:
+            # 根據副檔名設定預設 MIME 類型
+            ext = os.path.splitext(filename)[1].lower()
+            mime_map = {
+                '.jpg': 'image/jpeg',
+                '.jpeg': 'image/jpeg',
+                '.png': 'image/png',
+                '.gif': 'image/gif',
+                '.webp': 'image/webp',
+                '.svg': 'image/svg+xml'
+            }
+            mime_type = mime_map.get(ext, 'image/jpeg')
+        
+        if os.path.exists(image_path):
+            response = send_from_directory(image_dir, filename, mimetype=mime_type)
+            # 設置 CORS 頭 - 動態允許 ngrok 域名
+            origin = request.headers.get('Origin', '')
+            if is_allowed_origin(origin):
+                response.headers['Access-Control-Allow-Origin'] = origin
+            else:
+                response.headers['Access-Control-Allow-Origin'] = app.config.get('DOMAIN_NAME', '*')
+            response.headers['Access-Control-Allow-Methods'] = 'GET, OPTIONS'
+            response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization, ngrok-skip-browser-warning'
+            response.headers['Content-Type'] = mime_type
+            return response
         else:
             return jsonify({'error': 'Image not found'}), 404
             
     except Exception as e:
         print(f"靜態圖片服務錯誤: {e}")
         return jsonify({'error': 'Image service error'}), 500
+
+# 創建課程圖片服務路由
+@app.route('/static/<path:filename>')
+def serve_course_image(filename):
+    """提供課程圖片文件服務"""
+    try:
+        import os
+        import mimetypes
+        from flask import send_from_directory, Response
+        
+        # 課程圖片文件位於 backend/data/courses_picture 目錄
+        # 使用絕對路徑，確保路徑正確
+        base_dir = os.path.dirname(os.path.abspath(__file__))
+        course_image_dir = os.path.join(base_dir, 'data', 'courses_picture')
+        image_path = os.path.join(course_image_dir, filename)
+        
+        # 確定 MIME 類型
+        mime_type, _ = mimetypes.guess_type(filename)
+        if not mime_type:
+            # 根據副檔名設定預設 MIME 類型
+            ext = os.path.splitext(filename)[1].lower()
+            mime_map = {
+                '.jpg': 'image/jpeg',
+                '.jpeg': 'image/jpeg',
+                '.png': 'image/png',
+                '.gif': 'image/gif',
+                '.webp': 'image/webp',
+                '.svg': 'image/svg+xml'
+            }
+            mime_type = mime_map.get(ext, 'image/jpeg')
+        
+        if os.path.exists(image_path):
+            response = send_from_directory(course_image_dir, filename, mimetype=mime_type)
+            # 設置 CORS 頭 - 動態允許 ngrok 域名
+            origin = request.headers.get('Origin', '')
+            if is_allowed_origin(origin):
+                response.headers['Access-Control-Allow-Origin'] = origin
+            else:
+                response.headers['Access-Control-Allow-Origin'] = app.config.get('DOMAIN_NAME', '*')
+            response.headers['Access-Control-Allow-Methods'] = 'GET, OPTIONS'
+            response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization, ngrok-skip-browser-warning'
+            response.headers['Content-Type'] = mime_type
+            return response
+        else:
+            # 如果課程圖片不存在，嘗試從題目圖片目錄查找
+            base_dir = os.path.dirname(os.path.abspath(__file__))
+            question_image_dir = os.path.join(base_dir, 'src', 'picture')
+            question_image_path = os.path.join(question_image_dir, filename)
+            if os.path.exists(question_image_path):
+                response = send_from_directory(question_image_dir, filename, mimetype=mime_type)
+                origin = request.headers.get('Origin', '')
+                if is_allowed_origin(origin):
+                    response.headers['Access-Control-Allow-Origin'] = origin
+                else:
+                    response.headers['Access-Control-Allow-Origin'] = app.config.get('DOMAIN_NAME', '*')
+                response.headers['Access-Control-Allow-Methods'] = 'GET, OPTIONS'
+                response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization, ngrok-skip-browser-warning'
+                response.headers['Content-Type'] = mime_type
+                return response
+            return jsonify({'error': 'Image not found', 'filename': filename}), 404
+            
+    except Exception as e:
+        print(f"❌ 課程圖片服務錯誤: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': 'Image service error', 'message': str(e)}), 500
 
 def check_calendar_notifications():
     """檢查 Redis 中的行事曆通知並發送郵件"""
@@ -231,13 +358,14 @@ with app.app_context():
     sqldb.create_all()
     init_quiz_tables() 
     init_calendar_tables()
-    init_news_table()  # 初始化新聞表 
+    init_news_table()  # 初始化新聞表
+    migrate_news_data()  # 自動遷移 ithome_news.json 到資料庫（若尚未導入）
     scheduler_thread = threading.Thread(target=run_scheduler, daemon=True)
     scheduler_thread.start()
     # 初始化MongoDB數據
     init_mongo_data()
     initialize_mis_teach_db()
-    
+    rename_materials()
     # 自動檢查並插入測試學校資料
     check_and_insert_test_school()
     

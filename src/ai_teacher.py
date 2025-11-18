@@ -125,8 +125,21 @@ def get_quiz_from_database(quiz_ids: List[str]) -> dict:
 
 def _extract_user_answer(user_answer_raw: str) -> str:
     """提取用戶答案的實際內容"""
+    print(f"🔍 _extract_user_answer 輸入: {user_answer_raw[:50]}..." if user_answer_raw else "🔍 _extract_user_answer 輸入: None")
+    
     if not user_answer_raw:
         return '未作答'
+    
+    # 處理 LONG_ANSWER_ 引用
+    if user_answer_raw.startswith('LONG_ANSWER_'):
+        try:
+            from .quiz import _parse_user_answer
+            parsed_answer = _parse_user_answer(user_answer_raw)
+            print(f"✅ LONG_ANSWER_ 解析成功: {parsed_answer[:50]}..." if parsed_answer else "✅ LONG_ANSWER_ 解析成功: None")
+            return parsed_answer
+        except Exception as e:
+            print(f"❌ 解析長答案引用失敗: {e}")
+            return f"[長答案解析錯誤: {user_answer_raw}]"
     
     # 如果是 JSON 格式，提取用戶答案
     if user_answer_raw.startswith('{'):
@@ -166,6 +179,33 @@ def _extract_user_answer(user_answer_raw: str) -> str:
     
     return user_answer_raw
     
+def direct_answer_question(question: str, user_email: str = None) -> str:
+    """
+    直接解答問題 - 使用RAG系統，直接給出答案和解釋
+    不使用引導式教學，不進行評分，不管理學習進度
+    
+    Args:
+        question: 用戶的問題
+        user_email: 用戶email（可選）
+    
+    Returns:
+        str: AI的直接解答
+    """
+    try:
+        if not RAG_AVAILABLE:
+            return "抱歉，AI 直接解答服務暫時不可用。"
+        
+        # 調用RAG系統的直接解答功能
+        from .rag_sys.rag_ai_role import handle_direct_answer
+        return handle_direct_answer(question, user_email)
+            
+    except ImportError as e:
+        logger.error(f"❌ RAG系統導入失敗: {e}")
+        return "抱歉，AI直接解答系統暫時不可用。"
+    except Exception as e:
+        logger.error(f"❌ 直接解答失敗: {e}")
+        return f"抱歉，處理問題時發生錯誤：{str(e)}"
+
 def chat_with_ai(question: str, conversation_type: str = "general", session_id: str = None, request_data: dict = None, auth_token: str = None) -> dict:
     """AI 對話處理 - 簡化版本"""
     try:
@@ -321,6 +361,13 @@ def get_quiz_result_data(result_id: str) -> dict:
                 # 解析用戶答案
                 actual_user_answer = _extract_user_answer(user_answer_raw)
                 
+                print(f"🔍 題目 {question_id_str} 數據:", {
+                    'answer_type': question_obj.get('answer_type', 'single-choice'),
+                    'user_answer_raw': user_answer_raw[:50] + '...' if user_answer_raw else 'None',
+                    'actual_user_answer': actual_user_answer[:50] + '...' if actual_user_answer else 'None',
+                    'is_base64': actual_user_answer.startswith('data:image/') if actual_user_answer else False
+                })
+                
                 question_data = {
                     'question_id': str(question_obj['_id']),
                     'question_text': question_obj.get('question_text', ''),
@@ -328,6 +375,7 @@ def get_quiz_result_data(result_id: str) -> dict:
                     'user_answer': actual_user_answer,
                     'is_correct': is_correct,
                     'is_marked': False,
+                    'type': question_obj.get('answer_type', 'single-choice'),  # 添加題目類型
                     'topic': question_obj.get('topic', '計算機概論'),
                     'difficulty': int(question_obj.get('difficulty', 2)),
                     'options': question_obj.get('options', []),

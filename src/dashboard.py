@@ -421,33 +421,118 @@ def remove_notification_from_redis(event_id: int):
 # ==================== LINE Bot 專用函數 ====================
 
 def get_goals_for_linebot(line_id: str) -> str:
-    """LINE Bot 專用的目標設定函數"""
+    """LINE Bot 專用的目標查看函數"""
     try:
         # 通過 line_id 找到用戶
         user = mongo.db.user.find_one({"lineId": line_id})
         if not user:
             return "❌ 請先綁定您的帳號才能使用目標設定功能！"
         
-        user_email = user.get('email')
         user_name = user.get('name', '同學')
+        learning_goals = user.get('learningGoals', [])
         
-        # 這裡可以調用現有的目標設定邏輯
-        # 暫時返回基本資訊
-        return f"""🎯 目標設定 - {user_name}
+        if learning_goals:
+            goals_text = f"🎯 您的學習目標 - {user_name}\n\n"
+            for i, goal in enumerate(learning_goals, 1):
+                goals_text += f"{i}. {goal}\n"
+            
+            goals_text += f"\n總共 {len(learning_goals)}/10 個目標\n"
+            goals_text += "\n💡 使用「新增目標:目標內容」來新增目標\n"
+            goals_text += "使用「刪除目標:編號」來刪除目標"
+            
+            return goals_text
+        else:
+            return f"""🎯 您的學習目標 - {user_name}
 
 📋 您目前還沒有設定學習目標
 
-💡 建議目標：
+💡 建議目標範例：
 • 每日答題數：10-20 題
 • 每週學習天數：5-7 天
 • 目標掌握度：70% 以上
 • 重點領域：根據弱項設定
 
-📱 請至網站設定您的個人化學習目標！"""
+📱 使用「新增目標:目標內容」來設定您的第一個學習目標！"""
         
     except Exception as e:
-        print(f"❌ LINE Bot 目標設定失敗: {e}")
-        return "❌ 目標設定功能暫時無法使用，請稍後再試。"
+        print(f"❌ LINE Bot 查看目標失敗: {e}")
+        return "❌ 查看目標功能暫時無法使用，請稍後再試。"
+
+def add_goal_for_linebot(line_id: str, goal: str) -> str:
+    """LINE Bot 專用的新增目標函數"""
+    try:
+        # 通過 line_id 找到用戶
+        user = mongo.db.user.find_one({"lineId": line_id})
+        if not user:
+            return "❌ 請先綁定您的帳號才能使用目標設定功能！"
+        
+        user_name = user.get('name', '同學')
+        learning_goals = user.get('learningGoals', [])
+        
+        # 檢查目標數量限制
+        if len(learning_goals) >= 10:
+            return "❌ 最多只能設定 10 個學習目標！\n請先刪除一些目標再新增。"
+        
+        # 檢查目標是否已存在
+        if goal in learning_goals:
+            return f"❌ 目標「{goal}」已經存在了！"
+        
+        # 新增目標
+        learning_goals.append(goal)
+        
+        # 更新到資料庫
+        mongo.db.user.update_one(
+            {"lineId": line_id},
+            {"$set": {"learningGoals": learning_goals}}
+        )
+        
+        return f"✅ 成功新增學習目標！\n\n目標: {goal}\n目前共有 {len(learning_goals)}/10 個目標\n\n使用「查看目標」來查看所有目標"
+        
+    except Exception as e:
+        print(f"❌ LINE Bot 新增目標失敗: {e}")
+        return "❌ 新增目標失敗，請稍後再試。"
+
+def delete_goal_for_linebot(line_id: str, goal_index: int) -> str:
+    """LINE Bot 專用的刪除目標函數"""
+    try:
+        # 通過 line_id 找到用戶
+        user = mongo.db.user.find_one({"lineId": line_id})
+        if not user:
+            return "❌ 請先綁定您的帳號才能使用目標設定功能！"
+        
+        user_name = user.get('name', '同學')
+        learning_goals = user.get('learningGoals', [])
+        
+        # 檢查索引是否有效
+        if not learning_goals:
+            return "❌ 您目前沒有任何學習目標！"
+        
+        # 將索引轉換為 0-based（用戶輸入的是 1-based）
+        actual_index = goal_index - 1
+        
+        if actual_index < 0 or actual_index >= len(learning_goals):
+            return f"❌ 目標編號無效！請輸入 1 到 {len(learning_goals)} 之間的數字。\n\n使用「查看目標」來查看所有目標的編號"
+        
+        # 刪除目標
+        deleted_goal = learning_goals.pop(actual_index)
+        
+        # 更新到資料庫
+        mongo.db.user.update_one(
+            {"lineId": line_id},
+            {"$set": {"learningGoals": learning_goals}}
+        )
+        
+        remaining_count = len(learning_goals)
+        result_text = f"✅ 成功刪除學習目標！\n\n已刪除: {deleted_goal}\n目前共有 {remaining_count}/10 個目標"
+        
+        if remaining_count > 0:
+            result_text += "\n\n使用「查看目標」來查看所有目標"
+        
+        return result_text
+        
+    except Exception as e:
+        print(f"❌ LINE Bot 刪除目標失敗: {e}")
+        return "❌ 刪除目標失敗，請稍後再試。"
 
 @dashboard_bp.route('/dashboard-stats', methods=['POST', 'OPTIONS'])
 @cross_origin()
@@ -634,10 +719,53 @@ def daily_checkin():
             'date': today
         }))
         
-        # 2. 更新 MongoDB student 簽到記錄
-        # 獲取或創建學生的簽到統計
-        student = mongo.db.student.find_one({'email': user_email})
-      
+        # 2. 更新 MongoDB user 簽到記錄
+        # 獲取或創建用戶的簽到統計
+        user = mongo.db.user.find_one({'email': user_email})
+        
+        if user:
+            last_checkin_date = user.get('last_checkin_date', '')
+            checkin_streak = user.get('checkin_streak', 0)
+            
+            # 計算連續簽到天數
+            if last_checkin_date == today:
+                # 今天已經簽到過了（理論上不會發生，因為 Redis 已檢查）
+                new_streak = checkin_streak
+            else:
+                # 檢查是否連續簽到
+                yesterday = (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d')
+                if last_checkin_date == yesterday:
+                    # 連續簽到
+                    new_streak = checkin_streak + 1
+                else:
+                    # 中斷了，重新開始
+                    new_streak = 1
+            
+            # 更新簽到統計
+            mongo.db.user.update_one(
+                {'email': user_email},
+                {
+                    '$set': {
+                        'last_checkin_date': today,
+                        'checkin_streak': new_streak,
+                        'total_checkin_days': user.get('total_checkin_days', 0) + 1
+                    }
+                }
+            )
+        else:
+            # 新用戶，創建簽到記錄
+            new_streak = 1
+            mongo.db.user.update_one(
+                {'email': user_email},
+                {
+                    '$set': {
+                        'last_checkin_date': today,
+                        'checkin_streak': new_streak,
+                        'total_checkin_days': 1
+                    }
+                },
+                upsert=True
+            )
         
         refreshed_token = refresh_token(token)
         return jsonify({
@@ -675,12 +803,12 @@ def get_checkin_status():
         checked_today = redis_client.exists(checkin_key)
         
         # 從 MongoDB 獲取簽到統計
-        student = mongo.db.student.find_one({'email': user_email})
+        user = mongo.db.user.find_one({'email': user_email})
         
-        if student:
-            checkin_streak = student.get('checkin_streak', 0)
-            total_checkin_days = student.get('total_checkin_days', 0)
-            last_checkin_date = student.get('last_checkin_date', '')
+        if user:
+            checkin_streak = user.get('checkin_streak', 0)
+            total_checkin_days = user.get('total_checkin_days', 0)
+            last_checkin_date = user.get('last_checkin_date', '')
         else:
             checkin_streak = 0
             total_checkin_days = 0
@@ -706,7 +834,7 @@ def get_calendar_for_linebot(line_id: str) -> str:
         # 通過 line_id 找到用戶
         user = mongo.db.user.find_one({"lineId": line_id})
         if not user:
-            return "❌ 請先綁定您的帳號才能使用行事曆功能！"
+            return "請先綁定您的帳號才能使用行事曆功能！"
         
         user_email = user.get('email')
         user_name = user.get('name', '同學')
@@ -732,12 +860,17 @@ def get_calendar_for_linebot(line_id: str) -> str:
                 })
         
         if events:
-            calendar_text = f"📅 您的行事曆事件 - {user_name}\n\n"
+            calendar_text = f"您的行事曆事件 - {user_name}\n\n"
             for i, event in enumerate(events, 1):
                 title = event.get('title', '無標題')
                 event_date = event.get('event_date', '')
                 content = event.get('content', '')
                 event_id = event.get('id')
+                
+                # 確保 event_id 存在
+                if event_id is None:
+                    print(f"⚠️ 警告：事件 {i} 沒有 ID，標題：{title}")
+                    event_id = "未知"
                 
                 # 格式化日期
                 try:
@@ -750,23 +883,30 @@ def get_calendar_for_linebot(line_id: str) -> str:
                 except:
                     formatted_date = str(event_date)
                 
-                calendar_text += f"{i}. {title} (ID:{event_id})\n"
+                # 改進顯示格式：讓 ID 更明顯
+                calendar_text += f"{i}. {title}\n"
+                calendar_text += f"   📌 事件ID: {event_id}\n"
                 calendar_text += f"   📅 {formatted_date}\n"
                 if content:
                     calendar_text += f"   📝 {content[:50]}{'...' if len(content) > 50 else ''}\n"
                 calendar_text += "\n"
             
-            calendar_text += "💡 使用「新增事件:標題|內容|日期時間」來新增事件\n"
-            calendar_text += "💡 使用「修改事件:ID|標題|內容|日期時間」來修改事件\n"
-            calendar_text += "💡 使用「刪除事件:ID」來刪除事件"
+            calendar_text += "━━━━━━━━━━━━━━━━━━━━\n"
+            calendar_text += "📋 操作指令：\n"
+            calendar_text += "• 新增事件:標題|內容|日期時間\n"
+            calendar_text += "• 修改事件:ID|標題|內容|日期時間\n"
+            calendar_text += "• 刪除事件:ID\n"
+            calendar_text += "\n💡 提示：每個事件都有唯一的 ID，請記住要操作的 ID 號碼\n"
+            calendar_text += "\n📱 目前顯示最新 10 筆事件\n"
+            calendar_text += "如需查看更多事件，請至網站查看完整行事曆"
         else:
-            calendar_text = f"📅 您的行事曆目前沒有事件 - {user_name}\n\n💡 使用「新增事件:標題|內容|日期時間」來新增您的第一個學習計畫！"
+            calendar_text = f"您的行事曆目前沒有事件 - {user_name}\n\n使用「新增事件:標題|內容|日期時間」來新增您的第一個學習計畫！"
         
         return calendar_text
         
     except Exception as e:
         print(f"❌ LINE Bot 行事曆失敗: {e}")
-        return "❌ 行事曆功能暫時無法使用，請稍後再試。"
+        return "行事曆功能暫時無法使用，請稍後再試。"
 
 def add_calendar_event_for_linebot(line_id: str, title: str, content: str, event_date: str) -> str:
     """LINE Bot 專用的新增行事曆事件函數"""
@@ -774,7 +914,7 @@ def add_calendar_event_for_linebot(line_id: str, title: str, content: str, event
         # 通過 line_id 找到用戶
         user = mongo.db.user.find_one({"lineId": line_id})
         if not user:
-            return "❌ 請先綁定您的帳號才能使用行事曆功能！"
+            return "請先綁定您的帳號才能使用行事曆功能！"
         
         user_email = user.get('email')
         user_name = user.get('name', '同學')
@@ -795,7 +935,7 @@ def add_calendar_event_for_linebot(line_id: str, title: str, content: str, event
             
             formatted_date = event_datetime.strftime('%Y-%m-%d %H:%M:%S')
         except Exception as e:
-            return f"❌ 日期格式錯誤: {event_date}\n💡 請使用格式: 2024-01-01 10:00 或 2024-01-01T10:00"
+            return f"日期格式錯誤: {event_date}\n請使用格式: 2024-01-01 10:00 或 2024-01-01T10:00"
         
         # 新增事件到資料庫
         with sqldb.engine.connect() as conn:
@@ -826,11 +966,11 @@ def add_calendar_event_for_linebot(line_id: str, title: str, content: str, event
         except Exception as e:
             print(f"設置通知失敗: {e}")
         
-        return f"✅ 成功新增行事曆事件！\n\n📅 標題: {title}\n📝 內容: {content or '無'}\n⏰ 時間: {event_datetime.strftime('%Y年%m月%d日 %H:%M')}\n🆔 事件ID: {event_id}\n\n💡 使用「查看行事曆」來查看所有事件"
+        return f"成功新增行事曆事件！\n\n標題: {title}\n內容: {content or '無'}\n時間: {event_datetime.strftime('%Y年%m月%d日 %H:%M')}\n事件ID: {event_id}\n\n使用「查看行事曆」來查看所有事件"
         
     except Exception as e:
         print(f"❌ LINE Bot 新增行事曆事件失敗: {e}")
-        return "❌ 新增行事曆事件失敗，請稍後再試。"
+        return "新增行事曆事件失敗，請稍後再試。"
 
 def update_calendar_event_for_linebot(line_id: str, event_id: int, title: str, content: str, event_date: str) -> str:
     """LINE Bot 專用的修改行事曆事件函數"""
@@ -838,10 +978,49 @@ def update_calendar_event_for_linebot(line_id: str, event_id: int, title: str, c
         # 通過 line_id 找到用戶
         user = mongo.db.user.find_one({"lineId": line_id})
         if not user:
-            return "❌ 請先綁定您的帳號才能使用行事曆功能！"
+            return "請先綁定您的帳號才能使用行事曆功能！"
         
         user_email = user.get('email')
         user_name = user.get('name', '同學')
+        
+        # 如果標題或內容為空，先查詢原始事件
+        original_title = title
+        original_content = content
+        if not title or title.strip() == '' or title.strip().lower() in ['一樣', '一樣的', 'same', '不變', '不改']:
+            with sqldb.engine.connect() as conn:
+                result = conn.execute(text("""
+                    SELECT title, content FROM schedule 
+                    WHERE id = :event_id AND student_email = :student_email
+                """), {
+                    'event_id': event_id,
+                    'student_email': user_email
+                })
+                row = result.fetchone()
+                if row:
+                    original_title = row[0] or title
+                    if not content or content.strip() == '':
+                        original_content = row[1] or ''
+        else:
+            # 如果標題有值但內容為空，查詢原始內容
+            if not content or content.strip() == '':
+                with sqldb.engine.connect() as conn:
+                    result = conn.execute(text("""
+                        SELECT content FROM schedule 
+                        WHERE id = :event_id AND student_email = :student_email
+                    """), {
+                        'event_id': event_id,
+                        'student_email': user_email
+                    })
+                    row = result.fetchone()
+                    if row:
+                        original_content = row[0] or ''
+        
+        # 使用原始值
+        final_title = original_title if original_title else title
+        final_content = original_content if original_content else content
+        
+        if not final_title or final_title.strip() == '':
+            return "標題為必填欄位！"
         
         # 格式化日期時間
         try:
@@ -859,7 +1038,7 @@ def update_calendar_event_for_linebot(line_id: str, event_id: int, title: str, c
             
             formatted_date = event_datetime.strftime('%Y-%m-%d %H:%M:%S')
         except Exception as e:
-            return f"❌ 日期格式錯誤: {event_date}\n💡 請使用格式: 2024-01-01 10:00 或 2024-01-01T10:00"
+            return f"日期格式錯誤: {event_date}\n請使用格式: 2024-01-01 10:00 或 2024-01-01T10:00"
         
         # 更新事件
         with sqldb.engine.connect() as conn:
@@ -869,8 +1048,8 @@ def update_calendar_event_for_linebot(line_id: str, event_id: int, title: str, c
                     updated_at = CURRENT_TIMESTAMP, notify_enabled = :notify_enabled
                 WHERE id = :event_id AND student_email = :student_email
             """), {
-                'title': title,
-                'content': content or '',
+                'title': final_title,
+                'content': final_content or '',
                 'event_date': formatted_date,
                 'event_id': event_id,
                 'student_email': user_email,
@@ -878,7 +1057,7 @@ def update_calendar_event_for_linebot(line_id: str, event_id: int, title: str, c
             })
             
             if result.rowcount == 0:
-                return f"❌ 找不到事件ID {event_id} 或您沒有權限修改此事件"
+                return f"找不到事件ID {event_id} 或您沒有權限修改此事件"
             
             conn.commit()
         
@@ -888,19 +1067,19 @@ def update_calendar_event_for_linebot(line_id: str, event_id: int, title: str, c
             setup_event_notification(
                 student_email=user_email,
                 event_id=event_id,
-                title=title,
-                content=content or '',
+                title=final_title,
+                content=final_content or '',
                 event_date=formatted_date,
                 user_id=line_id  # 添加 LINE 用戶 ID
             )
         except Exception as e:
             print(f"更新通知失敗: {e}")
         
-        return f"✅ 成功修改行事曆事件！\n\n📅 標題: {title}\n📝 內容: {content or '無'}\n⏰ 時間: {event_datetime.strftime('%Y年%m月%d日 %H:%M')}\n🆔 事件ID: {event_id}\n\n💡 使用「查看行事曆」來查看所有事件"
+        return f"成功修改行事曆事件！\n\n標題: {final_title}\n內容: {final_content or '無'}\n時間: {event_datetime.strftime('%Y年%m月%d日 %H:%M')}\n事件ID: {event_id}\n\n使用「查看行事曆」來查看所有事件"
         
     except Exception as e:
         print(f"❌ LINE Bot 修改行事曆事件失敗: {e}")
-        return "❌ 修改行事曆事件失敗，請稍後再試。"
+        return "修改行事曆事件失敗，請稍後再試。"
 
 def delete_calendar_event_for_linebot(line_id: str, event_id: int) -> str:
     """LINE Bot 專用的刪除行事曆事件函數"""
@@ -908,7 +1087,7 @@ def delete_calendar_event_for_linebot(line_id: str, event_id: int) -> str:
         # 通過 line_id 找到用戶
         user = mongo.db.user.find_one({"lineId": line_id})
         if not user:
-            return "❌ 請先綁定您的帳號才能使用行事曆功能！"
+            return "請先綁定您的帳號才能使用行事曆功能！"
         
         user_email = user.get('email')
         user_name = user.get('name', '同學')
@@ -936,9 +1115,9 @@ def delete_calendar_event_for_linebot(line_id: str, event_id: int) -> str:
         # 從 Redis 移除通知
         remove_notification_from_redis(event_id)
         
-        return f"✅ 成功刪除行事曆事件！\n\n📅 已刪除: {event_info[0]}\n🆔 事件ID: {event_id}\n\n💡 使用「查看行事曆」來查看剩餘事件"
+        return f"成功刪除行事曆事件！\n\n已刪除: {event_info[0]}\n事件ID: {event_id}\n\n使用「查看行事曆」來查看剩餘事件"
         
     except Exception as e:
         print(f"❌ LINE Bot 刪除行事曆事件失敗: {e}")
-        return "❌ 刪除行事曆事件失敗，請稍後再試。"
+        return "刪除行事曆事件失敗，請稍後再試。"
 

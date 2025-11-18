@@ -1244,21 +1244,55 @@ def _parse_quiz_requirements(text: str) -> dict:
     
     # 檢測題目數量
     import re
-    # 支援多種題目數量表達方式：1題、1提、1道、1個等
-    count_patterns = [
-        r'(\d+)題',  # 1題
-        r'(\d+)提',  # 1提
-        r'(\d+)道',  # 1道
-        r'(\d+)個',  # 1個
-        r'(\d+)條',  # 1條
-        r'(\d+)項',  # 1項
-    ]
     
-    for pattern in count_patterns:
-        count_match = re.search(pattern, text)
-        if count_match:
-            requirements['question_count'] = int(count_match.group(1))
-            break
+    # 先支援中文數字（如「十題」「十五題」「二十題」）
+    def chinese_numeral_to_int(s: str) -> int:
+        mapping = {"零":0, "〇":0, "一":1, "二":2, "兩":2, "三":3, "四":4, "五":5, "六":6, "七":7, "八":8, "九":9}
+        unit = {"十":10, "百":100, "千":1000, "萬":10000}
+        total = 0
+        num = 0
+        last_unit = 1
+        i = 0
+        while i < len(s):
+            ch = s[i]
+            if ch in mapping:
+                num = mapping[ch]
+                i += 1
+            elif ch in unit:
+                u = unit[ch]
+                if num == 0:
+                    num = 1  # 如「十」= 10
+                total += num * u
+                num = 0
+                last_unit = u
+                i += 1
+            else:
+                i += 1
+        return total + num
+
+    zh_match = re.search(r'([零〇一二兩三四五六七八九十百千萬]+)\s*(題|提|道|個|條|項)', text)
+    if zh_match:
+        try:
+            cnt = chinese_numeral_to_int(zh_match.group(1))
+            if cnt > 0:
+                requirements['question_count'] = cnt
+        except Exception:
+            pass
+    else:
+        # 支援阿拉伯數字表達方式：1題、1提、1道、1個等
+        count_patterns = [
+            r'(\d+)題',  # 1題
+            r'(\d+)提',  # 1提
+            r'(\d+)道',  # 1道
+            r'(\d+)個',  # 1個
+            r'(\d+)條',  # 1條
+            r'(\d+)項',  # 1項
+        ]
+        for pattern in count_patterns:
+            count_match = re.search(pattern, text)
+            if count_match:
+                requirements['question_count'] = int(count_match.group(1))
+                break
     
     # 檢測考古題
     schools = ['台大', '清大', '交大', '成大', '政大', '中央', '中興', '中山', '中正', '台科大']

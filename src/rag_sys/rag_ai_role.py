@@ -136,7 +136,11 @@ TEACHER_STYLE = """你是一位經驗豐富的資管系教授，正在一對一�
 - 根據評分給出相應的引導問題或進入下一階段
 - 當評分達到90分時，進入反向教導階段，要求學生用自己的話向AI解釋題目和答案
 - 在反向教導階段，AI要不斷修正學生說錯或理解錯的地方，直到達到99分
-- 嚴禁使用任何格式化標題，直接以自然段落呈現內容
+- **格式要求**：可以使用Markdown格式來增強可讀性：
+  - 使用 **粗體** 標記重點概念或關鍵詞
+  - 使用換行來分隔不同段落，讓內容更清晰
+  - 重要的步驟或要點可以用空行分隔
+  - 語氣要自然流暢，像在跟學生聊天一樣
 
 **學習評估標準**：
 - 學生能用自己的話解釋題目核心概念
@@ -148,6 +152,57 @@ TEACHER_STYLE = """你是一位經驗豐富的資管系教授，正在一對一�
 """
 
 # ==================== 核心功能 ====================
+
+def handle_direct_answer(question: str, user_email: str = None) -> str:
+    """
+    直接解答問題 - 使用RAG檢索相關知識，直接給出答案和解釋
+    不使用引導式教學，不進行評分，不管理學習進度
+    
+    Args:
+        question: 用戶的問題
+        user_email: 用戶email（可選，用於日誌記錄）
+    
+    Returns:
+        str: 直接給出的答案和詳細解釋
+    """
+    try:
+        logger.info(f"📝 開始直接解答問題: {question[:50]}...")
+        
+        # 構建直接解答的提示詞
+        direct_answer_prompt = f"""你是一位資管系教授，負責直接解答學生的問題。
+
+**你的任務**：
+- 直接回答問題，不需要引導式提問
+- 提供清晰、完整的解釋
+- 如果問題涉及計算或步驟，詳細說明過程
+- 語氣親切自然，但要直接明確
+- 可以使用Markdown格式來增強可讀性（粗體、換行等）
+
+**問題**：
+{question}
+
+請直接給出答案和詳細解釋："""
+
+        # 使用RAG增強提示詞（檢索相關知識）
+        enhanced_prompt = enhance_prompt_with_knowledge(direct_answer_prompt, question)
+        logger.info(f"📚 RAG增強後的提示詞長度: {len(enhanced_prompt)} 字符")
+        
+        # 調用AI獲取回應
+        ai_response = call_gemini_api(enhanced_prompt)
+        
+        # 檢查回應是否有效
+        if not ai_response or not ai_response.strip():
+            logger.warning(f"⚠️ AI回應為空，問題: {question[:50]}...")
+            return "抱歉，AI無法生成回答。請重新提問或稍後再試。"
+        
+        logger.info(f"✅ 成功生成直接解答，回應長度: {len(ai_response)} 字符")
+        
+        # 直接返回回應（不需要清理評分等，因為直接解答不會有評分）
+        return ai_response.strip()
+            
+    except Exception as e:
+        logger.error(f"❌ 直接解答失敗: {e}", exc_info=True)
+        return f"抱歉，處理問題時發生錯誤：{str(e)}"
 
 def handle_tutoring_conversation(user_email: str, question: str, user_answer: str, correct_answer: str, user_input: str = None, grading_feedback: dict = None) -> dict:
     """
@@ -187,11 +242,19 @@ def handle_tutoring_conversation(user_email: str, question: str, user_answer: st
         conversation_history.append({"role": "assistant", "content": clean_response})
         session['conversation_history'] = conversation_history
         
-        # 8. 更新學習進度（只在非初始化階段）
-        if not is_initial:
-            update_learning_progress(session, question, ai_response, conversation_history)
+        # 8. 更新學習進度
+        # 判斷邏輯：如果有 user_input，說明這是用戶的回答，應該更新評分
+        # 初始化階段（is_initial = True）只有 AI 回應，沒有用戶輸入，所以跳過
+        raw_score = None
+        if user_input:  # 如果有用戶輸入，說明用戶回答了問題，應該評分
+            raw_score = extract_score_from_response(ai_response)
+            if raw_score is not None:
+                print(f"📊 用戶回答後，提取到AI評分：{raw_score}分，開始更新學習進度")
+                update_learning_progress(session, question, ai_response, conversation_history)
+            else:
+                print(f"⚠️ 用戶回答後未能提取評分，跳過學習進度更新")
         else:
-            print(f"🎯 初始化階段，跳過評分更新")
+            print(f"🎯 初始化階段（無用戶輸入），跳過評分更新")
         
         # 9. 保存會話到全局字典（使用與 get_or_create_session 相同的邏輯）
         clean_question = question.strip().replace('\n', ' ').replace('\r', ' ')
@@ -204,12 +267,18 @@ def handle_tutoring_conversation(user_email: str, question: str, user_answer: st
         # 保存到文件以確保持久化
         #save_sessions_to_file()
         
-        # 9. 返回結果
+        # 10. 計算對話次數
+        conversation_count = (len(conversation_history) - 1) // 2
+        
+        # 11. 返回結果 - 優化版本，包含更多信息
         return {
             'response': clean_response,
+            'raw_score': raw_score,  # AI 原始評分（可能為 None）
+            'smart_score': session.get('understanding_level', 0),  # 智能評分後的結果
             'learning_stage': session.get('learning_stage', 'core_concept_confirmation'),
-            'understanding_level': session.get('understanding_level', 0),
-            'concept_progress': session.get('concept_progress', [])
+            'concept_progress': session.get('concept_progress', []),
+            'conversation_count': conversation_count,
+            'is_initial': is_initial
         }
         
     except Exception as e:
@@ -234,26 +303,33 @@ def update_learning_progress(session: dict, question: str, ai_response: str, con
             return
         
         # 2. 計算對話次數
-        # 對話歷史格式：user, assistant, user, assistant, ...
-        # 所以對話次數 = (總長度 - 1) // 2（減1是因為最後一條是AI回應）
-        conversation_count = (len(conversation_history) - 1) // 2
-
+        # 對話歷史格式：assistant（初始）, user, assistant, user, assistant, ...
+        # 計算實際的對話輪數：統計 user 角色的數量
+        user_count = sum(1 for msg in conversation_history if msg.get('role') == 'user')
+        conversation_count = user_count
         
-        # 3. 智能評分計算
+        # 3. 獲取當前階段（在計算評分前）
         old_level = session.get('understanding_level', 0)
-        smart_score = calculate_smart_score(old_level, score, conversation_count)
-        session['understanding_level'] = smart_score
-
-        
-        # 4. 更新學習階段
         old_stage = session.get('learning_stage', 'core_concept_confirmation')
+        
+        # 調試信息（在old_level定義後）
+        print(f"📊 計算對話次數：對話歷史長度={len(conversation_history)}, user數量={user_count}, conversation_count={conversation_count}")
+        print(f"📊 當前分數：{old_level}, AI評分：{score}")
+        
+        # 4. 智能評分計算（傳入當前階段和session，確保不跳階段並支援強制完成）
+        # 注意：傳入當前的AI原始評分，用於強制完成判斷
+        smart_score = calculate_smart_score(old_level, score, conversation_count, old_stage, session)
+        session['understanding_level'] = smart_score
+        
+        
+        # 5. 更新學習階段（基於新分數）
         new_stage = determine_learning_stage(smart_score)
         session['learning_stage'] = new_stage
         
         if old_stage != new_stage:
             print(f"🔄 學習階段更新：{old_stage} → {new_stage}")
         
-        # 5. 記錄進度
+        # 6. 記錄進度（在計算smart_score之後記錄，這樣下次計算時可以參考）
         record_progress(session, score, smart_score, new_stage)
         
         # 6. 保存更新後的會話
@@ -263,31 +339,147 @@ def update_learning_progress(session: dict, question: str, ai_response: str, con
     except Exception as e:
         logger.error(f"❌ 學習進度更新失敗: {e}")
 
-def calculate_smart_score(current_score: int, ai_score: int, conversation_count: int = 0) -> int:
+def calculate_smart_score(current_score: int, ai_score: int, conversation_count: int = 0, current_stage: str = None, session: dict = None) -> int:
     """
-    智能評分計算 - 實現新的評分邏輯
+    智能評分計算 - 不限制加分版本，帶強制完成機制
+    確保每個階段都被經歷過，避免直接跳階段
+    在理解驗證階段，如果持續表現良好，自動提升到99分
     """
     try:
-
+        # 定義階段分數範圍（每個階段的上限 = 下一階段下限 - 1）
+        # 最後一個階段（理解驗證）包含99分，因為99分是完成標記
+        stage_ranges = {
+            'core_concept_confirmation': (0, 39),      # 核心概念確認：0-39分
+            'related_concept_guidance': (40, 69),     # 相關概念引導：40-69分
+            'application_understanding': (70, 89),    # 應用理解：70-89分
+            'understanding_verification': (90, 98),   # 理解驗證：90-98分（可通過機制達到99分）
+            'completed': (99, 99)                      # 完成：99分（狀態標記）
+        }
+        
         # 初始化階段：不給分數
         if conversation_count == 0:
             return 0
         
-        # 第一個問題：給予基礎評分 0-95
         elif conversation_count == 1:
-            base_score = min(95, max(0, ai_score))
-            return base_score
-        
-        # 後續問題：基於當前分數給予加分
-        else:
-            if ai_score > current_score:
-                bonus = min(10, ai_score - current_score)
-                new_score = min(95, current_score + bonus)
-                return new_score
+            # 第一個問題回答：根據AI評分調整為合理範圍（0-30分）
+            # 將AI評分映射到0-30分的範圍，作為初始評分
+            # 例如：85分 -> 30分，60分 -> 20分，30分 -> 10分
+            if ai_score >= 80:
+                initial_score = 30  # 高分映射到30分
+            elif ai_score >= 60:
+                initial_score = 20  # 中等分映射到20分
+            elif ai_score >= 40:
+                initial_score = 15  # 偏低分映射到15分
+            elif ai_score >= 20:
+                initial_score = 10  # 低分映射到10分
             else:
-                penalty = min(2, current_score - ai_score)
-                new_score = max(0, current_score - penalty)
+                initial_score = 5   # 很低分映射到5分
+            
+            print(f"✅ 第一個問題回答（conversation_count=1），AI評分{ai_score}分，調整為初始評分{initial_score}分")
+            print(f"📊 當前分數：{current_score} -> 新分數：{initial_score}")
+            return initial_score
+        
+        # 之後的邏輯完全基於階段，不依賴對話次數
+        # 根據當前分數確定當前階段（如果未提供）
+        if not current_stage:
+            if current_score >= 90:
+                current_stage = 'understanding_verification'
+            elif current_score >= 70:
+                current_stage = 'application_understanding'
+            elif current_score >= 40:
+                current_stage = 'related_concept_guidance'
+            else:
+                current_stage = 'core_concept_confirmation'
+        
+        # 獲取當前階段的範圍
+        stage_min, stage_max = stage_ranges.get(current_stage, (0, 99))
+        
+        print(f"📊 當前階段：{current_stage}，階段範圍：{stage_min}-{stage_max}，當前分數：{current_score}，AI評分：{ai_score}")
+        
+        if ai_score > current_score:
+            # AI 評分更高：不限制加分，但不超過當前階段上限
+            # 特殊處理：理解驗證階段的強制完成機制
+            if current_stage == 'understanding_verification':
+                # 方案1：如果AI直接給99分，允許達到99分
+                if ai_score >= 99:
+                    print(f"🎯 AI評分99分，直接完成")
+                    return 99
+                
+                # 方案2：如果達到98分且AI評分>=95，直接提升到99分
+                if current_score >= 98 and ai_score >= 95:
+                    print(f"🎯 達到98分且AI評分{ai_score}分，自動提升到99分（完成）")
+                    return 99
+                
+                # 方案3：如果當前分數>=97分且AI評分>=95分，自動提升到99分（強制完成）
+                if current_score >= 97 and ai_score >= 95:
+                    print(f"🎯 理解驗證階段高分表現（當前{current_score}分，AI評{ai_score}分），自動提升到99分（完成）")
+                    return 99
+                
+                # 方案4：追蹤高分成績，如果連續多次高分，自動完成
+                if session:
+                    concept_progress = session.get('concept_progress', [])
+                    # 檢查最近在理解驗證階段的原始AI評分
+                    recent_scores = [
+                        p.get('score', 0) for p in concept_progress 
+                        if p.get('stage') == 'understanding_verification'
+                    ][-2:]  # 最近2次（不包括當前這次，因為還沒記錄）
+                    
+                    # 如果最近2次AI原始評分都>=95分，且當前也>=95分，自動提升到99分
+                    if len(recent_scores) >= 2 and all(s >= 95 for s in recent_scores) and ai_score >= 95:
+                        print(f"🎯 理解驗證階段連續多次高分（歷史{recent_scores}，當前AI評{ai_score}分），自動提升到99分（完成）")
+                        return 99
+                    
+                    # 方案5：如果在理解驗證階段停留時間過長且表現良好，自動完成
+                    # 統計在理解驗證階段的對話次數
+                    verification_count = len([
+                        p for p in concept_progress 
+                        if p.get('stage') == 'understanding_verification'
+                    ])
+                    
+                    # 如果在理解驗證階段已經有3次以上對話，且當前分數>=95，AI評分>=95，自動完成
+                    if verification_count >= 3 and current_score >= 95 and ai_score >= 95:
+                        print(f"🎯 理解驗證階段已進行{verification_count}次對話，表現良好（當前{current_score}分，AI評{ai_score}分），自動提升到99分（完成）")
+                        return 99
+            
+            # 一般情況：基於當前階段推進
+            # 如果還沒達到當前階段上限，在階段範圍內提升
+            if current_score < stage_max:
+                new_score = min(stage_max, ai_score)
+                new_score = max(current_score, new_score)
+                print(f"✅ 當前階段{current_stage}內提升：{current_score} -> {new_score}（階段上限：{stage_max}）")
                 return new_score
+            
+            # 如果已經達到當前階段上限，且AI評分更高，進入下一個階段（不能跳階段）
+            elif current_score >= stage_max and ai_score > stage_max:
+                # 已達到階段上限，只允許進入下一個階段（逐步推進）
+                stage_order = ['core_concept_confirmation', 'related_concept_guidance', 'application_understanding', 'understanding_verification', 'completed']
+                current_index = stage_order.index(current_stage) if current_stage in stage_order else 0
+                
+                # 只進入下一個階段，不能跳階段
+                if current_index < len(stage_order) - 1:
+                    next_stage = stage_order[current_index + 1]
+                    # 獲取下一個階段的範圍
+                    next_min, next_max = stage_ranges.get(next_stage, (0, 99))
+                    
+                    # 進入下一個階段時，分數應該是下一個階段的最小值或AI評分（取較高者，但不超過階段上限）
+                    # 例如：從39分（核心概念確認上限）進入下一個階段，應該至少40分（相關概念引導最小值）
+                    new_score = max(next_min, min(next_max, ai_score))
+                    print(f"🎯 達到階段上限{stage_max}分（{current_stage}），AI評{ai_score}分，進入下一個階段{next_stage}，新分數：{new_score}分（範圍：{next_min}-{next_max}）")
+                    return new_score
+                else:
+                    # 已經是最後階段，直接返回階段上限
+                    print(f"🎯 已達最後階段{current_stage}上限{stage_max}分，AI評{ai_score}分，保持{stage_max}分")
+                    return stage_max
+            else:
+                # 已經達到階段上限，但AI評分沒有更高，保持當前分數
+                print(f"⚠️ 已達階段上限{stage_max}分，AI評{ai_score}分 <= 當前{current_score}分，保持當前分數")
+                return current_score
+        else:
+            # AI 評分更低：給予扣分（但扣分幅度較小），確保不低於階段最小值
+            penalty = min(2, current_score - ai_score)
+            new_score = max(stage_min, current_score - penalty)
+            print(f"⚠️ AI評分{ai_score}分 <= 當前{current_score}分，扣分後：{new_score}分（階段範圍：{stage_min}-{stage_max}）")
+            return new_score
             
     except Exception as e:
         logger.error(f"❌ 智能評分計算失敗: {e}")
@@ -577,22 +769,30 @@ def build_followup_prompt(question: str, user_answer: str, correct_answer: str, 
 3. 達到95分時：進入反向教導階段
 4. 反向教導完成：直接給出100分
 
-**重要提醒：**
-- 你必須在回應的最後給出評分，格式為「評分：[分數]分」
+**⚠️ 強制評分要求（必須遵守）：**
+- **必須**在回應的最後一行給出評分
+- **必須**使用格式：「評分：[分數]分」（例如：評分：85分）
 - 評分範圍：0-100分
 - 根據學生回答的質量給予適當分數
-- 這是強制要求，必須遵守！
-- 如果沒有評分，系統將無法正常工作！
+- **如果沒有評分，系統將無法正常工作！**
+- **即使學生回答正確或表現優秀，也必須給出評分！**
 
-**評分格式示例：**
-同學，你的回答很好！讓我們繼續深入探討...
+**評分邏輯指南：**
+- 如果學生回答正確或理解正確：給予高分（70-95分）
+- 如果學生回答部分正確：給予中等分數（40-69分）
+- 如果學生回答錯誤但顯示思考：給予基礎分數（20-39分）
+- 如果學生完全理解錯誤：給予低分（0-19分）
 
-評分：85分
+**評分格式示例（必須照此格式）：**
+同學，你的分析非常詳細！你正確指出了這個操作在特定情況下會為0。
 
-**再次強調：**
-- 回應的最後必須包含「評分：[分數]分」
-- 這是系統運作的必要條件
-- 請嚴格遵守評分格式要求！
+評分：90分
+
+**最後再次強調：**
+- 回應的最後一行**必須**是「評分：[數字]分」
+- 不要使用其他格式，如「得分：XX」或「分數：XX」
+- 必須使用中文冒號「：」和「分」字
+- 這是系統運作的必要條件，**絕對不能省略！**
 
 請現在分析學生的回答並提供教學指導："""
 
@@ -609,17 +809,17 @@ def format_conversation_history(conversation_history: list) -> str:
     return formatted
 
 def determine_learning_stage(understanding_level: int) -> str:
-    """根據理解程度確定學習階段"""
-    if understanding_level >= 95:
-        return 'understanding_verification'      # 反向教導
-    elif understanding_level >= 80:
-        return 'application_understanding'       # 應用理解
-    elif understanding_level >= 60:
-        return 'application_understanding'       # 應用理解
-    elif understanding_level >= 30:
-        return 'related_concept_guidance'        # 相關概念引導
+    """根據理解程度確定學習階段 - 優化版本"""
+    if understanding_level >= 99:
+        return 'completed'                       # 完成階段（99分）
+    elif understanding_level >= 90:
+        return 'understanding_verification'      # 反向教導（90-98分，可達到99分）
+    elif understanding_level >= 70:
+        return 'application_understanding'       # 應用理解（70-89分）
+    elif understanding_level >= 40:
+        return 'related_concept_guidance'        # 相關概念引導（40-69分）
     else:
-        return 'core_concept_confirmation'       # 核心概念確認
+        return 'core_concept_confirmation'       # 核心概念確認（0-39分）
 
 def get_stage_guidance(stage: str) -> str:
     """根據學習階段提供指導"""
@@ -646,11 +846,15 @@ def get_stage_guidance(stage: str) -> str:
 - 如果學生應用正確，可以進入理解驗證階段
 """,
         'understanding_verification': f"""
-您目前處於理解驗證階段。請：
+您目前處於理解驗證階段（反向教導）。請：
 - 要求學生用自己的話重新解釋題目和答案
 - 評估學生是否真正理解了題目和答案的邏輯
-- 如果學生解釋清楚，可以進入下一題或下一階段
 - 如果學生解釋不清楚，你直接給出正確答案，幫助學生更加理解題目跟答案
+- 持續修正學生的錯誤和知識盲點，直到達到 99 分
+""",
+        'completed': f"""
+恭喜！學生已經完全理解這道題目，達到 99 分。
+可以進入下一題了。
 """
     }
     
@@ -663,6 +867,7 @@ def get_stage_display_name(stage: str) -> str:
         'related_concept_guidance': '相關概念引導',
         'application_understanding': '應用理解',
         'understanding_verification': '理解驗證',
+        'completed': '學習完成',
         'unknown': '未知階段'
     }
     return stage_names.get(stage, stage)
@@ -682,10 +887,14 @@ def record_progress(session: dict, score: int, smart_score: int, stage: str):
 def extract_score_from_response(ai_response: str) -> int:
     """從AI回應中提取評分"""
     try:
-        # 尋找評分格式：評分：[分數]分
+        # 尋找評分格式：評分：[分數]分（支援多種格式）
         score_patterns = [
-            r'評分[：:]\s*(\d+)分',
-            r'評分[：:]\s*(\d+)',
+            r'評分[：:]\s*(\d+)\s*分',  # 評分：85分 或 評分: 85分
+            r'評分[：:]\s*(\d+)',        # 評分：85
+            r'評分[為是]\s*(\d+)\s*分',  # 評分為85分 或 評分是85分
+            r'得分[：:]\s*(\d+)\s*分',  # 得分：85分
+            r'分數[：:]\s*(\d+)\s*分',  # 分數：85分
+            r'(\d+)\s*分\s*$',           # 最後一行的「85分」
             r'分數[：:]\s*(\d+)分',
             r'分數[：:]\s*(\d+)',
             r'(\d+)分',
@@ -698,31 +907,45 @@ def extract_score_from_response(ai_response: str) -> int:
             r'分數[：:]\s*(\d+)'
         ]
         
-        for i, pattern in enumerate(score_patterns):
-            match = re.search(pattern, ai_response)
+        # 優先檢查回應的最後幾行（評分通常在最後）
+        lines = ai_response.strip().split('\n')
+        last_lines = '\n'.join(lines[-5:]) if len(lines) > 5 else ai_response  # 檢查最後5行
+        
+        # 如果找到評分，返回分數
+        for pattern in score_patterns:
+            # 先檢查最後幾行（更準確）
+            match = re.search(pattern, last_lines, re.IGNORECASE | re.MULTILINE)
+            if not match:
+                # 如果最後幾行沒找到，檢查全文
+                match = re.search(pattern, ai_response, re.IGNORECASE | re.MULTILINE)
+            
             if match:
                 score = int(match.group(1))
+                # 確保分數在合理範圍內
                 if 0 <= score <= 100:
+                    logger.info(f"✅ 成功提取評分：{score}分（模式匹配）")
                     return score
                 else:
-                    print(f"⚠️ 評分超出範圍：{score}")
+                    logger.warning(f"⚠️ 提取到異常評分：{score}，超出0-100範圍")
+                    continue  # 繼續嘗試其他模式
         
-        print(f"❌ 未找到任何評分格式")
-        numbers = re.findall(r'\d+', ai_response)
+        # 如果所有模式都沒匹配到，記錄詳細警告
+        logger.warning(f"⚠️ 未能從AI回應中提取評分")
+        logger.warning(f"   回應長度：{len(ai_response)}字符")
+        logger.warning(f"   最後200字符：{ai_response[-200:]}")
         
-        # 如果沒有找到評分，嘗試從最後幾行中尋找
-        lines = ai_response.strip().split('\n')
-        last_lines = lines[-3:] if len(lines) >= 3 else lines
-        
-        for line in reversed(last_lines):
-            if '評分' in line or '分數' in line:
+        # 作為備用方案，嘗試從最後幾行提取數字
+        for line in reversed(lines[-3:] if len(lines) >= 3 else lines):
+            if '評分' in line or '分數' in line or '得分' in line:
                 # 嘗試提取數字
                 numbers_in_line = re.findall(r'\d+', line)
                 if numbers_in_line:
                     score = int(numbers_in_line[0])
                     if 0 <= score <= 100:
+                        logger.info(f"✅ 備用方案提取評分：{score}分（從行：{line[:50]}）")
                         return score
         
+        logger.error(f"❌ 完全無法提取評分，回應內容：{ai_response[-300:]}")
         return None
         
     except Exception as e:
@@ -787,36 +1010,119 @@ def call_gemini_api(prompt: str) -> str:
         
         # 設置生成參數，確保回應完整
         generation_config = {
-            'max_output_tokens': 4000,  # 增加最大輸出長度
+            'max_output_tokens': 8192,  # 增加最大輸出長度，確保完整回答（特別是錯題解析）
             'temperature': 0.7,
             'top_p': 0.8,
             'top_k': 40
         }
         
         response = model.generate_content(prompt, generation_config=generation_config)
+        logger.info(f"📥 Gemini API回應接收，類型: {type(response).__name__}")
         
         # 檢查回應是否有效
-        if not response or not hasattr(response, 'text'):
+        if not response:
+            logger.error("❌ Gemini API返回空回應")
             return "抱歉，AI回應格式不正確，請稍後再試。"
         
-        # 檢查安全評級
-        if hasattr(response, 'candidates') and response.candidates:
-            candidate = response.candidates[0]
-            if hasattr(candidate, 'safety_ratings') and candidate.safety_ratings:
-                # 檢查是否有安全問題
-                for rating in candidate.safety_ratings:
-                    if rating.category in ['HARM_CATEGORY_HARASSMENT', 'HARM_CATEGORY_HATE_SPEECH', 
-                                         'HARM_CATEGORY_SEXUALLY_EXPLICIT', 'HARM_CATEGORY_DANGEROUS_CONTENT']:
-                        if rating.probability in ['HIGH', 'MEDIUM']:
-                            return "抱歉，AI回應被安全過濾器阻擋，請稍後再試。"
+        # 檢查是否為新版SDK的響應結構（可能是GenerateContentResponse或類似）
+        # 新版SDK可能直接有text屬性或者需要從candidates中提取
         
-        # 安全地存取回應文字
+        # 方法1：直接檢查text屬性（舊版SDK和某些新版SDK）
         try:
-            return response.text
-        except Exception as text_error:
-            logger.error(f"無法存取回應文字: {text_error}")
-            return "抱歉，無法存取AI回應，請稍後再試。"
+            if hasattr(response, 'text'):
+                text = response.text
+                if text and text.strip():
+                    logger.info(f"✅ 從response.text獲取回應，長度: {len(text)} 字符")
+                    return text.strip()
+        except Exception as e:
+            logger.debug(f"無法從response.text獲取: {e}")
+        
+        # 方法2：檢查candidates（新版和舊版SDK都可能使用）
+        try:
+            if hasattr(response, 'candidates') and response.candidates:
+                candidate = response.candidates[0]
+                
+                # 檢查是否被阻止
+                finish_reason = None
+                if hasattr(candidate, 'finish_reason'):
+                    finish_reason = candidate.finish_reason
+                elif isinstance(candidate, dict):
+                    finish_reason = candidate.get('finish_reason')
+                
+                if finish_reason == 'SAFETY':
+                    logger.warning("⚠️ 回應被安全過濾器阻止")
+                    return "抱歉，AI回應被安全過濾器阻擋，請稍後再試。"
+                
+                # 檢查安全評級
+                safety_ratings = None
+                if hasattr(candidate, 'safety_ratings') and candidate.safety_ratings:
+                    safety_ratings = candidate.safety_ratings
+                elif isinstance(candidate, dict) and 'safety_ratings' in candidate:
+                    safety_ratings = candidate['safety_ratings']
+                
+                if safety_ratings:
+                    for rating in safety_ratings:
+                        category = rating.category if hasattr(rating, 'category') else rating.get('category', '')
+                        probability = rating.probability if hasattr(rating, 'probability') else rating.get('probability', '')
+                        if category in ['HARM_CATEGORY_HARASSMENT', 'HARM_CATEGORY_HATE_SPEECH', 
+                                     'HARM_CATEGORY_SEXUALLY_EXPLICIT', 'HARM_CATEGORY_DANGEROUS_CONTENT']:
+                            if probability in ['HIGH', 'MEDIUM']:
+                                logger.warning(f"⚠️ 安全評級阻止：{category} = {probability}")
+                                return "抱歉，AI回應被安全過濾器阻擋，請稍後再試。"
+                
+                # 從content.parts中提取文字（新版SDK常用）
+                content = None
+                if hasattr(candidate, 'content'):
+                    content = candidate.content
+                elif isinstance(candidate, dict) and 'content' in candidate:
+                    content = candidate['content']
+                
+                if content:
+                    parts = None
+                    if hasattr(content, 'parts'):
+                        parts = content.parts
+                    elif isinstance(content, dict) and 'parts' in content:
+                        parts = content['parts']
+                    
+                    if parts:
+                        text_parts = []
+                        for part in parts:
+                            part_text = None
+                            if hasattr(part, 'text'):
+                                part_text = part.text
+                            elif isinstance(part, dict) and 'text' in part:
+                                part_text = part['text']
+                            elif isinstance(part, str):
+                                part_text = part
+                            
+                            if part_text:
+                                text_parts.append(str(part_text))
+                        
+                        if text_parts:
+                            full_text = ''.join(text_parts).strip()
+                            if full_text:
+                                logger.info(f"✅ 從candidates.content.parts獲取回應，長度: {len(full_text)} 字符")
+                                return full_text
+        except Exception as e:
+            logger.debug(f"無法從candidates提取: {e}")
+        
+        # 方法3：嘗試將回應轉為字符串（某些情況下可能直接是字符串）
+        try:
+            response_str = str(response)
+            if response_str and response_str.strip() and len(response_str) > 10:  # 避免只是類型名稱
+                logger.info(f"✅ 從字符串轉換獲取回應，長度: {len(response_str)} 字符")
+                return response_str.strip()
+        except Exception as e:
+            logger.debug(f"無法轉換為字符串: {e}")
+        
+        # 如果所有方式都失敗，記錄詳細錯誤
+        logger.error(f"❌ 無法從回應中提取文字")
+        logger.error(f"   回應類型: {type(response).__name__}")
+        logger.error(f"   回應屬性: {[attr for attr in dir(response) if not attr.startswith('_')]}")
+        if hasattr(response, 'candidates') and response.candidates:
+            logger.error(f"   candidates數量: {len(response.candidates)}")
+        return "抱歉，無法存取AI回應，請稍後再試。"
         
     except Exception as e:
-        logger.error(f"❌ Gemini API調用失敗: {e}")
+        logger.error(f"❌ Gemini API調用失敗: {e}", exc_info=True)
         return "抱歉，AI回應生成失敗，請稍後再試。"

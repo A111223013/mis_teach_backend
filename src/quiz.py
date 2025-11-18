@@ -450,12 +450,40 @@ def submit_quiz():
                             'sub_questions': sub_qs
                         }
 
-                        # 題組外層若也有圖片，可選擇性帶出第一張供群組敘述參考
+                        # 題組外層若也有圖片，轉換為 base64
                         group_image_file = exam_question.get('image_file', '')
-                        if isinstance(group_image_file, list) and len(group_image_file) > 0:
-                            group_question['image_file'] = group_image_file
-                        elif isinstance(group_image_file, str) and group_image_file:
-                            group_question['image_file'] = group_image_file
+                        group_image_data_list = []
+                        negative_values = ['沒有圖片', '不需要圖片', '不須圖片', '不須照片', '沒有考卷', '']
+                        if group_image_file and group_image_file not in negative_values:
+                            group_image_filenames = []
+                            if isinstance(group_image_file, list):
+                                group_image_filenames = [img for img in group_image_file if img and img not in negative_values]
+                            elif isinstance(group_image_file, str):
+                                group_image_filenames = [group_image_file]
+                            
+                            # 將每個圖片檔案轉換為 base64
+                            for group_image_filename in group_image_filenames:
+                                group_image_base64 = get_image_base64(group_image_filename)
+                                if group_image_base64:
+                                    # 判斷圖片格式
+                                    image_ext = os.path.splitext(group_image_filename)[1].lower()
+                                    mime_type = 'image/jpeg'
+                                    if image_ext in ['.png']:
+                                        mime_type = 'image/png'
+                                    elif image_ext in ['.gif']:
+                                        mime_type = 'image/gif'
+                                    elif image_ext in ['.webp']:
+                                        mime_type = 'image/webp'
+                                    
+                                    group_image_data_list.append(f"data:{mime_type};base64,{group_image_base64}")
+                            
+                            # 如果只有一張圖片，直接返回字串；多張圖片返回陣列
+                            if len(group_image_data_list) == 1:
+                                group_question['image_file'] = group_image_data_list[0]
+                            elif len(group_image_data_list) > 1:
+                                group_question['image_file'] = group_image_data_list
+                            else:
+                                group_question['image_file'] = ''
                         else:
                             group_question['image_file'] = ''
 
@@ -495,16 +523,40 @@ def submit_quiz():
                         elif not isinstance(question['options'], list):
                             question['options'] = []
                         
-                        # 處理圖片檔案（單題，放寬條件：允許直接透傳檔名/URL）
+                        # 處理圖片檔案（單題）- 轉換為 base64
                         image_file = exam_question.get('image_file', '')
                         negative_values = ['沒有圖片', '不需要圖片', '不須圖片', '不須照片', '沒有考卷', '']
+                        image_data_list = []
                         if image_file and image_file not in negative_values:
+                            image_filenames = []
                             if isinstance(image_file, list):
-                                # 保留第一張作為主要顯示
-                                question['image_file'] = image_file[0] if len(image_file) > 0 else ''
+                                image_filenames = [img for img in image_file if img and img not in negative_values]
+                            elif isinstance(image_file, str):
+                                image_filenames = [image_file]
+                            
+                            # 將每個圖片檔案轉換為 base64
+                            for image_filename in image_filenames:
+                                image_base64 = get_image_base64(image_filename)
+                                if image_base64:
+                                    # 判斷圖片格式
+                                    image_ext = os.path.splitext(image_filename)[1].lower()
+                                    mime_type = 'image/jpeg'
+                                    if image_ext in ['.png']:
+                                        mime_type = 'image/png'
+                                    elif image_ext in ['.gif']:
+                                        mime_type = 'image/gif'
+                                    elif image_ext in ['.webp']:
+                                        mime_type = 'image/webp'
+                                    
+                                    image_data_list.append(f"data:{mime_type};base64,{image_base64}")
+                            
+                            # 如果只有一張圖片，直接返回字串；多張圖片返回陣列
+                            if len(image_data_list) == 1:
+                                question['image_file'] = image_data_list[0]
+                            elif len(image_data_list) > 1:
+                                question['image_file'] = image_data_list
                             else:
-                                # 字串可為檔名或 URL，直接透傳，不再強制檢查檔案存在
-                                question['image_file'] = str(image_file)
+                                question['image_file'] = ''
                         else:
                             question['image_file'] = ''
 
@@ -1079,14 +1131,37 @@ def get_progress_status(progress_id: str) -> dict:
         return None
 
 def _parse_user_answer(user_answer):
-    """解析用戶答案，支援多種格式"""
+    """解析用戶答案，支援多種格式，包括 LONG_ANSWER_ 引用"""
     if isinstance(user_answer, dict):
         return user_answer.get('answer', '')
-    elif isinstance(user_answer, str) and user_answer.startswith('['):
-        try:
-            return json.loads(user_answer)
-        except json.JSONDecodeError:
-            return user_answer
+    elif isinstance(user_answer, str):
+        # 處理 LONG_ANSWER_ 引用
+        if user_answer.startswith('LONG_ANSWER_'):
+            try:
+                long_answer_id = int(user_answer.replace('LONG_ANSWER_', ''))
+                # 從 long_answers 表查詢完整答案
+                with sqldb.engine.connect() as conn:
+                    result = conn.execute(text("""
+                        SELECT full_answer FROM long_answers 
+                        WHERE id = :long_answer_id
+                    """), {
+                        'long_answer_id': long_answer_id
+                    }).fetchone()
+                    
+                    if result:
+                        return result[0]  # 返回完整的答案內容
+                    else:
+                        return f"[長答案載入失敗: {user_answer}]"
+            except (ValueError, Exception) as e:
+                print(f"❌ 解析長答案引用失敗: {e}")
+                return f"[長答案解析錯誤: {user_answer}]"
+        
+        # 處理 JSON 格式
+        elif user_answer.startswith('['):
+            try:
+                return json.loads(user_answer)
+            except json.JSONDecodeError:
+                return user_answer
     return user_answer
 
 def _store_long_answer(user_answer: any, question_type: str, quiz_history_id: int, question_id: str, user_email: str) -> str:
@@ -1569,20 +1644,47 @@ def create_quiz():
             if not all([school, year, department]):
                 return jsonify({'token': None, 'message': '考古題測驗必須填寫學校、年份、系所'}), 400
             
-
-            # 從MongoDB獲取符合條件的考古題
-            query = {
-                "school": school,
-                "year": year,
-                "department": department
-            }
-            selected_exams = list(mongo.db.exam.find(query))
-            
-            if not selected_exams:
-                print(f"❌ 找不到符合條件的考題: {query}")
-                return jsonify({'token': None, 'message': '找不到符合條件的考題'}), 404
-            
-            quiz_title = f"{school} - {year}年 - {department}"
+            # 特殊處理 demo 選項
+            if school == 'demo' and year == '114' and department == 'demo':
+                # 返回固定的 7 題 demo 題目
+                demo_question_ids = [
+                    "6905deac7292fdbd94102c01",
+                    "6905deac7292fdbd94102c02",
+                    "6905deac7292fdbd94102c03",
+                    "6905deac7292fdbd94102c04",
+                    "6905deac7292fdbd94102c05",
+                    "6905deac7292fdbd94102c06",
+                    "6905deac7292fdbd94102c07"
+                ]
+                selected_exams = []
+                for q_id in demo_question_ids:
+                    try:
+                        object_id = ObjectId(q_id)
+                        question_doc = mongo.db.exam.find_one({"_id": object_id})
+                        if question_doc:
+                            selected_exams.append(question_doc)
+                    except Exception as e:
+                        print(f"⚠️ 載入 demo 題目失敗 (ID: {q_id}): {e}")
+                        continue
+                
+                if not selected_exams:
+                    return jsonify({'token': None, 'message': '找不到 demo 題目'}), 404
+                
+                quiz_title = f"Demo - 114年 - Demo"
+            else:
+                # 從MongoDB獲取符合條件的考古題
+                query = {
+                    "school": school,
+                    "year": year,
+                    "department": department
+                }
+                selected_exams = list(mongo.db.exam.find(query))
+                
+                if not selected_exams:
+                    print(f"❌ 找不到符合條件的考題: {query}")
+                    return jsonify({'token': None, 'message': '找不到符合條件的考題'}), 404
+                
+                quiz_title = f"{school} - {year}年 - {department}"
 
         else:
             return jsonify({'token': None, 'message': '無效的測驗類型'}), 400
@@ -1618,7 +1720,38 @@ def create_quiz():
                         sub_options = []
 
                     sub_image = sub.get('image_file', '')
-                    # 保留子題的 image_file 結構（有可能為 list 或 str），前端自行處理
+                    # 處理子題圖片 - 轉換為 base64
+                    sub_image_data_list = []
+                    if sub_image and sub_image not in ['沒有圖片', '不需要圖片', '不須圖片', '不須照片', '沒有考卷', '']:
+                        sub_image_filenames = []
+                        if isinstance(sub_image, list):
+                            sub_image_filenames = [img for img in sub_image if img and img not in ['沒有圖片', '不需要圖片', '不須圖片', '不須照片', '沒有考卷', '']]
+                        elif isinstance(sub_image, str):
+                            sub_image_filenames = [sub_image]
+                        
+                        # 將每個圖片檔案轉換為 base64
+                        for sub_image_filename in sub_image_filenames:
+                            sub_image_base64 = get_image_base64(sub_image_filename)
+                            if sub_image_base64:
+                                # 判斷圖片格式
+                                image_ext = os.path.splitext(sub_image_filename)[1].lower()
+                                mime_type = 'image/jpeg'
+                                if image_ext in ['.png']:
+                                    mime_type = 'image/png'
+                                elif image_ext in ['.gif']:
+                                    mime_type = 'image/gif'
+                                elif image_ext in ['.webp']:
+                                    mime_type = 'image/webp'
+                                
+                                sub_image_data_list.append(f"data:{mime_type};base64,{sub_image_base64}")
+                    
+                    # 如果只有一張圖片，直接返回字串；多張圖片返回陣列
+                    if len(sub_image_data_list) == 1:
+                        sub_image_final = sub_image_data_list[0]
+                    elif len(sub_image_data_list) > 1:
+                        sub_image_final = sub_image_data_list
+                    else:
+                        sub_image_final = ''
 
                     # 處理子題的 key-points
                     sub_key_points = sub.get('key-points', '')
@@ -1631,7 +1764,7 @@ def create_quiz():
                         'options': sub_options,
                         'answer': sub.get('answer', ''),
                         'answer_type': sub.get('answer_type', 'single-choice'),
-                        'image_file': sub_image,
+                        'image_file': sub_image_final,
                         'detail_answer': sub.get('detail-answer', ''),
                         'key_points': sub_key_points,
                         'difficulty_level': sub.get('difficulty level', sub.get('difficulty_level', '')),
@@ -1648,12 +1781,39 @@ def create_quiz():
                     'sub_questions': sub_qs
                 }
 
-                # 題組外層若也有圖片，可選擇性帶出第一張供群組敘述參考
+                # 題組外層若也有圖片，轉換為 base64
                 group_image_file = exam.get('image_file', '')
-                if isinstance(group_image_file, list) and len(group_image_file) > 0:
-                    group_question['image_file'] = group_image_file
-                elif isinstance(group_image_file, str) and group_image_file:
-                    group_question['image_file'] = group_image_file
+                group_image_data_list = []
+                if group_image_file and group_image_file not in ['沒有圖片', '不需要圖片', '不須圖片', '不須照片', '沒有考卷', '']:
+                    group_image_filenames = []
+                    if isinstance(group_image_file, list):
+                        group_image_filenames = [img for img in group_image_file if img and img not in ['沒有圖片', '不需要圖片', '不須圖片', '不須照片', '沒有考卷', '']]
+                    elif isinstance(group_image_file, str):
+                        group_image_filenames = [group_image_file]
+                    
+                    # 將每個圖片檔案轉換為 base64
+                    for group_image_filename in group_image_filenames:
+                        group_image_base64 = get_image_base64(group_image_filename)
+                        if group_image_base64:
+                            # 判斷圖片格式
+                            image_ext = os.path.splitext(group_image_filename)[1].lower()
+                            mime_type = 'image/jpeg'
+                            if image_ext in ['.png']:
+                                mime_type = 'image/png'
+                            elif image_ext in ['.gif']:
+                                mime_type = 'image/gif'
+                            elif image_ext in ['.webp']:
+                                mime_type = 'image/webp'
+                            
+                            group_image_data_list.append(f"data:{mime_type};base64,{group_image_base64}")
+                    
+                    # 如果只有一張圖片，直接返回字串；多張圖片返回陣列
+                    if len(group_image_data_list) == 1:
+                        group_question['image_file'] = group_image_data_list[0]
+                    elif len(group_image_data_list) > 1:
+                        group_question['image_file'] = group_image_data_list
+                    else:
+                        group_question['image_file'] = ''
                 else:
                     group_question['image_file'] = ''
 
@@ -1694,24 +1854,37 @@ def create_quiz():
                 elif not isinstance(question['options'], list):
                     question['options'] = []
 
-                # 處理圖片檔案（單題）
+                # 處理圖片檔案（單題）- 轉換為 base64
                 image_file = exam.get('image_file', '')
-                image_filename = ''
+                image_data_list = []
                 if image_file and image_file not in ['沒有圖片', '不需要圖片', '不須圖片', '不須照片', '沒有考卷', '']:
-                    if isinstance(image_file, list) and len(image_file) > 0:
-                        question['image_file'] = image_file[0]
+                    image_filenames = []
+                    if isinstance(image_file, list):
+                        image_filenames = [img for img in image_file if img and img not in ['沒有圖片', '不需要圖片', '不須圖片', '不須照片', '沒有考卷', '']]
                     elif isinstance(image_file, str):
-                        image_filename = image_file
-                    else:
-                        image_filename = ''
-
-                    if image_filename:
-                        current_dir = os.path.dirname(os.path.abspath(__file__))
-                        image_path = os.path.join(current_dir, 'picture', image_filename)
-                        if os.path.exists(image_path):
-                            question['image_file'] = image_filename
-                        else:
-                            question['image_file'] = ''
+                        image_filenames = [image_file]
+                    
+                    # 將每個圖片檔案轉換為 base64
+                    for image_filename in image_filenames:
+                        image_base64 = get_image_base64(image_filename)
+                        if image_base64:
+                            # 判斷圖片格式
+                            image_ext = os.path.splitext(image_filename)[1].lower()
+                            mime_type = 'image/jpeg'
+                            if image_ext in ['.png']:
+                                mime_type = 'image/png'
+                            elif image_ext in ['.gif']:
+                                mime_type = 'image/gif'
+                            elif image_ext in ['.webp']:
+                                mime_type = 'image/webp'
+                            
+                            image_data_list.append(f"data:{mime_type};base64,{image_base64}")
+                    
+                    # 如果只有一張圖片，直接返回字串；多張圖片返回陣列
+                    if len(image_data_list) == 1:
+                        question['image_file'] = image_data_list[0]
+                    elif len(image_data_list) > 1:
+                        question['image_file'] = image_data_list
                     else:
                         question['image_file'] = ''
                 else:
@@ -1871,6 +2044,10 @@ def create_quiz():
 def get_image_base64(image_filename):
     """讀取圖片檔案並轉換為 base64 編碼"""
     try:
+        # 檢查檔案名稱是否為空
+        if not image_filename or not image_filename.strip():
+            return None
+        
         # 取得當前檔案所在目錄，圖片在同層的 picture 資料夾
         current_dir = os.path.dirname(os.path.abspath(__file__))
         image_path = os.path.join(current_dir, 'picture', image_filename)
@@ -1948,6 +2125,106 @@ def get_exam():
         exam_list.append(exam_dict)
  
     return jsonify({'token': refresh_token(token), 'exams': exam_list}), 200
+
+
+@quiz_bp.route('/get-exam-filters', methods=['POST', 'OPTIONS'])
+def get_exam_filters():
+    """獲取考題篩選選項（輕量級，不包含題目內容和圖片）"""
+    if request.method == 'OPTIONS':
+        return '', 204
+    auth_header = request.headers.get('Authorization')
+    
+    if not auth_header:
+        return jsonify({'token': None, 'message': '未提供token', 'code': 'NO_TOKEN'}), 401
+    
+    try:
+        token = auth_header.split(" ")[1]
+        decoded_token = jwt.decode(token, current_app.config['SECRET_KEY'], algorithms=['HS256'])
+        user_email = decoded_token.get('user')
+        
+        if not user_email:
+            return jsonify({'token': None, 'message': '無效的token', 'code': 'TOKEN_INVALID'}), 401
+    except jwt.ExpiredSignatureError:
+        return jsonify({'token': None, 'message': 'Token已過期，請重新登錄', 'code': 'TOKEN_EXPIRED'}), 401
+    except jwt.InvalidTokenError:
+        return jsonify({'token': None, 'message': '無效的token', 'code': 'TOKEN_INVALID'}), 401
+    except Exception as e:
+        print(f"驗證token時發生錯誤: {str(e)}")
+        return jsonify({'token': None, 'message': '認證失敗', 'code': 'AUTH_FAILED'}), 401
+    
+    try:
+        # 只查詢需要的欄位，不包含題目內容和圖片
+        examdata = mongo.db.exam.find(
+            {},
+            {
+                'school': 1,
+                'department': 1,
+                'year': 1,
+                'key-points': 1,
+                '_id': 0
+            }
+        )
+        
+        # 使用集合來去重並收集資料
+        schools = set()
+        departments = set()
+        years = set()
+        subjects = set()
+        subject_count_map = {}
+        
+        # 統計每個學校-年度-系所組合的題目數量
+        school_year_dept_count = {}
+        
+        for exam in examdata:
+            # 收集學校
+            if exam.get('school'):
+                schools.add(exam.get('school'))
+            
+            # 收集系所
+            if exam.get('department'):
+                departments.add(exam.get('department'))
+            
+            # 收集年度
+            if exam.get('year'):
+                years.add(str(exam.get('year')))
+            
+            # 收集知識點/科目
+            key_points = exam.get('key-points', [])
+            if isinstance(key_points, list):
+                for subject in key_points:
+                    if subject and subject != '其他':
+                        subjects.add(subject)
+                        subject_count_map[subject] = subject_count_map.get(subject, 0) + 1
+            elif key_points and key_points != '其他':
+                subjects.add(key_points)
+                subject_count_map[key_points] = subject_count_map.get(key_points, 0) + 1
+            
+            # 統計學校-年度-系所組合的題目數量
+            school = exam.get('school', '')
+            year = str(exam.get('year', ''))
+            dept = exam.get('department', '')
+            if school and year and dept:
+                key = f"{school}|{year}|{dept}"
+                school_year_dept_count[key] = school_year_dept_count.get(key, 0) + 1
+        
+        # 轉換為排序後的列表
+        result = {
+            'token': refresh_token(token),
+            'filters': {
+                'schools': sorted(list(schools)),
+                'departments': sorted(list(departments)),
+                'years': sorted(list(years)),
+                'subjects': sorted(list(subjects)),
+                'subject_counts': subject_count_map,
+                'school_year_dept_counts': school_year_dept_count
+            }
+        }
+        
+        return jsonify(result), 200
+        
+    except Exception as e:
+        logger.error(f"獲取篩選選項時發生錯誤: {str(e)}")
+        return jsonify({'token': refresh_token(token), 'message': '獲取篩選選項失敗', 'error': str(e)}), 500
 
 
 @quiz_bp.route('/grading-progress/<template_id>', methods=['GET', 'OPTIONS'])

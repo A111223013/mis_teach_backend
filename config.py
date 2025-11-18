@@ -63,7 +63,8 @@ class DevelopmentConfig(Config):
     SQLALCHEMY_BINDS = {}
     
     API_BASE_URL = 'http://localhost:5000'
-    DOMAIN_NAME = 'http://localhost:4200'
+    # ngrok 前端網址：https://2244e984b70a.ngrok-free.app
+    DOMAIN_NAME = 'https://2244e984b70a.ngrok-free.app'
     DEBUG = True
 
 class ProductionConfig(Config):
