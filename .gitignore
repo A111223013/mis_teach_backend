@@ -10,6 +10,7 @@ venv/
 dist/
 build/
 api.env
+*.env
 api.env/
 # ========== IDE & 系統檔案 ==========
 .vscode/
