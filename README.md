@@ -339,33 +339,445 @@ gunicorn -w 4 -b 0.0.0.0:5000 app:app
 
 ## API 文檔
 
-### 認證相關
+### 認證機制
 
 所有需要認證的 API 都需要在 Header 中帶上 JWT Token:
 ```
 Authorization: Bearer <token>
 ```
 
-### 主要 API 端點
+Token 會在回應中自動刷新，請使用回應中的新 Token。
 
-#### 身份驗證
-- `POST /login` - 登入
-- `POST /register` - 註冊
-- `POST /login/logout` - 登出
+### 完整 API 端點列表
 
-#### 測驗
-- `POST /quiz/generate` - 生成測驗
-- `POST /quiz/submit` - 提交測驗
-- `GET /quiz/result/<quiz_id>` - 查詢結果
+#### 身份驗證 (`/login`, `/register`)
 
-#### AI 教學
-- `POST /ai_teacher/chat` - AI 教學對話
-- `GET /ai_teacher/session/<session_id>` - 查詢會話
+**POST /login** - 使用者登入
+```json
+請求:
+{
+  "email": "user@example.com",
+  "password": "password123"
+}
 
-#### 學習分析
-- `GET /api/learning-analytics/overview` - 總覽
-- `GET /api/learning-analytics/trends` - 趨勢
-- `POST /api/learning-analytics/ai-diagnosis` - AI 診斷
+回應:
+{
+  "access_token": "eyJ0eXAiOiJKV1QiLCJhbGc...",
+  "refresh_token": "eyJ0eXAiOiJKV1QiLCJhbGc...",
+  "user": {
+    "email": "user@example.com",
+    "name": "使用者名稱"
+  }
+}
+```
+
+**POST /register** - 使用者註冊
+```json
+請求:
+{
+  "email": "user@example.com",
+  "password": "password123",
+  "name": "使用者名稱"
+}
+
+回應:
+{
+  "message": "Verification email sent."
+}
+```
+
+**POST /login/logout** - 登出
+```json
+回應:
+{
+  "message": "success logged out"
+}
+```
+
+#### 測驗系統 (`/quiz`)
+
+**POST /quiz/generate** - 生成測驗
+```json
+請求:
+{
+  "template_id": "123",
+  "count": 20,
+  "difficulty": "medium",
+  "domain": "資料庫"
+}
+
+回應:
+{
+  "quiz_id": "quiz_abc123",
+  "title": "測驗標題",
+  "questions": [...],
+  "time_limit": 3600
+}
+```
+
+**POST /quiz/submit-quiz** - 提交測驗
+```json
+請求:
+{
+  "template_id": "123",
+  "answers": {
+    "1": "A",
+    "2": ["A", "B"],
+    "3": "答案內容"
+  },
+  "time_taken": 1800,
+  "question_answer_times": {
+    "1": 120,
+    "2": 150
+  }
+}
+
+回應:
+{
+  "result_id": "result_xyz789",
+  "score": 85,
+  "total_questions": 20,
+  "correct_count": 17
+}
+```
+
+**GET /quiz/result/<result_id>** - 查詢測驗結果
+```json
+回應:
+{
+  "result_id": "result_xyz789",
+  "quiz_id": "quiz_abc123",
+  "score": 85,
+  "total_questions": 20,
+  "correct_count": 17,
+  "answers": [...],
+  "analysis": {...}
+}
+```
+
+**GET /quiz/templates** - 獲取測驗模板列表
+```json
+回應:
+{
+  "templates": [
+    {
+      "id": "123",
+      "title": "模板標題",
+      "description": "模板描述",
+      "question_count": 20
+    }
+  ]
+}
+```
+
+#### AI 測驗 (`/ai_quiz`)
+
+**POST /ai_quiz/generate** - AI 生成測驗
+```json
+請求:
+{
+  "concept": "資料庫正規化",
+  "domain": "資料庫",
+  "difficulty": "medium",
+  "count": 10
+}
+
+回應:
+{
+  "quiz_id": "ai_quiz_123",
+  "questions": [...]
+}
+```
+
+#### AI 教學 (`/ai_teacher`)
+
+**POST /ai_teacher/start** - 開始學習會話
+```json
+請求:
+{
+  "concept": "資料庫正規化",
+  "domain": "資料庫"
+}
+
+回應:
+{
+  "session_id": "session_abc123",
+  "concept": "資料庫正規化",
+  "stage": "core_concept_confirmation"
+}
+```
+
+**POST /ai_teacher/chat** - AI 教學對話
+```json
+請求:
+{
+  "session_id": "session_abc123",
+  "message": "什麼是正規化？"
+}
+
+回應:
+{
+  "session_id": "session_abc123",
+  "response": "正規化是...",
+  "stage": "core_concept_confirmation",
+  "understanding_level": 0.6
+}
+```
+
+**GET /ai_teacher/session/<session_id>** - 查詢會話
+```json
+回應:
+{
+  "session_id": "session_abc123",
+  "concept": "資料庫正規化",
+  "stage": "core_concept_confirmation",
+  "messages": [...],
+  "learning_progress": [...]
+}
+```
+
+#### 學習分析 (`/api/learning-analytics`)
+
+**GET /api/learning-analytics/overview** - 學習總覽
+```json
+回應:
+{
+  "total_quizzes": 50,
+  "total_questions": 1000,
+  "average_score": 75.5,
+  "weak_points": [...],
+  "improvement_items": [...]
+}
+```
+
+**GET /api/learning-analytics/trends** - 學習趨勢
+```json
+請求參數:
+?period=7&domain=all
+
+回應:
+{
+  "trends": [
+    {
+      "date": "2024-01-01",
+      "score": 70,
+      "questions_count": 20
+    }
+  ]
+}
+```
+
+**POST /api/learning-analytics/ai-diagnosis** - AI 診斷
+```json
+請求:
+{
+  "weak_points": ["資料庫", "網路"]
+}
+
+回應:
+{
+  "diagnosis": "根據您的學習數據...",
+  "recommendations": [...],
+  "learning_path": [...]
+}
+```
+
+#### 教材管理 (`/materials`)
+
+**GET /materials/list** - 教材列表
+```json
+回應:
+{
+  "materials": [
+    {
+      "filename": "資料庫概論.md",
+      "title": "資料庫概論",
+      "category": "資料庫"
+    }
+  ]
+}
+```
+
+**GET /materials/<filename>** - 教材內容
+```json
+回應:
+{
+  "filename": "資料庫概論.md",
+  "content": "# 資料庫概論\n...",
+  "metadata": {...}
+}
+```
+
+#### 筆記系統 (`/note`)
+
+**GET /note** - 查詢筆記
+```json
+請求參數:
+?question_id=123
+
+回應:
+{
+  "notes": [
+    {
+      "id": 1,
+      "content": "筆記內容",
+      "question_id": "123",
+      "created_at": "2024-01-01T00:00:00"
+    }
+  ]
+}
+```
+
+**POST /note** - 創建筆記
+```json
+請求:
+{
+  "content": "筆記內容",
+  "question_id": "123"
+}
+
+回應:
+{
+  "id": 1,
+  "message": "筆記創建成功"
+}
+```
+
+**PUT /note/<note_id>** - 更新筆記
+```json
+請求:
+{
+  "content": "更新後的筆記內容"
+}
+
+回應:
+{
+  "id": 1,
+  "message": "筆記更新成功"
+}
+```
+
+**DELETE /note/<note_id>** - 刪除筆記
+```json
+回應:
+{
+  "message": "筆記刪除成功"
+}
+```
+
+#### 新聞系統 (`/api/news`)
+
+**GET /api/news** - 新聞列表
+```json
+請求參數:
+?page=1&limit=10&category=科技
+
+回應:
+{
+  "news": [...],
+  "total": 100,
+  "page": 1,
+  "limit": 10
+}
+```
+
+**GET /api/news/<news_id>** - 新聞詳情
+```json
+回應:
+{
+  "id": "news_123",
+  "title": "新聞標題",
+  "content": "新聞內容",
+  "source": "來源",
+  "published_at": "2024-01-01T00:00:00"
+}
+```
+
+#### LINE Bot (`/linebot`)
+
+**POST /linebot/webhook** - LINE Bot Webhook
+```json
+請求: (LINE 平台格式)
+
+回應:
+{
+  "success": true
+}
+```
+
+**POST /linebot/generate-qr** - 生成綁定 QR Code
+```json
+請求:
+{
+  "user_email": "user@example.com"
+}
+
+回應:
+{
+  "qr_code": "data:image/png;base64,...",
+  "binding_code": "ABC123"
+}
+```
+
+#### 網頁 AI 助手 (`/web-ai`)
+
+**POST /web-ai/chat** - AI 對話
+```json
+請求:
+{
+  "message": "使用者訊息",
+  "user_id": "user123",
+  "platform": "web"
+}
+
+回應:
+{
+  "success": true,
+  "message": "AI 回應",
+  "timestamp": "2024-01-01T00:00:00"
+}
+```
+
+**GET /web-ai/health** - 健康檢查
+```json
+回應:
+{
+  "success": true,
+  "health": {
+    "overall": "healthy",
+    "ai_service": "healthy"
+  }
+}
+```
+
+### API 錯誤碼
+
+- `200` - 成功
+- `400` - 請求參數錯誤
+- `401` - 未授權（Token 無效或過期）
+- `403` - 禁止訪問
+- `404` - 資源不存在
+- `500` - 伺服器內部錯誤
+
+### API 回應格式
+
+**成功回應**:
+```json
+{
+  "success": true,
+  "data": {...},
+  "token": "新的 token（如有）"
+}
+```
+
+**錯誤回應**:
+```json
+{
+  "success": false,
+  "error": "錯誤訊息",
+  "code": "ERROR_CODE"
+}
+```
 
 ## CORS 配置
 
@@ -459,40 +871,315 @@ CMD ["gunicorn", "-w", "4", "-b", "0.0.0.0:5000", "app:app"]
 
 - `/health` - 健康檢查端點（可自行實作）
 
-## 常見問題
+## 使用範例
 
-### 1. 資料庫連線失敗
+### Python 客戶端範例
 
-- 檢查資料庫服務是否啟動
-- 確認連線字串正確
-- 檢查防火牆設定
+```python
+import requests
 
-### 2. Token 刷新失敗
+# 1. 登入獲取 Token
+login_url = "http://localhost:5000/login"
+login_data = {
+    "email": "user@example.com",
+    "password": "password123"
+}
+response = requests.post(login_url, json=login_data)
+token = response.json()["access_token"]
 
-- 檢查 Token 格式
-- 確認安全密鑰設定
-- 檢查 Token 過期時間
+# 2. 使用 Token 訪問 API
+headers = {"Authorization": f"Bearer {token}"}
 
-### 3. CORS 錯誤
+# 生成測驗
+quiz_url = "http://localhost:5000/quiz/generate"
+quiz_data = {
+    "template_id": "123",
+    "count": 20
+}
+quiz_response = requests.post(quiz_url, json=quiz_data, headers=headers)
+quiz = quiz_response.json()
 
-- 確認來源域名在允許清單中
-- 檢查 CORS 配置
-- 確認請求頭設定
+# 3. 提交測驗
+submit_url = "http://localhost:5000/quiz/submit-quiz"
+submit_data = {
+    "template_id": "123",
+    "answers": {"1": "A", "2": "B"},
+    "time_taken": 1800
+}
+result = requests.post(submit_url, json=submit_data, headers=headers)
+print(result.json())
+```
 
-### 4. API 密鑰錯誤
+### JavaScript/TypeScript 範例
 
-- 檢查 `api.env` 配置
-- 確認 API 密鑰有效
-- 檢查密鑰組設定
+```typescript
+// 使用 fetch API
+const API_BASE = 'http://localhost:5000';
 
-## 未來規劃
+// 登入
+async function login(email: string, password: string) {
+  const response = await fetch(`${API_BASE}/login`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email, password })
+  });
+  const data = await response.json();
+  localStorage.setItem('token', data.access_token);
+  return data;
+}
 
-- [ ] GraphQL API 支援
-- [ ] WebSocket 即時通訊
-- [ ] 微服務架構重構
-- [ ] 容器化部署
-- [ ] 自動化測試
-- [ ] API 文檔自動生成
+// 生成測驗
+async function generateQuiz(templateId: string, count: number) {
+  const token = localStorage.getItem('token');
+  const response = await fetch(`${API_BASE}/quiz/generate`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${token}`
+    },
+    body: JSON.stringify({ template_id: templateId, count })
+  });
+  return await response.json();
+}
+```
+
+### cURL 範例
+
+```bash
+# 登入
+curl -X POST http://localhost:5000/login \
+  -H "Content-Type: application/json" \
+  -d '{"email":"user@example.com","password":"password123"}'
+
+# 生成測驗（需要 Token）
+curl -X POST http://localhost:5000/quiz/generate \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer YOUR_TOKEN" \
+  -d '{"template_id":"123","count":20}'
+
+# 提交測驗
+curl -X POST http://localhost:5000/quiz/submit-quiz \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer YOUR_TOKEN" \
+  -d '{
+    "template_id":"123",
+    "answers":{"1":"A","2":"B"},
+    "time_taken":1800
+  }'
+```
+
+## 資料庫操作範例
+
+### MySQL 操作
+
+```python
+from accessories import sqldb
+from sqlalchemy import text
+
+# 查詢使用者資訊
+def get_user_info(email):
+    query = text("SELECT * FROM users WHERE email = :email")
+    with sqldb.engine.connect() as conn:
+        result = conn.execute(query, {"email": email})
+        return result.fetchone()
+
+# 插入測驗記錄
+def insert_quiz_history(user_email, quiz_id, score):
+    query = text("""
+        INSERT INTO quiz_history (user_email, quiz_id, score, created_at)
+        VALUES (:email, :quiz_id, :score, NOW())
+    """)
+    with sqldb.engine.connect() as conn:
+        conn.execute(query, {
+            "email": user_email,
+            "quiz_id": quiz_id,
+            "score": score
+        })
+        conn.commit()
+```
+
+### MongoDB 操作
+
+```python
+from accessories import mongo
+from bson import ObjectId
+
+# 查詢題目
+def get_question(question_id):
+    return mongo.db.exam.find_one({"_id": ObjectId(question_id)})
+
+# 查詢多個題目
+def get_questions_by_school(school, year):
+    return list(mongo.db.exam.find({
+        "school": school,
+        "year": year
+    }))
+
+# 插入題目
+def insert_question(question_data):
+    result = mongo.db.exam.insert_one(question_data)
+    return result.inserted_id
+```
+
+### Redis 操作
+
+```python
+from accessories import redis_client
+
+# 儲存快取
+def cache_data(key, value, expire=3600):
+    redis_client.setex(key, expire, value)
+
+# 獲取快取
+def get_cache(key):
+    return redis_client.get(key)
+
+# 刪除快取
+def delete_cache(key):
+    redis_client.delete(key)
+```
+
+## 開發指南
+
+### 創建新的 API 端點
+
+```python
+from flask import Blueprint, request, jsonify
+from src.api import verify_token
+
+# 創建 Blueprint
+my_bp = Blueprint('my_module', __name__)
+
+@my_bp.route('/my-endpoint', methods=['POST'])
+def my_endpoint():
+    # 驗證 Token
+    token = request.headers.get('Authorization', '').split(' ')[1]
+    user_email = verify_token(token)
+    if not user_email:
+        return jsonify({'error': '未授權'}), 401
+    
+    # 處理請求
+    data = request.get_json()
+    # ... 業務邏輯 ...
+    
+    # 返回回應
+    return jsonify({
+        'success': True,
+        'data': {...}
+    }), 200
+
+# 在 app.py 中註冊
+# app.register_blueprint(my_bp, url_prefix='/my-module')
+```
+
+### 使用 RAG 系統
+
+```python
+from src.rag_sys.rag_ai_role import get_rag_service
+
+# 初始化 RAG 服務
+rag_service = get_rag_service()
+
+# 檢索相關知識
+results = rag_service.search("資料庫正規化", top_k=5)
+
+# 生成回應
+response = rag_service.generate_response(
+    query="什麼是正規化？",
+    context=results
+)
+```
+
+### 使用 AI 服務
+
+```python
+from tool.api_keys import get_api_key
+import google.generativeai as genai
+
+# 初始化 Gemini
+api_key = get_api_key()
+genai.configure(api_key=api_key)
+model = genai.GenerativeModel('gemini-pro')
+
+# 生成內容
+response = model.generate_content("解釋資料庫正規化")
+print(response.text)
+```
+
+## 效能優化
+
+### 1. 資料庫優化
+
+- **索引優化**: 為常用查詢欄位建立索引
+- **查詢優化**: 避免 N+1 查詢，使用 JOIN
+- **連線池**: 使用適當的連線池大小
+- **分頁**: 大量資料使用分頁查詢
+
+### 2. 快取策略
+
+- **Redis 快取**: 快取常用資料（題目列表、使用者資訊）
+- **HTTP 快取**: 設定適當的 Cache-Control 標頭
+- **查詢快取**: 快取複雜查詢結果
+
+### 3. API 優化
+
+- **非同步處理**: 長時間任務使用背景任務
+- **批量操作**: 支援批量查詢和更新
+- **壓縮回應**: 使用 gzip 壓縮
+- **分頁**: 列表 API 支援分頁
+
+## 測試
+
+### 單元測試範例
+
+```python
+import unittest
+from app import app
+from src.api import verify_token
+
+class TestAPI(unittest.TestCase):
+    def setUp(self):
+        self.app = app.test_client()
+        self.app.testing = True
+    
+    def test_login(self):
+        response = self.app.post('/login', json={
+            'email': 'test@example.com',
+            'password': 'password123'
+        })
+        self.assertEqual(response.status_code, 200)
+        data = response.get_json()
+        self.assertIn('access_token', data)
+    
+    def test_protected_endpoint(self):
+        # 先登入獲取 Token
+        login_response = self.app.post('/login', json={
+            'email': 'test@example.com',
+            'password': 'password123'
+        })
+        token = login_response.get_json()['access_token']
+        
+        # 使用 Token 訪問受保護的端點
+        response = self.app.get('/dashboard/user-info',
+                               headers={'Authorization': f'Bearer {token}'})
+        self.assertEqual(response.status_code, 200)
+
+if __name__ == '__main__':
+    unittest.main()
+```
+
+### 執行測試
+
+```bash
+# 執行所有測試
+python -m pytest tests/
+
+# 執行特定測試文件
+python -m pytest tests/test_api.py
+
+# 顯示覆蓋率
+python -m pytest --cov=src tests/
+```
 
 ## 授權
 
