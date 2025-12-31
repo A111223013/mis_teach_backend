@@ -993,18 +993,10 @@ def webhook():
 def generate_quiz_question(requirements: str) -> str:
     """生成測驗題目的純邏輯 - 調用 Gemini API"""
     try:
-        from langchain_google_genai import ChatGoogleGenerativeAI
+        from accessories import init_ai
         
-        api_key = get_api_key()
-        if not api_key:
-            return "❌ 無法獲取 Gemini API Key"
-        
-        # 初始化 Gemini
-        llm = ChatGoogleGenerativeAI(
-            model="gemini-2.5-flash",
-            google_api_key=api_key,
-            temperature=0.7
-        )
+        # 預設使用 Ollama
+        llm = init_ai(ai_type='ollama')
         
         # 構建提示詞
         prompt = f"""請根據以下需求生成一道測驗題目：
@@ -1044,18 +1036,10 @@ def generate_quiz_question(requirements: str) -> str:
 def generate_knowledge_point(query: str) -> str:
     """生成知識點的純邏輯 - 調用 Gemini API"""
     try:
-        from langchain_google_genai import ChatGoogleGenerativeAI
+        from accessories import init_ai
         
-        api_key = get_api_key()
-        if not api_key:
-            return "❌ 無法獲取 Gemini API Key"
-        
-        # 初始化 Gemini
-        llm = ChatGoogleGenerativeAI(
-            model="gemini-2.5-flash",
-            google_api_key=api_key,
-            temperature=0.8
-        )
+        # 初始化 Ollama（預設使用 Qwen）
+        llm = init_ai(ai_type='ollama')
         
         # 構建提示詞
         if query and query.strip():
@@ -1162,17 +1146,10 @@ def generate_knowledge_point(query: str) -> str:
 def grade_answer(answer: str, correct_answer: str, question: str) -> str:
     """批改答案的純邏輯 - 調用 Gemini API"""
     try:
-        from langchain_google_genai import ChatGoogleGenerativeAI
+        from accessories import init_ai
         
-        api_key = get_api_key()
-        if not api_key:
-            return "❌ 無法獲取 Gemini API Key"
-        
-        llm = ChatGoogleGenerativeAI(
-            model="gemini-2.5-flash",
-            google_api_key=api_key,
-            temperature=0.3
-        )
+        # 預設使用 Ollama Qwen
+        llm = init_ai(ai_type='ollama')
         
         # 如果沒有提供正確答案，讓 AI 根據題目判斷
         if not correct_answer and question:
@@ -1254,17 +1231,10 @@ def grade_answer(answer: str, correct_answer: str, question: str) -> str:
 def provide_tutoring(question: str, user_answer: str, correct_answer: str) -> str:
     """提供教學指導的純邏輯 - 調用 Gemini API"""
     try:
-        from langchain_google_genai import ChatGoogleGenerativeAI
+        from accessories import init_ai
         
-        api_key = get_api_key()
-        if not api_key:
-            return "❌ 無法獲取 Gemini API Key"
-        
-        llm = ChatGoogleGenerativeAI(
-            model="gemini-2.5-flash",
-            google_api_key=api_key,
-            temperature=0.7
-        )
+        # 預設使用 Ollama Qwen
+        llm = init_ai(ai_type='ollama')
         
         prompt = f"""請作為 AI 導師，為以下問題提供教學指導：
 

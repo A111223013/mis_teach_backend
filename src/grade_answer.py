@@ -3,14 +3,15 @@ import re
 import concurrent.futures
 from typing import List, Dict, Any, Tuple
 from tool.api_keys import get_api_key, get_api_keys_count
-from accessories import init_gemini
+from accessories import init_ai, init_ollama, init_gemini
 
 class AnswerGrader:
     """答案批改器 - 簡化版本"""
     
     def __init__(self):
         # 初始化Gemini API
-        self.model = init_gemini('gemini-2.5-flash')
+        # 預設使用 Ollama
+        self.model = init_ai(ai_type='ollama')
     
     def batch_grade_ai_questions(self, questions_data: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """批量評分AI題目 - 並行處理版本"""
@@ -29,7 +30,51 @@ class AnswerGrader:
         print(f"   總題目數: {total_questions}")
         print(f"   可用 API 金鑰數: {api_keys_count}")
 
-        # 計算每個API金鑰處理的題目數量
+        # 如果使用 Ollama（不需要 API keys），使用單一模型實例處理
+        if api_keys_count == 0:
+            print(f"\n🔧 使用 Ollama 單一模型實例處理所有題目...")
+            all_results = []
+            for idx, question_data in enumerate(questions_data):
+                try:
+                    print(f"\n📝 處理第 {idx + 1}/{total_questions} 題...")
+                    question_id = question_data.get('question_id', 'Unknown')
+                    user_answer = question_data['user_answer']
+                    question_type = question_data['question_type']
+                    
+                    is_correct, score, feedback = self._ai_grade_answer_with_model(
+                        self.model,
+                        user_answer,
+                        question_data.get('question_text', ''),
+                        question_data.get('correct_answer', ''),
+                        question_data.get('options', []),
+                        question_type
+                    )
+                    
+                    result = {
+                        'question_id': question_id,
+                        'is_correct': is_correct,
+                        'score': score,
+                        'feedback': feedback
+                    }
+                    all_results.append(result)
+                    print(f"✅ 第 {idx + 1} 題評分完成: {score} 分 ({'正確' if is_correct else '錯誤'})")
+                except Exception as e:
+                    print(f"❌ 評分題目 {idx + 1} 失敗: {e}")
+                    import traceback
+                    traceback.print_exc()
+                    all_results.append({
+                        'question_id': question_data.get('question_id', ''),
+                        'is_correct': False,
+                        'score': 0,
+                        'feedback': {'error': f'評分失敗: {str(e)}'}
+                    })
+            
+            print(f"\n{'='*80}")
+            print(f"✅ [批量評分] 全部完成！共處理 {len(all_results)} 題")
+            print(f"{'='*80}\n")
+            return all_results
+
+        # 計算每個API金鑰處理的題目數量（Gemini 多 API key 模式）
         questions_per_key = total_questions // api_keys_count
         remainder = total_questions % api_keys_count
         
@@ -173,7 +218,8 @@ class AnswerGrader:
             # 使用指定的API金鑰索引
             api_key = self._get_api_key_by_index(api_key_index)
             # 使用 accessories 中的 init_gemini 函數
-            model = init_gemini('gemini-2.5-flash')
+            # 預設使用 Ollama
+            model = init_ai(ai_type='ollama')
             return model
         except Exception as e:
             print(f"❌ 創建批次模型失敗: {e}")
@@ -212,14 +258,33 @@ class AnswerGrader:
 
 請盡可能詳細地描述，以便用於評分。如果有多張圖片，請分別描述每張圖片。
 """
-            # 組合提示詞和圖片
-            contents = [describe_prompt] + image_parts
             
-            print(f"🔄 正在發送圖片給 Gemini 進行描述...")
-            print(f"📦 傳送內容: 1 個提示詞 + {len(image_parts)} 張圖片")
-            
-            response = model.generate_content(contents)
-            description = response.text.strip()
+            # 檢測模型類型並使用正確的方法
+            # Gemini 模型有 generate_content 方法，Ollama 模型有 invoke 方法
+            if hasattr(model, 'generate_content'):
+                # 使用 Gemini 模型（支持圖片輸入）
+                print(f"🔄 正在發送圖片給 Gemini 進行描述...")
+                print(f"📦 傳送內容: 1 個提示詞 + {len(image_parts)} 張圖片")
+                
+                # 組合提示詞和圖片
+                contents = [describe_prompt] + image_parts
+                response = model.generate_content(contents)
+                
+                # 提取回應文字
+                if hasattr(response, 'text'):
+                    description = response.text.strip()
+                elif hasattr(response, 'content'):
+                    description = response.content.strip()
+                else:
+                    description = str(response).strip()
+                    
+            elif hasattr(model, 'invoke'):
+                # 使用 Ollama 模型（不支持圖片輸入，只能返回提示）
+                print(f"⚠️  Ollama 模型不支持圖片輸入，跳過圖片描述")
+                return "無法描述圖片內容（Ollama 不支持圖片輸入）"
+            else:
+                print(f"⚠️  未知的模型類型，無法描述圖片")
+                return "無法描述圖片內容"
             
             print(f"\n✅ 圖片描述完成！")
             print(f"{'─'*80}")
@@ -378,55 +443,82 @@ class AnswerGrader:
             print(f"✅ 評分提示構建完成 (總長度: {len(prompt)} 字元)")
             
             if model:
-                # 統一處理：優先使用圖片模式
-                if image_parts:
-                    try:
+                # 檢測模型類型並使用正確的方法
+                if hasattr(model, 'generate_content'):
+                    # 使用 Gemini 模型
+                    if image_parts:
+                        try:
+                            print(f"\n{'='*80}")
+                            print(f"🚀 [發送請求] 使用圖片模式評分 (Gemini)")
+                            print(f"{'='*80}")
+                            # 組合內容：先放提示詞，後放圖片
+                            contents = [prompt] + image_parts
+                            
+                            # 如果還有文字內容，也加入
+                            if text_parts:
+                                contents.append(f"額外文字內容: {' '.join(text_parts)}")
+                            
+                            print(f"📦 傳送內容組成:")
+                            for i, item in enumerate(contents):
+                                if hasattr(item, '__class__') and 'Part' in str(type(item)):
+                                    print(f"   項目 {i+1}: {item.__class__.__name__} (圖片 Part 物件)")
+                                else:
+                                    preview = str(item)[:80].replace('\n', ' ')
+                                    print(f"   項目 {i+1}: 文字 - {preview}...")
+                            
+                            print(f"\n🔄 正在發送請求給 Gemini 進行評分...")
+                            response = model.generate_content(contents)
+                            print(f"✅ 收到 Gemini 回應")
+                            
+                        except Exception as e:
+                            print(f"❌ 評分失敗: {e}")
+                            import traceback
+                            traceback.print_exc()
+                            print(f"\n🔄 使用純文字模式重試...")
+                            response = model.generate_content(prompt)
+                    else:
                         print(f"\n{'='*80}")
-                        print(f"🚀 [發送請求] 使用圖片模式評分")
+                        print(f"🚀 [發送請求] 使用純文字模式評分 (Gemini)")
                         print(f"{'='*80}")
-                        # 組合內容：先放提示詞，後放圖片
-                        contents = [prompt] + image_parts
-                        
-                        # 如果還有文字內容，也加入
-                        if text_parts:
-                            contents.append(f"額外文字內容: {' '.join(text_parts)}")
-                        
-                        print(f"📦 傳送內容組成:")
-                        for i, item in enumerate(contents):
-                            if hasattr(item, '__class__') and 'Part' in str(type(item)):
-                                print(f"   項目 {i+1}: {item.__class__.__name__} (圖片 Part 物件)")
-                            else:
-                                preview = str(item)[:80].replace('\n', ' ')
-                                print(f"   項目 {i+1}: 文字 - {preview}...")
-                        
-                        print(f"\n🔄 正在發送請求給 Gemini 進行評分...")
-                        response = model.generate_content(contents)
+                        print(f"🔄 正在發送請求給 Gemini...")
+                        response = model.generate_content(prompt)
                         print(f"✅ 收到 Gemini 回應")
                         
-                    except Exception as e:
-                        print(f"❌ 圖片模式評分失敗，降級為純文字模式: {e}")
-                        import traceback
-                        traceback.print_exc()
-                        print(f"\n🔄 使用純文字模式重試...")
-                        response = model.generate_content(prompt)
-                else:
+                elif hasattr(model, 'invoke'):
+                    # 使用 Ollama 模型（不支持圖片輸入，只能使用文字）
                     print(f"\n{'='*80}")
-                    print(f"🚀 [發送請求] 使用純文字模式評分")
+                    print(f"🚀 [發送請求] 使用純文字模式評分 (Ollama)")
                     print(f"{'='*80}")
-                    print(f"🔄 正在發送請求給 Gemini...")
-                    response = model.generate_content(prompt)
-                    print(f"✅ 收到 Gemini 回應")
+                    if image_parts:
+                        print(f"⚠️  Ollama 不支持圖片輸入，將使用文字提示（包含圖片描述）進行評分")
+                    print(f"🔄 正在發送請求給 Ollama...")
+                    response = model.invoke(prompt)
+                    print(f"✅ 收到 Ollama 回應")
+                else:
+                    raise ValueError(f"未知的模型類型，無法進行評分")
                 
                 print(f"\n{'='*80}")
                 print(f"🔍 [解析回應] AI 評分結果")
                 print(f"{'='*80}")
-                print(f"📄 原始回應長度: {len(response.text)} 字元")
+                # 正確提取回應文字：優先使用 content，如果沒有則嘗試 text 方法或屬性
+                if hasattr(response, 'content'):
+                    response_text = response.content
+                elif hasattr(response, 'text'):
+                    # text 可能是方法或屬性
+                    if callable(response.text):
+                        response_text = response.text()
+                    else:
+                        response_text = response.text
+                else:
+                    response_text = str(response)
+                
+                print(f"📄 原始回應長度: {len(response_text)} 字元")
                 print(f"{'─'*80}")
                 print(f"原始回應內容:")
-                print(f"{response.text}")
+                print(f"{response_text}")
                 print(f"{'─'*80}")
                 
-                result = self._parse_ai_response(response.text)
+                result = self._parse_ai_response(response_text)
                 if result:
                     # 確保評分邏輯一致性：分數 ≥ 85 的答案被標記為正確
                     score = result.get('score', 0)

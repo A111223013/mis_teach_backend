@@ -14,7 +14,7 @@ from tool.api_keys import get_api_key
 import chromadb
 from chromadb.config import Settings
 from sentence_transformers import SentenceTransformer
-from accessories import init_gemini
+from accessories import init_ai, init_ollama, init_gemini
 
 # 設置日誌
 logging.basicConfig(level=logging.INFO)
@@ -59,7 +59,8 @@ class RAGBuilder:
             
             # 配置 Gemini API
             try:
-                self.gemini_model = init_gemini('gemini-2.5-flash')
+                # 預設使用 Ollama
+                self.gemini_model = init_ai(ai_type='ollama')
                 print("✅ Gemini API 配置成功")
             except Exception as e:
                 print(f"❌ Gemini API 配置失敗: {e}")
@@ -109,11 +110,12 @@ class RAGBuilder:
             請確保返回有效的 JSON 格式。
             """
             
-            model = init_gemini('gemini-2.5-flash')
-            response = model.generate_content(prompt)
+            # 預設使用 Ollama
+            model = init_ai(ai_type='ollama')
+            response = model.invoke(prompt)
             
-            # 檢查回應是否有效
-            if not response or not hasattr(response, 'text'):
+            # 檢查回應是否有效（Ollama 使用 content 屬性）
+            if not response or not hasattr(response, 'content'):
                 logger.warning("⚠️ AI回應無效或格式不正確")
                 return [{
                     "title": f"知識點 - {chapter_info}",

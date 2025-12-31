@@ -17,7 +17,7 @@ import os
 # LangChain 導入
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_google_genai import ChatGoogleGenerativeAI
-from langchain.agents import create_tool_calling_agent, AgentExecutor
+from langchain.agents import create_tool_calling_agent, create_react_agent, AgentExecutor
 # from memory_manager import add_user_message, add_ai_message
 
 # 本地模組導入
@@ -60,23 +60,30 @@ def get_google_api_key():
         logger.error(f"❌ 獲取 API Key 失敗: {e}")
         return None
 
-def init_llm():
-    """初始化LLM模型"""
+def init_llm(ai_type='ollama'):
+    """
+    初始化LLM模型（預設使用 Ollama，可選擇 Gemini）
+    
+    Args:
+        ai_type: 'ollama' (預設) 或 'gemini'
+    """
     try:
-        api_key = get_google_api_key()
-        if not api_key:
-            raise ValueError("未設置Gemini API Key")
-        
-        # 直接使用 API 密鑰初始化
-        llm = ChatGoogleGenerativeAI(
-            model="gemini-2.5-flash",
-            google_api_key=api_key,
-            temperature=0.7,
-            top_p=0.8,
-            top_k=40,
-            max_output_tokens=8192,  # 增加輸出長度限制，確保完整回答（特別是錯題解析）
-            convert_system_message_to_human=True
-        )
+        if ai_type == 'ollama':
+            from accessories import init_ollama
+            llm = init_ollama(model_name="qwen2.5:14b", base_url="http://localhost:11434")
+        else:
+            api_key = get_google_api_key()
+            if not api_key:
+                raise ValueError("未設置Gemini API Key")
+            llm = ChatGoogleGenerativeAI(
+                model="gemini-2.5-flash",
+                google_api_key=api_key,
+                temperature=0.7,
+                top_p=0.8,
+                top_k=40,
+                max_output_tokens=8192,
+                convert_system_message_to_human=True
+            )
         return llm
     except Exception as e:
         logging.error(f"❌ LLM初始化失敗: {e}")
@@ -98,15 +105,32 @@ def create_platform_specific_agent(platform: str = "web"):
         if llm is None:
             llm = init_llm()
         
-        # 創建平台特定的提示詞模板
-        prompt = ChatPromptTemplate.from_messages([
-            ("system", platform_system_prompt),
-            ("human", "{input}"),
-            MessagesPlaceholder("agent_scratchpad")
-        ])
-        
-        # 創建平台特定的主代理人
-        platform_agent = create_tool_calling_agent(llm, platform_tools, prompt)
+        # 檢查 LLM 是否支持工具調用
+        # Ollama 不支持工具調用，需要使用 ReAct agent
+        try:
+            # 嘗試檢查是否有 bind_tools 方法
+            if hasattr(llm, 'bind_tools'):
+                # 創建平台特定的提示詞模板
+                prompt = ChatPromptTemplate.from_messages([
+                    ("system", platform_system_prompt),
+                    ("human", "{input}"),
+                    MessagesPlaceholder("agent_scratchpad")
+                ])
+                # 使用工具調用 agent（適用於 Gemini）
+                platform_agent = create_tool_calling_agent(llm, platform_tools, prompt)
+            else:
+                # 使用 ReAct agent（適用於 Ollama）
+                from langchain.agents import create_react_agent
+                from langchain import hub
+                react_prompt = hub.pull("hwchase17/react")
+                platform_agent = create_react_agent(llm, platform_tools, react_prompt)
+        except Exception as e:
+            logger.warning(f"⚠️ 工具調用失敗，改用 ReAct agent: {e}")
+            # 回退到 ReAct agent
+            from langchain.agents import create_react_agent
+            from langchain import hub
+            react_prompt = hub.pull("hwchase17/react")
+            platform_agent = create_react_agent(llm, platform_tools, react_prompt)
         
         # 創建平台特定的執行器
         platform_executor = AgentExecutor(

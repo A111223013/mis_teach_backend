@@ -173,8 +173,109 @@ def refresh_token(old_token):
         print(f"❌ Token 刷新失敗: {e}")
         return None
     
+def init_ollama(model_name='qwen2.5:14b', base_url='http://localhost:11434'):
+    """初始化 Ollama API（使用原生 ollama 套件，避免 langchain 版本衝突）"""
+    try:
+        import ollama
+        from langchain_core.runnables import Runnable
+        from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+        
+        # 創建一個包裝器類，繼承 LangChain Runnable 接口
+        class OllamaWrapper(Runnable):
+            def __init__(self, model_name, base_url, temperature=0.7, num_ctx=8192):
+                super().__init__()
+                self.model_name = model_name
+                self.base_url = base_url
+                self.temperature = temperature
+                self.num_ctx = num_ctx
+                self.client = ollama.Client(host=base_url)
+                self.bound_tools = []  # 儲存綁定的工具
+            
+            def bind_tools(self, tools):
+                """綁定工具到 LLM（LangChain create_tool_calling_agent 需要此方法）"""
+                # 創建一個新的實例，但綁定工具
+                new_instance = OllamaWrapper(
+                    self.model_name, 
+                    self.base_url, 
+                    self.temperature, 
+                    self.num_ctx
+                )
+                new_instance.bound_tools = tools
+                return new_instance
+            
+            def bind(self, **kwargs):
+                """實現 bind 方法（LangChain Runnable 需要）"""
+                new_instance = OllamaWrapper(
+                    self.model_name,
+                    self.base_url,
+                    self.temperature,
+                    self.num_ctx
+                )
+                # 複製 kwargs 到新實例
+                for key, value in kwargs.items():
+                    setattr(new_instance, key, value)
+                return new_instance
+            
+            def invoke(self, input, config=None):
+                """調用 Ollama API，返回類似 LangChain AIMessage 的對象"""
+                try:
+                    # 處理不同類型的輸入
+                    prompt_text = self._extract_prompt(input)
+                    
+                    response = self.client.generate(
+                        model=self.model_name,
+                        prompt=prompt_text,
+                        options={
+                            'temperature': self.temperature,
+                            'num_ctx': self.num_ctx
+                        }
+                    )
+                    
+                    # 返回 LangChain AIMessage
+                    return AIMessage(content=response['response'])
+                except Exception as e:
+                    print(f"❌ Ollama API 調用失敗: {e}")
+                    raise
+            
+            def _extract_prompt(self, input):
+                """從不同類型的輸入中提取提示詞文字"""
+                # 如果 prompt 是字符串，直接使用
+                if isinstance(input, str):
+                    return input
+                # 如果是消息列表，提取內容
+                elif isinstance(input, list):
+                    prompt_text = ""
+                    for msg in input:
+                        if hasattr(msg, 'content'):
+                            prompt_text += str(msg.content) + "\n"
+                        elif isinstance(msg, dict):
+                            if 'content' in msg:
+                                prompt_text += str(msg['content']) + "\n"
+                            elif 'text' in msg:
+                                prompt_text += str(msg['text']) + "\n"
+                        else:
+                            prompt_text += str(msg) + "\n"
+                    return prompt_text.strip()
+                # 如果是單個消息對象
+                elif hasattr(input, 'content'):
+                    return str(input.content)
+                else:
+                    return str(input)
+        
+        llm = OllamaWrapper(model_name, base_url, temperature=0.7, num_ctx=8192)
+        print(f"✅ Ollama API 初始化成功，模型: {model_name}")
+        return llm
+    except ImportError:
+        print("❌ ollama 套件未安裝，請執行: pip install ollama")
+        return None
+    except Exception as e:
+        print(f"❌ Ollama API 初始化失敗: {e}")
+        import traceback
+        traceback.print_exc()
+        return None
+
 def init_gemini(model_name = 'gemini-2.5-flash'):
-    """初始化主要的Gemini API（優先使用新版 SDK）"""
+    """初始化主要的Gemini API（保留功能，但預設使用 Ollama）"""
     try:
         api_key = get_api_key()  # 使用tool/api_keys.py
         # 強制優先使用新版 Google GenAI SDK
@@ -281,6 +382,30 @@ def init_gemini(model_name = 'gemini-2.5-flash'):
         print(f"🔍 [DEBUG] 完整錯誤堆疊:")
         traceback.print_exc()
         return None
+
+def init_ai(model_name=None, ai_type='ollama'):
+    """
+    統一的 AI 初始化函數，預設使用 Ollama
+    
+    Args:
+        model_name: 模型名稱
+            - Ollama: 'qwen2.5:14b' (預設)
+            - Gemini: 'gemini-2.5-flash' (預設)
+        ai_type: 'ollama' 或 'gemini'，預設為 'ollama'
+    
+    Returns:
+        LLM 實例
+    """
+    if ai_type == 'ollama':
+        if model_name is None:
+            model_name = 'qwen2.5:14b'
+        return init_ollama(model_name=model_name)
+    elif ai_type == 'gemini':
+        if model_name is None:
+            model_name = 'gemini-2.5-flash'
+        return init_gemini(model_name=model_name)
+    else:
+        raise ValueError(f"不支援的 AI 類型: {ai_type}，請使用 'ollama' 或 'gemini'")
 
 
 def init_mongo_data():

@@ -85,12 +85,18 @@ class MultiGroupAPIKeyManager:
         """隨機選擇一個可用的API密鑰組"""
         available_groups = list(self.api_groups.keys())
         if not available_groups:
-            raise ValueError("沒有可用的API密鑰組")
+            # Ollama 不需要 API key，返回一個預設組名
+            print("⚠️ 沒有可用的API密鑰組，使用 Ollama（不需要 API key）")
+            return "ollama"
         
         return random.choice(available_groups)
     
     def _get_group_keys(self, group_name: str) -> List[str]:
         """獲取指定組的API密鑰"""
+        if group_name == "ollama":
+            # Ollama 不需要 API key，返回空列表
+            return []
+        
         if group_name not in self.api_groups:
             raise ValueError(f"API密鑰組 '{group_name}' 不存在")
         
@@ -98,6 +104,9 @@ class MultiGroupAPIKeyManager:
     
     def get_random_key(self) -> str:
         """隨機獲取一個API密鑰"""
+        if self.current_group == "ollama":
+            # Ollama 不需要 API key
+            return ""
         if not self.api_keys:
             raise ValueError(f"API密鑰組 '{self.current_group}' 沒有可用的密鑰")
         return random.choice(self.api_keys)
@@ -149,8 +158,17 @@ class MultiGroupAPIKeyManager:
         print(f"🔄 重新載入API密鑰組: {self.current_group}")
         print(f"📊 可用密鑰數量: {len(self.api_keys)} 個")
 
-# 創建全局實例（預設隨機選擇組）
-api_key_manager = MultiGroupAPIKeyManager()
+# 創建全局實例（預設使用 Ollama，不需要 API key）
+try:
+    api_key_manager = MultiGroupAPIKeyManager()
+except ValueError:
+    # 如果沒有 API key 組，創建一個使用 Ollama 的實例
+    api_key_manager = MultiGroupAPIKeyManager.__new__(MultiGroupAPIKeyManager)
+    api_key_manager.api_groups = {}
+    api_key_manager.current_group = "ollama"
+    api_key_manager.api_keys = []
+    api_key_manager.current_index = 0
+    print("✅ 使用 Ollama（不需要 API key）")
 
 def get_api_key(api_group: Optional[str] = None) -> str:
     """

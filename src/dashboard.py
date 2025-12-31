@@ -7,7 +7,7 @@
 from flask import Blueprint, request, jsonify
 from flask_cors import cross_origin
 from tool.api_keys import get_api_key
-from accessories import init_gemini
+from accessories import init_ai, init_ollama, init_gemini
 import json
 import re
 from datetime import datetime, timedelta

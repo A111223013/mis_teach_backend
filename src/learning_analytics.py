@@ -10,7 +10,7 @@ from datetime import datetime, timedelta
 from collections import defaultdict
 from flask import Blueprint, request, jsonify
 from sqlalchemy import text
-from accessories import sqldb, mongo, init_gemini, redis_client
+from accessories import sqldb, mongo, init_ai, init_ollama, init_gemini, redis_client
 from bson import ObjectId
 from src.api import get_user_info
 from src.quiz_generator import generate_quiz_by_ai
@@ -1709,7 +1709,8 @@ def generate_ai_coach_analysis(overview_data: Dict, domains: List[Dict], quiz_re
         logger.info(f"🔄 開始執行AI教練分析查詢流程...")
         
         # 初始化Gemini模型
-        model = init_gemini('gemini-2.5-flash')
+        # 預設使用 Ollama
+        model = init_ai(ai_type='ollama')
         
         # 準備分析數據
         total_attempts = overview_data.get('total_attempts', 0)
@@ -1761,9 +1762,9 @@ def generate_ai_coach_analysis(overview_data: Dict, domains: List[Dict], quiz_re
 格式：直接輸出文字，不要使用markdown格式。
 """
 
-        # 調用Gemini API
-        response = model.generate_content(prompt)
-        ai_analysis = response.text.strip()
+        # 調用 AI API（預設使用 Ollama）
+        response = model.invoke(prompt)
+        ai_analysis = response.content.strip() if hasattr(response, 'content') else str(response).strip()
         
         result = {
             'analysis': ai_analysis,
@@ -2289,7 +2290,8 @@ def generate_learning_path_recommendations(concept_id: str, concept_relations: D
 """
         
         # 調用Gemini API
-        model = init_gemini('gemini-2.5-flash')
+        # 預設使用 Ollama
+        model = init_ai(ai_type='ollama')
         response = model.generate_content(prompt)
         ai_response = response.text.strip()
         
@@ -2822,7 +2824,8 @@ def generate_ai_diagnosis(concept_name: str, domain_name: str, mastery: float,
     
     try:
         # 初始化Gemini模型
-        model = init_gemini('gemini-2.5-flash')
+        # 預設使用 Ollama
+        model = init_ai(ai_type='ollama')
         
         # 準備診斷數據
         wrong_count = total_attempts - correct_attempts

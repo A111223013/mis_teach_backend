@@ -343,29 +343,11 @@ class SmartQuizGenerator:
             try:
                 logger.info(f"🔄 第 {question_number} 題，第 {attempt + 1} 次嘗試")
                 
-                # 直接初始化LLM，避免循環導入問題
-                from langchain_google_genai import ChatGoogleGenerativeAI
-                import sys
-                import os
+                # 直接初始化LLM，預設使用 Ollama
+                from accessories import init_ai
                 
-                # 添加tool目錄到路徑
-                tool_path = os.path.join(os.path.dirname(__file__), '..', 'tool')
-                if tool_path not in sys.path:
-                    sys.path.append(tool_path)
-                
-                from api_keys import get_api_key
-                
-                # 初始化LLM
-                api_key = get_api_key()
-                llm = ChatGoogleGenerativeAI(
-                    model="gemini-2.5-flash",
-                    google_api_key=api_key,
-                    temperature=0.7,
-                    top_p=0.8,
-                    top_k=40,
-                    max_output_tokens=8192,  # 增加到8192以避免截斷
-                    convert_system_message_to_human=True
-                )
+                # 初始化LLM（預設使用 Ollama）
+                llm = init_ai(ai_type='ollama')
                 
                 # LLM已經初始化完成
                 
@@ -440,28 +422,10 @@ class SmartQuizGenerator:
                 logger.info(f"🔄 基於內容生成第 {question_number} 題，第 {attempt + 1} 次嘗試")
                 
                 # 直接初始化LLM，避免循環導入問題
-                from langchain_google_genai import ChatGoogleGenerativeAI
-                import sys
-                import os
+                from accessories import init_ai
                 
-                # 添加tool目錄到路徑
-                tool_path = os.path.join(os.path.dirname(__file__), '..', 'tool')
-                if tool_path not in sys.path:
-                    sys.path.append(tool_path)
-                
-                from api_keys import get_api_key
-                
-                # 初始化LLM
-                api_key = get_api_key()
-                llm = ChatGoogleGenerativeAI(
-                    model="gemini-2.5-flash",
-                    google_api_key=api_key,
-                    temperature=0.7,
-                    top_p=0.8,
-                    top_k=40,
-                    max_output_tokens=8192,
-                    convert_system_message_to_human=True
-                )
+                # 初始化LLM（預設使用 Ollama Qwen）
+                llm = init_ai(ai_type='ollama')
                 
                 # 構建基於內容的動態提示詞
                 prompt = self._build_content_based_prompt(selected_text, difficulty, question_type)
@@ -1614,16 +1578,10 @@ class SimilarQuizGenerator:
                 from api_keys import get_api_key
                 
                 # 初始化LLM
-                api_key = get_api_key()
-                llm = ChatGoogleGenerativeAI(
-                    model="gemini-2.5-flash",
-                    google_api_key=api_key,
-                    temperature=0.8,  # 提高創造性
-                    top_p=0.9,
-                    top_k=40,
-                    max_output_tokens=8192,
-                    convert_system_message_to_human=True
-                )
+                from accessories import init_ai
+                
+                # 預設使用 Ollama Qwen
+                llm = init_ai(ai_type='ollama')
                 
                 # 構建相似題目專用的提示詞
                 prompt = self._build_similar_question_prompt(selected_text, topic, difficulty, question_type)

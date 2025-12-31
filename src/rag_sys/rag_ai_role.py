@@ -13,7 +13,7 @@ from datetime import datetime
 import logging
 import chromadb
 from chromadb.config import Settings
-from accessories import init_gemini
+from accessories import init_ai, init_ollama, init_gemini
 
 # 設置日誌
 logging.basicConfig(level=logging.INFO)
@@ -592,41 +592,46 @@ def search_knowledge(query: str, top_k: int = 5) -> List[Dict[str, Any]]:
         return []
 
 def translate_to_english(text: str) -> str:
-    # 使用Gemini進行翻譯
-    model = init_gemini(model_name = 'gemini-2.5-flash')
-    prompt = f"""請將以下中文問題翻譯成英文，保持專業術語的準確性：
+    """將中文問題翻譯成英文"""
+    try:
+        # 使用 Ollama 進行翻譯（預設）
+        model = init_ollama(model_name='qwen2.5:14b')
+        if not model:
+            return "Translation failed: Ollama service unavailable"
+            
+        prompt = f"""請將以下中文問題翻譯成英文，保持專業術語的準確性：
 
 中文問題：{text}
 
 請只返回英文翻譯，不要添加任何解釋或額外文字。"""
-    
-    response = model.generate_content(prompt)
-    
-    # 檢查回應是否有效
-    if not response or not hasattr(response, 'text'):
-        return "Translation failed: Invalid response format"
-    
-    # 檢查安全評級
-    if hasattr(response, 'candidates') and response.candidates:
-        candidate = response.candidates[0]
-        if hasattr(candidate, 'safety_ratings') and candidate.safety_ratings:
-            # 檢查是否有安全問題
-            for rating in candidate.safety_ratings:
-                if rating.category in ['HARM_CATEGORY_HARASSMENT', 'HARM_CATEGORY_HATE_SPEECH', 
-                                     'HARM_CATEGORY_SEXUALLY_EXPLICIT', 'HARM_CATEGORY_DANGEROUS_CONTENT']:
-                    if rating.probability in ['HIGH', 'MEDIUM']:
-                        return "Translation failed: Response blocked by safety filter"
-    
-    # 安全地存取回應文字
-    try:
-        if response.text:
-            english_text = response.text.strip()
-            return english_text
+        
+        # 使用 invoke 方法（Ollama 使用 LangChain 接口）
+        response = model.invoke(prompt)
+        
+        # 檢查回應是否有效
+        if not response:
+            return "Translation failed: Invalid response format"
+        
+        # 處理 Ollama 回應（LangChain AIMessage）
+        if hasattr(response, 'content'):
+            english_text = response.content.strip()
+            if english_text:
+                return english_text
+            else:
+                return "Translation failed: Empty response"
         else:
-            return "Translation failed: Empty response"
-    except Exception as text_error:
-        logger.error(f"無法存取回應文字: {text_error}")
-        return "Translation failed: Cannot access response text"
+            # 嘗試其他方式提取文字
+            english_text = str(response).strip()
+            if english_text:
+                return english_text
+            else:
+                return "Translation failed: Cannot extract response text"
+                
+    except Exception as e:
+        logger.error(f"翻譯失敗: {e}")
+        import traceback
+        traceback.print_exc()
+        return f"Translation failed: {str(e)}"
 
 
 # ==================== 輔助功能 ====================
@@ -1001,128 +1006,98 @@ def init_vector_database():
         return None, None
 
 
-def call_gemini_api(prompt: str) -> str:
-    """調用Gemini API"""
+def call_gemini_api(prompt: str, ai_type: str = 'ollama') -> str:
+    """
+    調用 AI API（預設使用 Ollama，可選擇 Gemini）
+    
+    Args:
+        prompt: 提示詞
+        ai_type: 'ollama' (預設) 或 'gemini'
+    """
     try:
-        model = init_gemini(model_name = 'gemini-2.5-flash')
-        if not model:
-            return "抱歉，AI服務暫時不可用，請稍後再試。"
-        
-        # 設置生成參數，確保回應完整
-        generation_config = {
-            'max_output_tokens': 8192,  # 增加最大輸出長度，確保完整回答（特別是錯題解析）
-            'temperature': 0.7,
-            'top_p': 0.8,
-            'top_k': 40
-        }
-        
-        response = model.generate_content(prompt, generation_config=generation_config)
-        logger.info(f"📥 Gemini API回應接收，類型: {type(response).__name__}")
+        # 預設使用 Ollama
+        if ai_type == 'ollama':
+            model = init_ollama(model_name='qwen2.5:14b')
+            if not model:
+                return "抱歉，Ollama 服務暫時不可用，請稍後再試。"
+            # 使用 LangChain 的 invoke 方法
+            response = model.invoke(prompt)
+        else:
+            # 使用 Gemini
+            model = init_gemini(model_name='gemini-2.5-flash')
+            if not model:
+                return "抱歉，Gemini 服務暫時不可用，請稍後再試。"
+            # 設置生成參數
+            generation_config = {
+                'max_output_tokens': 8192,
+                'temperature': 0.7,
+                'top_p': 0.8,
+                'top_k': 40
+            }
+            response = model.generate_content(prompt, generation_config=generation_config)
+        logger.info(f"📥 AI API回應接收，類型: {type(response).__name__}")
         
         # 檢查回應是否有效
         if not response:
-            logger.error("❌ Gemini API返回空回應")
+            logger.error(f"❌ {ai_type.upper()} API返回空回應")
             return "抱歉，AI回應格式不正確，請稍後再試。"
         
-        # 檢查是否為新版SDK的響應結構（可能是GenerateContentResponse或類似）
-        # 新版SDK可能直接有text屬性或者需要從candidates中提取
+        # 處理 Ollama 回應（LangChain AIMessage）
+        if ai_type == 'ollama':
+            try:
+                if hasattr(response, 'content'):
+                    text = response.content
+                    if text and text.strip():
+                        logger.info(f"✅ 從response.content獲取回應，長度: {len(text)} 字符")
+                        return text.strip()
+            except Exception as e:
+                logger.debug(f"無法從response.content獲取: {e}")
         
-        # 方法1：直接檢查text屬性（舊版SDK和某些新版SDK）
-        try:
-            if hasattr(response, 'text'):
-                text = response.text
-                if text and text.strip():
-                    logger.info(f"✅ 從response.text獲取回應，長度: {len(text)} 字符")
-                    return text.strip()
-        except Exception as e:
-            logger.debug(f"無法從response.text獲取: {e}")
+        # 處理 Gemini 回應
+        else:
+            # 方法1：直接檢查text屬性
+            try:
+                if hasattr(response, 'text'):
+                    text = response.text
+                    if text and text.strip():
+                        logger.info(f"✅ 從response.text獲取回應，長度: {len(text)} 字符")
+                        return text.strip()
+            except Exception as e:
+                logger.debug(f"無法從response.text獲取: {e}")
+            
+            # 方法2：檢查candidates
+            try:
+                if hasattr(response, 'candidates') and response.candidates:
+                    candidate = response.candidates[0]
+                    if hasattr(candidate, 'content'):
+                        content = candidate.content
+                        if hasattr(content, 'parts'):
+                            text_parts = []
+                            for part in content.parts:
+                                if hasattr(part, 'text'):
+                                    text_parts.append(part.text)
+                            if text_parts:
+                                full_text = ''.join(text_parts).strip()
+                                if full_text:
+                                    logger.info(f"✅ 從candidates.content.parts獲取回應，長度: {len(full_text)} 字符")
+                                    return full_text
+            except Exception as e:
+                logger.debug(f"無法從candidates提取: {e}")
         
-        # 方法2：檢查candidates（新版和舊版SDK都可能使用）
-        try:
-            if hasattr(response, 'candidates') and response.candidates:
-                candidate = response.candidates[0]
-                
-                # 檢查是否被阻止
-                finish_reason = None
-                if hasattr(candidate, 'finish_reason'):
-                    finish_reason = candidate.finish_reason
-                elif isinstance(candidate, dict):
-                    finish_reason = candidate.get('finish_reason')
-                
-                if finish_reason == 'SAFETY':
-                    logger.warning("⚠️ 回應被安全過濾器阻止")
-                    return "抱歉，AI回應被安全過濾器阻擋，請稍後再試。"
-                
-                # 檢查安全評級
-                safety_ratings = None
-                if hasattr(candidate, 'safety_ratings') and candidate.safety_ratings:
-                    safety_ratings = candidate.safety_ratings
-                elif isinstance(candidate, dict) and 'safety_ratings' in candidate:
-                    safety_ratings = candidate['safety_ratings']
-                
-                if safety_ratings:
-                    for rating in safety_ratings:
-                        category = rating.category if hasattr(rating, 'category') else rating.get('category', '')
-                        probability = rating.probability if hasattr(rating, 'probability') else rating.get('probability', '')
-                        if category in ['HARM_CATEGORY_HARASSMENT', 'HARM_CATEGORY_HATE_SPEECH', 
-                                     'HARM_CATEGORY_SEXUALLY_EXPLICIT', 'HARM_CATEGORY_DANGEROUS_CONTENT']:
-                            if probability in ['HIGH', 'MEDIUM']:
-                                logger.warning(f"⚠️ 安全評級阻止：{category} = {probability}")
-                                return "抱歉，AI回應被安全過濾器阻擋，請稍後再試。"
-                
-                # 從content.parts中提取文字（新版SDK常用）
-                content = None
-                if hasattr(candidate, 'content'):
-                    content = candidate.content
-                elif isinstance(candidate, dict) and 'content' in candidate:
-                    content = candidate['content']
-                
-                if content:
-                    parts = None
-                    if hasattr(content, 'parts'):
-                        parts = content.parts
-                    elif isinstance(content, dict) and 'parts' in content:
-                        parts = content['parts']
-                    
-                    if parts:
-                        text_parts = []
-                        for part in parts:
-                            part_text = None
-                            if hasattr(part, 'text'):
-                                part_text = part.text
-                            elif isinstance(part, dict) and 'text' in part:
-                                part_text = part['text']
-                            elif isinstance(part, str):
-                                part_text = part
-                            
-                            if part_text:
-                                text_parts.append(str(part_text))
-                        
-                        if text_parts:
-                            full_text = ''.join(text_parts).strip()
-                            if full_text:
-                                logger.info(f"✅ 從candidates.content.parts獲取回應，長度: {len(full_text)} 字符")
-                                return full_text
-        except Exception as e:
-            logger.debug(f"無法從candidates提取: {e}")
-        
-        # 方法3：嘗試將回應轉為字符串（某些情況下可能直接是字符串）
+        # 嘗試直接轉為字符串
         try:
             response_str = str(response)
-            if response_str and response_str.strip() and len(response_str) > 10:  # 避免只是類型名稱
+            if response_str and response_str.strip() and len(response_str) > 10:
                 logger.info(f"✅ 從字符串轉換獲取回應，長度: {len(response_str)} 字符")
                 return response_str.strip()
         except Exception as e:
             logger.debug(f"無法轉換為字符串: {e}")
         
-        # 如果所有方式都失敗，記錄詳細錯誤
         logger.error(f"❌ 無法從回應中提取文字")
         logger.error(f"   回應類型: {type(response).__name__}")
         logger.error(f"   回應屬性: {[attr for attr in dir(response) if not attr.startswith('_')]}")
-        if hasattr(response, 'candidates') and response.candidates:
-            logger.error(f"   candidates數量: {len(response.candidates)}")
         return "抱歉，無法存取AI回應，請稍後再試。"
         
     except Exception as e:
-        logger.error(f"❌ Gemini API調用失敗: {e}", exc_info=True)
+        logger.error(f"❌ {ai_type.upper()} API調用失敗: {e}", exc_info=True)
         return "抱歉，AI回應生成失敗，請稍後再試。"
