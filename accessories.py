@@ -222,17 +222,44 @@ def init_ollama(model_name='qwen2.5:14b', base_url='http://localhost:11434'):
                     # 處理不同類型的輸入
                     prompt_text = self._extract_prompt(input)
                     
-                    response = self.client.generate(
-                        model=self.model_name,
-                        prompt=prompt_text,
-                        options={
-                            'temperature': self.temperature,
-                            'num_ctx': self.num_ctx
-                        }
-                    )
+                    # 嘗試從輸入中提取對話歷史（如果有的話）
+                    messages = self._extract_messages(input)
+                    
+                    # 如果有對話歷史，使用 chat API；否則使用 generate API
+                    if messages and len(messages) > 1:
+                        # 使用 chat API 維護對話上下文
+                        response = self.client.chat(
+                            model=self.model_name,
+                            messages=messages,
+                            options={
+                                'temperature': self.temperature,
+                                'num_ctx': self.num_ctx
+                            }
+                        )
+                        # 提取回應內容
+                        if isinstance(response, dict):
+                            if 'message' in response and 'content' in response['message']:
+                                content = response['message']['content']
+                            elif 'response' in response:
+                                content = response['response']
+                            else:
+                                content = str(response)
+                        else:
+                            content = str(response)
+                    else:
+                        # 單次調用，使用 generate API
+                        response = self.client.generate(
+                            model=self.model_name,
+                            prompt=prompt_text,
+                            options={
+                                'temperature': self.temperature,
+                                'num_ctx': self.num_ctx
+                            }
+                        )
+                        content = response['response']
                     
                     # 返回 LangChain AIMessage
-                    return AIMessage(content=response['response'])
+                    return AIMessage(content=content)
                 except Exception as e:
                     print(f"❌ Ollama API 調用失敗: {e}")
                     raise
@@ -261,6 +288,82 @@ def init_ollama(model_name='qwen2.5:14b', base_url='http://localhost:11434'):
                     return str(input.content)
                 else:
                     return str(input)
+            
+            def _extract_messages(self, input):
+                """從輸入中提取對話消息列表（用於 chat API）"""
+                messages = []
+                
+                # 如果輸入是字符串，檢查是否包含對話歷史格式
+                if isinstance(input, str):
+                    # 檢查是否包含「對話歷史」或「conversation_history」等關鍵字
+                    # 如果有，嘗試解析；否則作為單一用戶消息
+                    if '對話歷史' in input or 'conversation_history' in input or '**對話歷史**' in input:
+                        # 嘗試從字符串中提取對話歷史
+                        # 這裡我們將整個提示詞作為系統消息，然後添加用戶消息
+                        # 實際的對話歷史應該已經包含在提示詞中
+                        messages.append({
+                            'role': 'user',
+                            'content': input
+                        })
+                    else:
+                        # 單一消息
+                        messages.append({
+                            'role': 'user',
+                            'content': input
+                        })
+                # 如果是消息列表
+                elif isinstance(input, list):
+                    for msg in input:
+                        if isinstance(msg, dict):
+                            # 標準消息格式
+                            role = msg.get('role', 'user')
+                            content = msg.get('content', msg.get('text', str(msg)))
+                            messages.append({
+                                'role': role if role in ['user', 'assistant', 'system'] else 'user',
+                                'content': content
+                            })
+                        elif hasattr(msg, 'content'):
+                            # LangChain 消息對象
+                            role = 'user'
+                            if hasattr(msg, 'type'):
+                                if msg.type == 'human':
+                                    role = 'user'
+                                elif msg.type == 'ai':
+                                    role = 'assistant'
+                                elif msg.type == 'system':
+                                    role = 'system'
+                            messages.append({
+                                'role': role,
+                                'content': str(msg.content)
+                            })
+                        else:
+                            # 其他類型，作為用戶消息
+                            messages.append({
+                                'role': 'user',
+                                'content': str(msg)
+                            })
+                # 如果是單個消息對象
+                elif hasattr(input, 'content'):
+                    role = 'user'
+                    if hasattr(input, 'type'):
+                        if input.type == 'human':
+                            role = 'user'
+                        elif input.type == 'ai':
+                            role = 'assistant'
+                        elif input.type == 'system':
+                            role = 'system'
+                    messages.append({
+                        'role': role,
+                        'content': str(input.content)
+                    })
+                else:
+                    # 其他情況，作為用戶消息
+                    messages.append({
+                        'role': 'user',
+                        'content': str(input)
+                    })
+                
+                return messages if len(messages) > 0 else None
         
         llm = OllamaWrapper(model_name, base_url, temperature=0.7, num_ctx=8192)
         print(f"✅ Ollama API 初始化成功，模型: {model_name}")
@@ -301,18 +404,22 @@ def init_gemini(model_name = 'gemini-2.5-flash'):
                     self.sdk_version = "new"
                     print(f"🔍 [DEBUG] GeminiWrapper 初始化完成，模型: {model_name}")
                 
+                def invoke(self, input, config=None):
+                    """統一的調用接口，兼容 LangChain 和其他框架"""
+                    return self.generate_content(input, config)
+
                 def generate_content(self, contents, generation_config=None):
                     """兼容舊版 API 的 generate_content 方法，優化圖片處理"""
                     print(f"🔍 [DEBUG] generate_content 被呼叫，contents 類型: {type(contents)}")
                     if generation_config:
                         print(f"🔍 [DEBUG] 包含 generation_config: {generation_config}")
-                    
+
                     # 準備請求參數
                     request_params = {
                         'model': self.model_name,
                         'contents': contents if isinstance(contents, list) else [contents]
                     }
-                    
+
                     # 新版 SDK 的 generation_config 參數名稱可能不同
                     if generation_config:
                         # 將舊版參數轉換為新版參數
@@ -325,15 +432,15 @@ def init_gemini(model_name = 'gemini-2.5-flash'):
                             config['top_p'] = generation_config['top_p']
                         if 'top_k' in generation_config:
                             config['top_k'] = generation_config['top_k']
-                        
+
                         if config:
                             request_params['config'] = config
-                    
+
                     if isinstance(contents, str):
                         print("🔍 [DEBUG] 處理純文字內容")
                     elif isinstance(contents, list):
                         print(f"🔍 [DEBUG] 處理列表內容，項目數: {len(contents)}")
-                        
+
                         # 檢查是否包含圖片
                         has_images = False
                         for i, item in enumerate(contents):
@@ -343,12 +450,12 @@ def init_gemini(model_name = 'gemini-2.5-flash'):
                                 has_images = True
                             else:
                                 print(f"🔍 [DEBUG] 項目 {i}: {item_type} - {str(item)[:50]}...")
-                        
+
                         if has_images:
                             print("🔍 [DEBUG] 檢測到圖片內容，使用新版 SDK 圖片處理")
                     else:
                         print(f"🔍 [DEBUG] 處理其他格式內容: {type(contents)}")
-                    
+
                     try:
                         response = self.client.models.generate_content(**request_params)
                         print(f"🔍 [DEBUG] 新版 SDK 回應類型: {type(response)}")
@@ -373,8 +480,23 @@ def init_gemini(model_name = 'gemini-2.5-flash'):
             print("🔍 [DEBUG] 回退到舊版 SDK")
             genai.configure(api_key=api_key)
             model = genai.GenerativeModel(model_name)
-            print("✅ Gemini API 初始化成功 (舊版 SDK)")
-            return model
+
+            # 為舊版SDK的GenerativeModel添加invoke和generate_content方法以保持API一致性
+            class LegacyGeminiWrapper:
+                def __init__(self, model):
+                    self.model = model
+
+                def invoke(self, prompt, **kwargs):
+                    """舊版SDK的invoke方法包裝"""
+                    return self.model.generate_content(prompt, **kwargs)
+
+                def generate_content(self, prompt, **kwargs):
+                    """直接調用generate_content以便grade_answer.py識別為Gemini模型"""
+                    return self.model.generate_content(prompt, **kwargs)
+
+            wrapped_model = LegacyGeminiWrapper(model)
+            print("✅ Gemini API 初始化成功 (舊版 SDK - 已包裝)")
+            return wrapped_model
             
     except Exception as e:
         print(f"❌ Gemini API 初始化失敗: {e}")
@@ -383,7 +505,7 @@ def init_gemini(model_name = 'gemini-2.5-flash'):
         traceback.print_exc()
         return None
 
-def init_ai(model_name=None, ai_type='ollama'):
+def init_ai(model_name=None, ai_type='gemini'):
     """
     統一的 AI 初始化函數，預設使用 Ollama
     
@@ -391,7 +513,7 @@ def init_ai(model_name=None, ai_type='ollama'):
         model_name: 模型名稱
             - Ollama: 'qwen2.5:14b' (預設)
             - Gemini: 'gemini-2.5-flash' (預設)
-        ai_type: 'ollama' 或 'gemini'，預設為 'ollama'
+        ai_type: 'gemini' (預設) 或 'ollama'
     
     Returns:
         LLM 實例

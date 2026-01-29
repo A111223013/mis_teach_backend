@@ -995,8 +995,8 @@ def generate_quiz_question(requirements: str) -> str:
     try:
         from accessories import init_ai
         
-        # 預設使用 Ollama
-        llm = init_ai(ai_type='ollama')
+        # 使用 Gemini
+        llm = init_ai(ai_type='gemini')
         
         # 構建提示詞
         prompt = f"""請根據以下需求生成一道測驗題目：
@@ -1038,8 +1038,8 @@ def generate_knowledge_point(query: str) -> str:
     try:
         from accessories import init_ai
         
-        # 初始化 Ollama（預設使用 Qwen）
-        llm = init_ai(ai_type='ollama')
+        # 初始化 Gemini
+        llm = init_ai(ai_type='gemini')
         
         # 構建提示詞
         if query and query.strip():
@@ -1147,10 +1147,10 @@ def grade_answer(answer: str, correct_answer: str, question: str) -> str:
     """批改答案的純邏輯 - 調用 Gemini API"""
     try:
         from accessories import init_ai
-        
-        # 預設使用 Ollama Qwen
-        llm = init_ai(ai_type='ollama')
-        
+
+        # 使用 Gemini
+        llm = init_ai(ai_type='gemini')
+
         # 如果沒有提供正確答案，讓 AI 根據題目判斷
         if not correct_answer and question:
             # 從題目中提取選項，讓 AI 判斷正確答案
@@ -1233,9 +1233,9 @@ def provide_tutoring(question: str, user_answer: str, correct_answer: str) -> st
     try:
         from accessories import init_ai
         
-        # 預設使用 Ollama Qwen
-        llm = init_ai(ai_type='ollama')
-        
+        # 使用 Gemini
+        llm = init_ai(ai_type='gemini')
+
         prompt = f"""請作為 AI 導師，為以下問題提供教學指導：
 
 問題：{question}

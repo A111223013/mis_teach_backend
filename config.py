@@ -63,8 +63,8 @@ class DevelopmentConfig(Config):
     SQLALCHEMY_BINDS = {}
     
     API_BASE_URL = 'http://localhost:5000'
-    # ngrok 前端網址：https://2244e984b70a.ngrok-free.app
-    DOMAIN_NAME = 'https://2244e984b70a.ngrok-free.app'
+    # Cloudflare Tunnel 前端網址：https://buried-processes-floor-beth.trycloudflare.com
+    DOMAIN_NAME = 'https://buried-processes-floor-beth.trycloudflare.com'
     DEBUG = True
 
 class ProductionConfig(Config):

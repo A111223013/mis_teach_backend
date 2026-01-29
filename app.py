@@ -59,7 +59,7 @@ else:
 
 domain_name_config = app.config.get('DOMAIN_NAME')
 
-# 定義允許的來源（包含所有 ngrok instant endpoints 和 localhost）
+# 定義允許的來源（包含所有 ngrok instant endpoints、Cloudflare Tunnel 和 localhost）
 def is_allowed_origin(origin):
     """檢查來源是否為允許的域名"""
     if not origin:
@@ -69,6 +69,9 @@ def is_allowed_origin(origin):
         return True
     # 允許所有 .ngrok-free.app 和 .ngrok.io 域名（Docker Desktop instant endpoints）
     if origin.endswith('.ngrok-free.app') or origin.endswith('.ngrok.io'):
+        return True
+    # 允許所有 .trycloudflare.com 域名（Cloudflare Tunnel）
+    if origin.endswith('.trycloudflare.com'):
         return True
     # 也允許配置的特定域名
     if origin == app.config.get('DOMAIN_NAME'):

@@ -60,12 +60,12 @@ def get_google_api_key():
         logger.error(f"❌ 獲取 API Key 失敗: {e}")
         return None
 
-def init_llm(ai_type='ollama'):
+def init_llm(ai_type='gemini'):
     """
     初始化LLM模型（預設使用 Ollama，可選擇 Gemini）
     
     Args:
-        ai_type: 'ollama' (預設) 或 'gemini'
+        ai_type: 'gemini' (預設) 或 'ollama'
     """
     try:
         if ai_type == 'ollama':

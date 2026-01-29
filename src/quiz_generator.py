@@ -343,11 +343,11 @@ class SmartQuizGenerator:
             try:
                 logger.info(f"🔄 第 {question_number} 題，第 {attempt + 1} 次嘗試")
                 
-                # 直接初始化LLM，預設使用 Ollama
+                # 直接初始化LLM，使用 Gemini
                 from accessories import init_ai
-                
-                # 初始化LLM（預設使用 Ollama）
-                llm = init_ai(ai_type='ollama')
+
+                # 初始化LLM（使用 Gemini）
+                llm = init_ai(ai_type='gemini')
                 
                 # LLM已經初始化完成
                 
@@ -424,8 +424,8 @@ class SmartQuizGenerator:
                 # 直接初始化LLM，避免循環導入問題
                 from accessories import init_ai
                 
-                # 初始化LLM（預設使用 Ollama Qwen）
-                llm = init_ai(ai_type='ollama')
+                # 初始化LLM（使用 Gemini）
+                llm = init_ai(ai_type='gemini')
                 
                 # 構建基於內容的動態提示詞
                 prompt = self._build_content_based_prompt(selected_text, difficulty, question_type)
@@ -1580,8 +1580,8 @@ class SimilarQuizGenerator:
                 # 初始化LLM
                 from accessories import init_ai
                 
-                # 預設使用 Ollama Qwen
-                llm = init_ai(ai_type='ollama')
+                # 使用 Gemini
+                llm = init_ai(ai_type='gemini')
                 
                 # 構建相似題目專用的提示詞
                 prompt = self._build_similar_question_prompt(selected_text, topic, difficulty, question_type)

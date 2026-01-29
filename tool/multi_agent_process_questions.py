@@ -7,8 +7,10 @@
 from tool.api_keys import get_api_key
 import json
 import re
+import os
+import base64
 from typing import Dict, Any, List, Optional
-from accessories import init_gemini
+from accessories import init_gemini, init_ollama
 
 
 # ========== Gemini API Key ==========
@@ -118,7 +120,7 @@ arbiter_agent_prompt_template = """
 
 
 # 初始化API
-init_gemini(model_name = 'gemini-1.5-flash')
+init_gemini(model_name = 'gemini-2.5-flash')
 
 def read_image_base64(image_path):
     if not os.path.exists(image_path):
@@ -127,25 +129,69 @@ def read_image_base64(image_path):
         encoded = base64.b64encode(f.read()).decode("utf-8")
         return encoded
 
+def call_ollama_vision_model(prompt, image_base64):
+    """調用 Ollama vision 模型處理圖片"""
+    try:
+        import ollama
+        import tempfile
+        
+        # 解碼 base64 圖片數據
+        image_data = base64.b64decode(image_base64)
+        
+        # 創建臨時文件來儲存圖片（Ollama API 需要文件路徑）
+        with tempfile.NamedTemporaryFile(delete=False, suffix='.png') as tmp_file:
+            tmp_file.write(image_data)
+            tmp_file_path = tmp_file.name
+        
+        try:
+            # 創建 Ollama 客戶端
+            client = ollama.Client(host='http://localhost:11434')
+            
+            # 調用 vision 模型
+            print(f"🖼️ 使用 Ollama vision 模型 (llama3.2-vision:11b) 處理圖片...")
+            response = client.chat(
+                model='llama3.2-vision:11b',
+                messages=[{
+                    'role': 'user',
+                    'content': prompt,
+                    'images': [tmp_file_path]  # 傳入圖片文件路徑
+                }]
+            )
+            
+            # 提取回應文字
+            if isinstance(response, dict):
+                if 'message' in response and 'content' in response['message']:
+                    return response['message']['content'].strip()
+                elif 'response' in response:
+                    return response['response'].strip()
+            elif isinstance(response, str):
+                return response.strip()
+            else:
+                return str(response).strip()
+        finally:
+            # 清理臨時文件
+            try:
+                os.unlink(tmp_file_path)
+            except:
+                pass
+            
+    except Exception as e:
+        print(f"⚠️ Ollama vision 模型調用失敗：{e}")
+        import traceback
+        traceback.print_exc()
+        return f"Ollama vision 模型調用失敗：{e}"
+
 def call_gemini_model(prompt, image_base64=None):
     """調用主代理人模型"""
     try:
-        model = init_gemini("gemini-2.0-flash")
-        
+        # 如果有圖片，使用 Ollama vision 模型
         if image_base64:
-            import base64
-            import io
-            from PIL import Image
-            
-            image_data = base64.b64decode(image_base64)
-            image = Image.open(io.BytesIO(image_data))
-            
-            response = model.generate_content([
-                prompt,
-                image  # 注意這裡是直接傳圖片物件
-            ])
-        else:
-            response = model.generate_content(prompt)
+            print(f"🔄 檢測到圖片，使用 Ollama vision 模型處理...")
+            return call_ollama_vision_model(prompt, image_base64)
+        
+        # 沒有圖片時使用 Gemini 模型
+        model = init_gemini("gemini-2.5-flash")
+        response = model.generate_content(prompt)
         
         # 檢查回應是否有效
         if not response or not hasattr(response, 'text'):
@@ -171,13 +217,15 @@ def call_gemini_model(prompt, image_base64=None):
             
     except Exception as e:
         print(f"⚠️ 主代理人調用失敗：{e}")
+        import traceback
+        traceback.print_exc()
         return f"主代理人調用失敗：{e}"
 
 def call_llama_model(prompt):
     """調用次代理人模型（改為使用 Gemini）"""
     try:
         # 使用 Gemini 作為次代理人，而不是本地 Ollama
-        model = init_gemini("gemini-2.0-flash")
+        model = init_gemini("gemini-2.5-flash")
         response = model.generate_content(prompt)
         
         # 檢查回應是否有效

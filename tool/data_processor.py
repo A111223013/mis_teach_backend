@@ -176,7 +176,7 @@ class DataProcessor:
                 return
             
             genai.configure(api_key=api_key)
-            self.model = genai.GenerativeModel('gemini-2.0-flash')
+            self.model = genai.GenerativeModel('gemini-2.5-flash')
             self.api_keys_count = get_api_keys_count()
             
             print(f"Gemini API 初始化成功，可用密鑰數量: {self.api_keys_count}")
@@ -337,7 +337,7 @@ class DataProcessor:
             # 獲取新的API密鑰
             api_key = get_api_key()
             genai.configure(api_key=api_key)
-            model = genai.GenerativeModel('gemini-2.0-flash')
+            model = genai.GenerativeModel('gemini-2.5-flash')
             
             # 構建AI判斷提示詞
             prompt = self.build_judgment_prompt(question_data)
@@ -513,7 +513,7 @@ class DataProcessor:
             # 獲取新的API密鑰
             api_key = get_api_key()
             genai.configure(api_key=api_key)
-            model = genai.GenerativeModel('gemini-2.0-flash')
+            model = genai.GenerativeModel('gemini-2.5-flash')
             
             # 構建提示詞
             prompt = self.build_knowledge_point_prompt(question_data)

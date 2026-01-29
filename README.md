@@ -1099,7 +1099,7 @@ import google.generativeai as genai
 # 初始化 Gemini
 api_key = get_api_key()
 genai.configure(api_key=api_key)
-model = genai.GenerativeModel('gemini-pro')
+model = genai.GenerativeModel('gemini-2.5-flash')
 
 # 生成內容
 response = model.generate_content("解釋資料庫正規化")

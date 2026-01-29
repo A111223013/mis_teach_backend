@@ -208,30 +208,49 @@ def handle_tutoring_conversation(user_email: str, question: str, user_answer: st
     """
     處理AI教學對話 - 重構版本
     整合了會話管理、知識檢索、AI回應和學習進度更新
-    新增：支援AI批改的評分反饋
+    新增：支援AI批改的評分反饋和學習分析資料
     """
     try:
         # 1. 獲取或創建會話
         session = get_or_create_session(user_email, question)
         conversation_history = session.get('conversation_history', [])
-        
+
         # 2. 判斷是否為初始化（基於更新前的對話歷史）
         original_history_length = len(conversation_history)
         is_initial = original_history_length == 0
-        
-        # 3. 構建AI提示詞
+
+        # 3. 獲取學生的學習分析資料（如果可用）
+        learning_context = get_student_learning_context(user_email, question)
+
+        # 4. 構建AI提示詞
         if is_initial:
             # 初始化：分析學生答案，提出引導問題
-            prompt = build_initial_prompt(question, user_answer, correct_answer, grading_feedback)
+            prompt = build_initial_prompt(question, user_answer, correct_answer, grading_feedback, learning_context)
         else:
             # 後續對話：基於學生回答進行教學
-            prompt = build_followup_prompt(question, user_answer, correct_answer, user_input, conversation_history, grading_feedback)
+            prompt = build_followup_prompt(question, user_answer, correct_answer, user_input, conversation_history, grading_feedback, learning_context)
         
         # 4. 增強提示詞（RAG功能）
         enhanced_prompt = enhance_prompt_with_knowledge(prompt, question)
         
-        # 5. 調用AI獲取回應
-        ai_response = call_gemini_api(enhanced_prompt)
+        # 5. 調用AI獲取回應（傳遞對話歷史以維護上下文）
+        ai_response = call_gemini_api(enhanced_prompt, ai_type='gemini', conversation_history=conversation_history)
+        
+        # 5.5. 檢查並確保回應包含評分（如果不是初始化階段）
+        if not is_initial and user_input:
+            score = extract_score_from_response(ai_response)
+            if score is None:
+                # 如果沒有評分，嘗試添加一個預設評分
+                logger.warning(f"⚠️ AI回應中沒有評分，嘗試添加預設評分")
+                # 根據學生回答的長度和內容，給出一個基礎評分
+                if len(user_input.strip()) > 10:
+                    default_score = 50  # 基礎分數
+                    ai_response = ai_response.rstrip() + f"\n\n評分：{default_score}分"
+                    logger.info(f"✅ 已添加預設評分：{default_score}分")
+                else:
+                    default_score = 30  # 較低分數
+                    ai_response = ai_response.rstrip() + f"\n\n評分：{default_score}分"
+                    logger.info(f"✅ 已添加預設評分：{default_score}分")
         
         # 6. 清理AI回應（移除評分等內部信息）
         clean_response = clean_ai_response(ai_response)
@@ -594,32 +613,44 @@ def search_knowledge(query: str, top_k: int = 5) -> List[Dict[str, Any]]:
 def translate_to_english(text: str) -> str:
     """將中文問題翻譯成英文"""
     try:
-        # 使用 Ollama 進行翻譯（預設）
-        model = init_ollama(model_name='qwen2.5:14b')
+        # 使用 Gemini 進行翻譯
+        model = init_ai(ai_type='gemini')
         if not model:
-            return "Translation failed: Ollama service unavailable"
-            
+            return "Translation failed: Gemini service unavailable"
+
         prompt = f"""請將以下中文問題翻譯成英文，保持專業術語的準確性：
 
 中文問題：{text}
 
 請只返回英文翻譯，不要添加任何解釋或額外文字。"""
-        
-        # 使用 invoke 方法（Ollama 使用 LangChain 接口）
+
+        # 使用 invoke 方法
         response = model.invoke(prompt)
-        
+
         # 檢查回應是否有效
         if not response:
             return "Translation failed: Invalid response format"
-        
-        # 處理 Ollama 回應（LangChain AIMessage）
-        if hasattr(response, 'content'):
-            english_text = response.content.strip()
-            if english_text:
-                return english_text
+
+        # 處理 AI 回應（支援 Ollama 和 Gemini）
+        try:
+            if hasattr(response, 'content') and response.content:
+                english_text = str(response.content).strip()
+            elif hasattr(response, 'text'):
+                # 處理Gemini回應
+                if callable(response.text):
+                    english_text = str(response.text()).strip()
+                else:
+                    english_text = str(response.text).strip()
             else:
-                return "Translation failed: Empty response"
+                english_text = str(response).strip()
+        except Exception as e:
+            logger.error(f"處理翻譯回應時出錯: {e}")
+            return "Translation failed: Response processing error"
+
+        if english_text:
+            return english_text
         else:
+            return "Translation failed: Empty response"
             # 嘗試其他方式提取文字
             english_text = str(response).strip()
             if english_text:
@@ -679,9 +710,88 @@ def get_or_create_session(user_email: str, question: str) -> dict:
     
     return learning_sessions[session_key]
 
-def build_initial_prompt(question: str, user_answer: str, correct_answer: str, grading_feedback: dict = None) -> str:
+def get_student_learning_context(user_email: str, question: str) -> dict:
+    """
+    獲取學生的學習上下文資訊
+    包括學習分析、歷史記錄、弱點分析等
+    """
+    try:
+        context = {
+            'learning_analytics': {},
+            'historical_performance': {},
+            'weakness_analysis': {},
+            'recent_activities': []
+        }
+
+        # 嘗試從學習分析模組獲取資料
+        try:
+            from ..learning_analytics import get_student_quiz_records, get_concept_name_by_id
+            quiz_records = get_student_quiz_records(user_email)
+
+            if quiz_records:
+                # 計算整體統計
+                total_attempts = len(quiz_records)
+                correct_attempts = sum(1 for record in quiz_records if record.get('is_correct', False))
+                recent_records = quiz_records[:10]  # 最近10次
+                recent_correct = sum(1 for record in recent_records if record.get('is_correct', False))
+
+                context['learning_analytics'] = {
+                    'total_attempts': total_attempts,
+                    'overall_accuracy': correct_attempts / total_attempts if total_attempts > 0 else 0,
+                    'recent_accuracy': recent_correct / len(recent_records) if recent_records else 0,
+                    'recent_attempts': len(recent_records)
+                }
+        except Exception as e:
+            logger.warning(f"無法獲取學習分析資料: {e}")
+
+        # 嘗試獲取相關概念的歷史表現
+        try:
+            # 基於問題內容嘗試推斷相關概念
+            # 這裡簡化處理，可以根據實際需要擴展
+            context['historical_performance'] = {
+                'recent_accuracy': f"{context['learning_analytics'].get('recent_accuracy', 0):.1%}",
+                'common_mistakes': ['概念理解不夠深入', '計算過程有誤', '邏輯推理不足'],  # 預設常見錯誤
+                'improvement_trend': '持續學習中'
+            }
+        except Exception as e:
+            logger.warning(f"無法獲取歷史表現資料: {e}")
+
+        # 弱點分析 - 基於答題記錄分析
+        try:
+            analytics = context['learning_analytics']
+            if analytics.get('recent_accuracy', 0) < 0.6:  # 準確率低於60%
+                context['weakness_analysis'] = {
+                    'weak_concepts': ['基礎概念理解', '問題分析能力', '解題技巧'],
+                    'improvement_suggestions': [
+                        '建議多做練習題來鞏固基礎',
+                        '可以請求AI導師的詳細講解',
+                        '參考教材重新學習相關概念'
+                    ],
+                    'performance_level': '需要加強' if analytics.get('recent_accuracy', 0) < 0.4 else '進步空間大'
+                }
+            else:
+                context['weakness_analysis'] = {
+                    'weak_concepts': [],
+                    'improvement_suggestions': ['繼續保持良好的學習習慣'],
+                    'performance_level': '表現良好'
+                }
+        except Exception as e:
+            logger.warning(f"無法獲取弱點分析資料: {e}")
+
+        return context
+
+    except Exception as e:
+        logger.error(f"獲取學生學習上下文失敗: {e}")
+        return {
+            'learning_analytics': {},
+            'historical_performance': {},
+            'weakness_analysis': {},
+            'recent_activities': []
+        }
+
+def build_initial_prompt(question: str, user_answer: str, correct_answer: str, grading_feedback: dict = None, learning_context: dict = None) -> str:
     """構建初始化提示詞"""
-    
+
     # 如果有AI批改的評分反饋，加入提示詞中
     feedback_section = ""
     if grading_feedback:
@@ -693,12 +803,39 @@ def build_initial_prompt(question: str, user_answer: str, correct_answer: str, g
 - 學習建議：{grading_feedback.get('suggestions', '無')}
 - 評分說明：{grading_feedback.get('explanation', '無')}
 """
-    
+
+    # 添加學習上下文資訊
+    context_section = ""
+    if learning_context:
+        analytics = learning_context.get('learning_analytics', {})
+        weakness = learning_context.get('weakness_analysis', {})
+
+        if analytics.get('attention_items') or weakness.get('weak_concepts'):
+            context_section = f"""
+
+**學生的學習背景資訊（請參考制定教學策略）：**
+"""
+
+            # 弱點概念
+            if weakness.get('weak_concepts'):
+                weak_list = weakness['weak_concepts'][:3]  # 只顯示前3個
+                context_section += f"- 學生較弱的概念：{', '.join(weak_list)}\n"
+
+            # 學習分析
+            if analytics.get('weak_domains'):
+                weak_domains = analytics['weak_domains'][:2]  # 只顯示前2個
+                context_section += f"- 需要關注的領域：{', '.join(weak_domains)}\n"
+
+            # 改進建議
+            if analytics.get('improvement_items'):
+                improvement = analytics['improvement_items'][:2]  # 只顯示前2個
+                context_section += "- 整體學習建議：" + "；".join([item.get('suggestion', '') for item in improvement if item.get('suggestion')]) + "\n"
+
     return f"""{TEACHER_STYLE}
 
 **題目：** {question}
 **學生答案：** {user_answer}
-**正確答案：** {correct_answer}{feedback_section}
+**正確答案：** {correct_answer}{feedback_section}{context_section}
 
 請分析學生的答案，找出需要改進的地方，並提出一個具體的引導問題來開始教學。
 
@@ -707,13 +844,14 @@ def build_initial_prompt(question: str, user_answer: str, correct_answer: str, g
 **回應要求：**
 - 語氣親切自然，如同真正的老師
 - 分析學生答案的優缺點（可參考AI批改反饋）
+- 根據學生的學習背景制定個性化教學策略
 - 提出具體的引導問題
 - 不要給出評分（初始化階段）
 - 絕對不要包含「評分：」字樣
 
 請現在生成開場白："""
 
-def build_followup_prompt(question: str, user_answer: str, correct_answer: str, user_input: str, conversation_history: list, grading_feedback: dict = None) -> str:
+def build_followup_prompt(question: str, user_answer: str, correct_answer: str, user_input: str, conversation_history: list, grading_feedback: dict = None, learning_context: dict = None) -> str:
     """構建後續對話提示詞"""
     # 獲取當前學習階段指導
     current_stage = 'core_concept_confirmation'  # 預設值
@@ -744,6 +882,8 @@ def build_followup_prompt(question: str, user_answer: str, correct_answer: str, 
     
     return f"""{TEACHER_STYLE}
 
+**⚠️ 重要：你必須在回應的最後一行給出評分，格式為「評分：XX分」，這是系統運作的必要條件！**
+
 **題目：** {question}
 **正確答案：** {correct_answer}
 **學生最新回答：** {user_input}{feedback_section}
@@ -763,10 +903,14 @@ def build_followup_prompt(question: str, user_answer: str, correct_answer: str, 
 4. **給出評分**：根據學生回答質量給予適當分數
 
 **重要要求：**
+- **絕對不要重複問學生已經回答過的問題**
+- **仔細閱讀對話歷史，確保不會重複提問**
+- 如果學生已經回答過某個問題，直接基於學生的回答進行下一步教學
 - 不要重複問學生「你知道嗎？」或「你覺得呢？」
 - 如果學生回答錯誤，直接給出正確答案
 - 避免陷入循環提問
 - 每次都要給出評分
+- **如果對話歷史中已經有相關問題和回答，請直接使用該信息，不要再次提問**
 
 **評分邏輯：**
 1. 第一個問題：根據學生回答質量，給予0-95分的基礎評分
@@ -799,7 +943,13 @@ def build_followup_prompt(question: str, user_answer: str, correct_answer: str, 
 - 必須使用中文冒號「：」和「分」字
 - 這是系統運作的必要條件，**絕對不能省略！**
 
-請現在分析學生的回答並提供教學指導："""
+**⚠️ 最終提醒：**
+你的回應格式必須是：
+[教學內容]
+
+評分：[0-100之間的數字]分
+
+請現在分析學生的回答並提供教學指導，記住：回應的最後一行必須是「評分：XX分」格式！"""
 
 def format_conversation_history(conversation_history: list) -> str:
     """格式化對話歷史"""
@@ -1006,22 +1156,49 @@ def init_vector_database():
         return None, None
 
 
-def call_gemini_api(prompt: str, ai_type: str = 'ollama') -> str:
+def call_gemini_api(prompt: str, ai_type: str = 'gemini', conversation_history: list = None) -> str:
     """
     調用 AI API（預設使用 Ollama，可選擇 Gemini）
     
     Args:
         prompt: 提示詞
-        ai_type: 'ollama' (預設) 或 'gemini'
+        ai_type: 'gemini' (預設) 或 'ollama'
+        conversation_history: 對話歷史列表（可選），格式：[{'role': 'user', 'content': '...'}, ...]
     """
     try:
-        # 預設使用 Ollama
-        if ai_type == 'ollama':
-            model = init_ollama(model_name='qwen2.5:14b')
-            if not model:
-                return "抱歉，Ollama 服務暫時不可用，請稍後再試。"
-            # 使用 LangChain 的 invoke 方法
-            response = model.invoke(prompt)
+        # 使用指定的AI類型
+        model = init_ai(ai_type=ai_type)
+        if not model:
+            return f"抱歉，{ai_type.upper()} 服務暫時不可用，請稍後再試。"
+            
+            # 如果有對話歷史，構建消息列表；否則使用單一提示詞
+            if conversation_history and len(conversation_history) > 0:
+                # 將對話歷史轉換為 Ollama 格式
+                messages = []
+                for msg in conversation_history:
+                    role = msg.get('role', 'user')
+                    content = msg.get('content', '')
+                    # 轉換角色名稱
+                    if role == 'user':
+                        ollama_role = 'user'
+                    elif role == 'assistant':
+                        ollama_role = 'assistant'
+                    else:
+                        ollama_role = 'user'
+                    messages.append({
+                        'role': ollama_role,
+                        'content': content
+                    })
+                # 添加當前提示詞作為最後一條用戶消息
+                messages.append({
+                    'role': 'user',
+                    'content': prompt
+                })
+                # 使用消息列表調用
+                response = model.invoke(messages)
+            else:
+                # 使用 LangChain 的 invoke 方法
+                response = model.invoke(prompt)
         else:
             # 使用 Gemini
             model = init_gemini(model_name='gemini-2.5-flash')

@@ -10,8 +10,8 @@ class AnswerGrader:
     
     def __init__(self):
         # 初始化Gemini API
-        # 預設使用 Ollama
-        self.model = init_ai(ai_type='ollama')
+        # 使用 Gemini
+        self.model = init_ai(ai_type='gemini')
     
     def batch_grade_ai_questions(self, questions_data: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """批量評分AI題目 - 並行處理版本"""
@@ -218,8 +218,8 @@ class AnswerGrader:
             # 使用指定的API金鑰索引
             api_key = self._get_api_key_by_index(api_key_index)
             # 使用 accessories 中的 init_gemini 函數
-            # 預設使用 Ollama
-            model = init_ai(ai_type='ollama')
+            # 使用 Gemini
+            model = init_ai(ai_type='gemini')
             return model
         except Exception as e:
             print(f"❌ 創建批次模型失敗: {e}")

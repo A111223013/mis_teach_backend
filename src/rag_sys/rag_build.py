@@ -59,8 +59,8 @@ class RAGBuilder:
             
             # 配置 Gemini API
             try:
-                # 預設使用 Ollama
-                self.gemini_model = init_ai(ai_type='ollama')
+                # 使用 Gemini
+                self.gemini_model = init_ai(ai_type='gemini')
                 print("✅ Gemini API 配置成功")
             except Exception as e:
                 print(f"❌ Gemini API 配置失敗: {e}")
@@ -110,8 +110,8 @@ class RAGBuilder:
             請確保返回有效的 JSON 格式。
             """
             
-            # 預設使用 Ollama
-            model = init_ai(ai_type='ollama')
+            # 使用 Gemini
+            model = init_ai(ai_type='gemini')
             response = model.invoke(prompt)
             
             # 檢查回應是否有效（Ollama 使用 content 屬性）

@@ -17,14 +17,14 @@ sys.path.insert(0, str(backend_dir))
 
 from tool.api_keys import MultiGroupAPIKeyManager, get_available_groups
 
-def test_single_api_key(api_key: str, test_prompt: str = "Hello, this is a test.") -> Dict[str, Any]:
-    """測試單個 API key"""
+def test_single_api_key(api_key: str, model_name: str = "gemini-2.5-flash", test_prompt: str = "Hello, this is a test.") -> Dict[str, Any]:
+    """測試單個 API key，支援指定模型"""
     try:
         # 配置 API key
         genai.configure(api_key=api_key)
         
         # 創建模型
-        model = genai.GenerativeModel('gemini-2.0-flash')
+        model = genai.GenerativeModel(model_name)
         
         # 發送測試請求
         start_time = time.time()
@@ -35,6 +35,7 @@ def test_single_api_key(api_key: str, test_prompt: str = "Hello, this is a test.
         
         return {
             'status': 'success',
+            'model': model_name,
             'response_time': response_time,
             'response_text': response.text[:100] if hasattr(response, 'text') else str(response)[:100],
             'error': None
@@ -45,15 +46,35 @@ def test_single_api_key(api_key: str, test_prompt: str = "Hello, this is a test.
         
         # 檢查是否是額度問題
         if 'quota' in error_msg.lower() or '429' in error_msg:
+            # 檢查是否是 limit: 0 的情況
+            if 'limit: 0' in error_msg:
+                return {
+                    'status': 'quota_zero',
+                    'model': model_name,
+                    'response_time': None,
+                    'response_text': None,
+                    'error': error_msg
+                }
+            else:
+                return {
+                    'status': 'quota_exceeded',
+                    'model': model_name,
+                    'response_time': None,
+                    'response_text': None,
+                    'error': error_msg
+                }
+        elif 'invalid' in error_msg.lower() or '401' in error_msg:
             return {
-                'status': 'quota_exceeded',
+                'status': 'invalid_key',
+                'model': model_name,
                 'response_time': None,
                 'response_text': None,
                 'error': error_msg
             }
-        elif 'invalid' in error_msg.lower() or '401' in error_msg:
+        elif '404' in error_msg or 'not found' in error_msg.lower():
             return {
-                'status': 'invalid_key',
+                'status': 'model_not_found',
+                'model': model_name,
                 'response_time': None,
                 'response_text': None,
                 'error': error_msg
@@ -61,13 +82,19 @@ def test_single_api_key(api_key: str, test_prompt: str = "Hello, this is a test.
         else:
             return {
                 'status': 'error',
+                'model': model_name,
                 'response_time': None,
                 'response_text': None,
                 'error': error_msg
             }
 
-def test_api_group(group_name: str, test_prompt: str = "Hello, this is a test.") -> Dict[str, Any]:
-    """測試指定API密鑰組的所有密鑰"""
+def test_api_group(group_name: str, model_names: List[str] = None, test_prompt: str = "Hello, this is a test.") -> Dict[str, Any]:
+    """測試指定API密鑰組的所有密鑰，支援測試多個模型"""
+    if model_names is None:
+        # 預設測試多個模型，優先使用有免費配額的模型
+        # 根據診斷結果，gemini-2.5-flash 通常可用
+        model_names = ["gemini-2.5-flash", "gemini-1.5-flash", "gemini-1.5-pro", "gemini-2.0-flash"]
+    
     print(f"🔍 測試API密鑰組: {group_name}")
     print("-" * 60)
     
@@ -88,6 +115,7 @@ def test_api_group(group_name: str, test_prompt: str = "Hello, this is a test.")
         }
     
     print(f"📊 找到 {len(api_keys)} 個 API keys")
+    print(f"🤖 將測試以下模型: {', '.join(model_names)}")
     print()
     
     results = []
@@ -96,22 +124,36 @@ def test_api_group(group_name: str, test_prompt: str = "Hello, this is a test.")
         masked_key = f"{api_key[:8]}...{api_key[-4:]}"
         print(f"🧪 測試 API key {i}/{len(api_keys)}: {masked_key}")
         
-        result = test_single_api_key(api_key, test_prompt)
-        result['key_index'] = i
-        result['masked_key'] = masked_key
-        result['full_key'] = api_key
-        results.append(result)
+        # 嘗試每個模型，找到第一個可用的
+        key_success = False
+        for model_name in model_names:
+            print(f"   🔄 嘗試模型: {model_name}")
+            result = test_single_api_key(api_key, model_name, test_prompt)
+            result['key_index'] = i
+            result['masked_key'] = masked_key
+            result['full_key'] = api_key
+            results.append(result)
+            
+            # 顯示結果
+            if result['status'] == 'success':
+                print(f"   ✅ 成功 (模型: {model_name}) - 回應時間: {result['response_time']:.2f}s")
+                print(f"   📝 回應: {result['response_text']}")
+                key_success = True
+                break  # 找到可用模型就停止測試其他模型
+            elif result['status'] == 'quota_zero':
+                print(f"   ⚠️  模型 {model_name} 免費配額為 0（可能需要啟用計費或使用其他模型）")
+            elif result['status'] == 'quota_exceeded':
+                print(f"   ❌ 額度超限 (模型: {model_name})")
+            elif result['status'] == 'model_not_found':
+                print(f"   ⚠️  模型 {model_name} 不存在或在此 API 版本中不可用")
+            elif result['status'] == 'invalid_key':
+                print(f"   ⚠️  無效密鑰 (模型: {model_name})")
+                break  # 無效密鑰不需要測試其他模型
+            else:
+                print(f"   ❌ 其他錯誤 (模型: {model_name}): {result['error'][:100]}")
         
-        # 顯示結果
-        if result['status'] == 'success':
-            print(f"   ✅ 成功 - 回應時間: {result['response_time']:.2f}s")
-            print(f"   📝 回應: {result['response_text']}")
-        elif result['status'] == 'quota_exceeded':
-            print(f"   ❌ 額度超限 - {result['error']}")
-        elif result['status'] == 'invalid_key':
-            print(f"   ⚠️  無效密鑰 - {result['error']}")
-        else:
-            print(f"   ❌ 其他錯誤 - {result['error']}")
+        if not key_success:
+            print(f"   ⚠️  此 API key 在所有測試的模型中均無法使用")
         
         print()
         
@@ -120,9 +162,10 @@ def test_api_group(group_name: str, test_prompt: str = "Hello, this is a test.")
     
     # 統計結果
     success_count = sum(1 for r in results if r['status'] == 'success')
-    quota_exceeded_count = sum(1 for r in results if r['status'] == 'quota_exceeded')
+    quota_exceeded_count = sum(1 for r in results if r['status'] in ['quota_exceeded', 'quota_zero'])
     invalid_count = sum(1 for r in results if r['status'] == 'invalid_key')
-    error_count = sum(1 for r in results if r['status'] == 'error')
+    model_not_found_count = sum(1 for r in results if r['status'] == 'model_not_found')
+    error_count = sum(1 for r in results if r['status'] == 'error' and r['status'] != 'model_not_found')
     
     group_result = {
         'group_name': group_name,
@@ -130,6 +173,7 @@ def test_api_group(group_name: str, test_prompt: str = "Hello, this is a test.")
         'success_count': success_count,
         'quota_exceeded_count': quota_exceeded_count,
         'invalid_count': invalid_count,
+        'model_not_found_count': model_not_found_count,
         'error_count': error_count,
         'results': results
     }
@@ -138,14 +182,15 @@ def test_api_group(group_name: str, test_prompt: str = "Hello, this is a test.")
     print(f"📊 {group_name} 測試結果總結:")
     print(f"   ✅ 正常可用: {success_count} 個")
     print(f"   ❌ 額度超限: {quota_exceeded_count} 個")
+    print(f"   ⚠️  模型不存在: {model_not_found_count} 個")
     print(f"   ⚠️  無效密鑰: {invalid_count} 個")
     print(f"   ❌ 其他錯誤: {error_count} 個")
     print()
     
     return group_result
 
-def test_all_api_groups(test_prompt: str = "Hello, this is a test.") -> List[Dict[str, Any]]:
-    """測試所有API密鑰組"""
+def test_all_api_groups(model_names: List[str] = None, test_prompt: str = "Hello, this is a test.") -> List[Dict[str, Any]]:
+    """測試所有API密鑰組，支援指定模型列表"""
     print("🔍 開始測試所有API密鑰組...")
     print("=" * 80)
     
@@ -162,7 +207,7 @@ def test_all_api_groups(test_prompt: str = "Hello, this is a test.") -> List[Dic
     all_results = []
     
     for group in groups:
-        group_result = test_api_group(group, test_prompt)
+        group_result = test_api_group(group, model_names, test_prompt)
         all_results.append(group_result)
         print("=" * 80)
     
@@ -175,6 +220,7 @@ def test_all_api_groups(test_prompt: str = "Hello, this is a test.") -> List[Dic
     total_success = sum(r['success_count'] for r in all_results)
     total_quota_exceeded = sum(r['quota_exceeded_count'] for r in all_results)
     total_invalid = sum(r['invalid_count'] for r in all_results)
+    total_model_not_found = sum(r.get('model_not_found_count', 0) for r in all_results)
     total_error = sum(r['error_count'] for r in all_results)
     
     print(f"📊 總體統計:")
@@ -182,6 +228,7 @@ def test_all_api_groups(test_prompt: str = "Hello, this is a test.") -> List[Dic
     print(f"   🔐 總密鑰數量: {total_keys}")
     print(f"   ✅ 正常可用: {total_success} 個")
     print(f"   ❌ 額度超限: {total_quota_exceeded} 個")
+    print(f"   ⚠️  模型不存在: {total_model_not_found} 個")
     print(f"   ⚠️  無效密鑰: {total_invalid} 個")
     print(f"   ❌ 其他錯誤: {total_error} 個")
     print()

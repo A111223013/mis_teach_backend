@@ -461,6 +461,50 @@ def get_knowledge_structure():
         logger.error(f"獲取知識結構失敗: {str(e)}")
         return {'domains': [], 'blocks': [], 'concepts': []}
 
+# 清理舊格式AI診斷快取的工具函數
+def cleanup_old_ai_diagnosis_cache():
+    """清理舊格式的AI診斷快取鍵"""
+    try:
+        # 掃描所有舊格式的快取鍵
+        pattern = "learning_analytics:ai_diagnosis:*:*:*"
+        keys_to_delete = []
+
+        # 使用SCAN命令分批掃描，避免記憶體問題
+        cursor = 0
+        while True:
+            cursor, keys = redis_client.scan(cursor, pattern, count=1000)
+            for key in keys:
+                # 檢查是否是舊格式（不包含hash）
+                key_str = key.decode('utf-8') if isinstance(key, bytes) else key
+                parts = key_str.split(':')
+                if len(parts) >= 5:  # learning_analytics:ai_diagnosis:user_email:concept_id:concept_name
+                    concept_name_part = ':'.join(parts[4:])
+                    # 如果不像是hash（hash是16位十六進制），就視為舊格式
+                    if not (len(concept_name_part) == 16 and all(c in '0123456789abcdef' for c in concept_name_part.lower())):
+                        keys_to_delete.append(key_str)
+
+            if cursor == 0:
+                break
+
+        # 刪除舊鍵
+        if keys_to_delete:
+            deleted_count = redis_client.delete(*keys_to_delete)
+            logger.info(f"已清理 {deleted_count} 個舊格式AI診斷快取鍵")
+            return {'success': True, 'deleted_count': deleted_count}
+        else:
+            logger.info("沒有找到舊格式AI診斷快取鍵")
+            return {'success': True, 'deleted_count': 0}
+
+    except Exception as e:
+        logger.error(f"清理舊格式AI診斷快取失敗: {str(e)}")
+        return {'success': False, 'error': str(e)}
+
+@analytics_bp.route('/cleanup-ai-cache', methods=['POST'])
+def cleanup_ai_cache():
+    """清理舊格式AI診斷快取的管理API"""
+    result = cleanup_old_ai_diagnosis_cache()
+    return jsonify(result)
+
 # 已移除 /overview API - 功能已整合到 /init-data
 @analytics_bp.route('/ai-diagnosis', methods=['POST', 'OPTIONS'])
 def ai_diagnosis():
@@ -489,22 +533,31 @@ def ai_diagnosis():
             return jsonify({'error': '無法獲取用戶信息'}), 401
         
         # 檢查Redis快取
-        # 使用標準化的快取鍵格式：learning_analytics:ai_diagnosis:{user_email}:{concept_id}:{concept_name}
-        # 確保每個知識點都有獨立的快取，與前端存儲命名保持一致
-        cache_key = f"learning_analytics:ai_diagnosis:{user_email}:{concept_id}:{concept_name}"
+        # 使用標準化的快取鍵格式：learning_analytics:ai_diagnosis:{user_email}:{concept_id}:{concept_name_hash}
+        # 對concept_name進行hash處理，避免特殊字符導致快取鍵衝突
+        import hashlib
+        concept_name_hash = hashlib.md5(concept_name.encode('utf-8')).hexdigest()[:16]
+        cache_key = f"learning_analytics:ai_diagnosis:{user_email}:{concept_id}:{concept_name_hash}"
+
+        # 同時檢查舊格式的快取鍵（向後相容），如果存在則刪除並重新生成
+        old_cache_key = f"learning_analytics:ai_diagnosis:{user_email}:{concept_id}:{concept_name}"
+        if redis_client.exists(old_cache_key):
+            logger.info(f"🧹 發現舊格式快取鍵，正在清理: {old_cache_key}")
+            redis_client.delete(old_cache_key)
+
         cached_data = redis_client.get(cache_key)
         if cached_data:
             # 檢查鍵是否還有過期時間（避免使用已過期的快取）
             ttl = redis_client.ttl(cache_key)
             if ttl > 0:
-                logger.info(f"✅ 使用AI診斷快取: {cache_key} (剩餘 {ttl} 秒) - 跳過所有查詢")
+                logger.info(f"✅ 使用AI診斷快取: {cache_key} (剩餘 {ttl} 秒，概念: {concept_name}) - 跳過所有查詢")
                 return json.loads(cached_data)
             else:
                 # 如果鍵存在但已過期，刪除它（Redis 會自動刪除，但我們明確刪除以確保）
                 redis_client.delete(cache_key)
                 logger.info(f"⏰ AI診斷快取已過期，刪除: {cache_key}")
         else:
-            logger.info(f"❌ AI診斷快取不存在: {cache_key} - 將執行查詢")
+            logger.info(f"❌ AI診斷快取不存在: {cache_key} (概念: {concept_name}) - 將執行查詢")
         
         # 只有在快取不存在時才執行以下查詢
         logger.info(f"🔄 開始執行AI診斷查詢流程...")
@@ -1683,12 +1736,27 @@ def get_learning_analysis_for_linebot(line_id: str) -> str:
 def generate_ai_coach_analysis(overview_data: Dict, domains: List[Dict], quiz_records: List[Dict], user_email: str = None) -> Dict[str, Any]:
     """生成AI教練分析（使用Redis快取）"""
     try:
-        # 生成快取鍵
+        # 生成快取鍵 - 添加版本號以強制刷新舊快取
         # 使用標準化的快取鍵格式：learning_analytics:ai_coach_analysis:{user_email}:{total_attempts}:{total_mastery}
         # 與前端存儲命名保持一致
         total_attempts = overview_data.get('total_attempts', 0)
         total_mastery = overview_data.get('total_mastery', 0)
-        cache_key = f"learning_analytics:ai_coach_analysis:{user_email or 'anonymous'}:{total_attempts}:{total_mastery:.2f}"
+        # 添加版本號 v3 以強制刷新舊的錯誤快取
+        cache_key = f"learning_analytics:ai_coach_analysis:v3:{user_email or 'anonymous'}:{total_attempts}:{total_mastery:.2f}"
+
+        # 清理舊版本的快取鍵
+        try:
+            old_patterns = [
+                f"learning_analytics:ai_coach_analysis:{user_email or 'anonymous'}:*",
+                f"learning_analytics:ai_coach_analysis:v2:{user_email or 'anonymous'}:*"
+            ]
+            for pattern in old_patterns:
+                old_keys = redis_client.keys(pattern)
+                if old_keys:
+                    redis_client.delete(*old_keys)
+                    logger.info(f"🧹 清理舊版本快取鍵 {len(old_keys)} 個: {pattern}")
+        except Exception as e:
+            logger.warning(f"清理舊快取鍵失敗: {e}")
         
         # 檢查Redis快取
         cached_data = redis_client.get(cache_key)
@@ -1697,7 +1765,15 @@ def generate_ai_coach_analysis(overview_data: Dict, domains: List[Dict], quiz_re
             ttl = redis_client.ttl(cache_key)
             if ttl > 0:
                 logger.info(f"✅ 使用AI教練分析快取: {cache_key} (剩餘 {ttl} 秒) - 跳過所有查詢")
-                return json.loads(cached_data)
+                cached_result = json.loads(cached_data)
+
+                # 檢查快取數據是否為舊格式（包含雜訊）
+                analysis_text = cached_result.get('analysis', '')
+                if analysis_text.startswith('response: GenerateContentResponse(') or 'GenerateContentResponse(' in analysis_text:
+                    logger.warning(f"⚠️ 檢測到舊格式快取數據，刪除並重新生成: {cache_key}")
+                    redis_client.delete(cache_key)
+                else:
+                    return cached_result
             else:
                 # 如果鍵存在但已過期，刪除它
                 redis_client.delete(cache_key)
@@ -1710,17 +1786,25 @@ def generate_ai_coach_analysis(overview_data: Dict, domains: List[Dict], quiz_re
         
         # 初始化Gemini模型
         # 預設使用 Ollama
-        model = init_ai(ai_type='ollama')
+        model = init_ai(ai_type='gemini')
         
         # 準備分析數據
         total_attempts = overview_data.get('total_attempts', 0)
         total_mastery = overview_data.get('total_mastery', 0)
         learning_velocity = overview_data.get('learning_velocity', 0)
         retention_rate = overview_data.get('retention_rate', 0)
-        
+
+        # 調整分析邏輯：對於答題數少的學生，不要給予負面評價
+        is_new_learner = total_attempts < 10  # 少於10題視為新學習者
+        is_beginner = total_attempts < 50     # 少於50題視為初學者
+
+        # 動態調整門檻值
+        weak_threshold = 0.5 if is_new_learner else 0.3  # 新學習者放寬標準
+        strong_threshold = 0.6 if is_new_learner else 0.7 # 新學習者降低標準
+
         # 找出需要關注的領域
-        weak_domains = [d for d in domains if d.get('mastery', 0) < 0.3 and d.get('questionCount', 0) > 0]
-        strong_domains = [d for d in domains if d.get('mastery', 0) > 0.7 and d.get('questionCount', 0) > 0]
+        weak_domains = [d for d in domains if d.get('mastery', 0) < weak_threshold and d.get('questionCount', 0) > 0]
+        strong_domains = [d for d in domains if d.get('mastery', 0) > strong_threshold and d.get('questionCount', 0) > 0]
         
         # 分析遺忘情況
         forgetting_analysis = []
@@ -1734,9 +1818,11 @@ def generate_ai_coach_analysis(overview_data: Dict, domains: List[Dict], quiz_re
                         'mastery': fa['current_mastery']
                     })
         
-        # 構建Gemini提示詞
+        # 構建Gemini提示詞 - 根據學習階段調整分析
+        learner_stage = "新學習者" if is_new_learner else ("初學者" if is_beginner else "進階學習者")
+
         prompt = f"""
-你是學習分析AI教練。請基於以下學習數據生成簡潔的學習建議（不超過50字）：
+你是學習分析AI教練。請根據學生的學習階段({learner_stage})生成鼓勵性、建設性的學習建議：
 
 學習數據：
 - 總答題數：{total_attempts}
@@ -1753,18 +1839,92 @@ def generate_ai_coach_analysis(overview_data: Dict, domains: List[Dict], quiz_re
 遺忘提醒：
 {', '.join([f"{fa['name']}已{fa['days']}天未複習" for fa in forgetting_analysis[:3]]) if forgetting_analysis else '無'}
 
-請生成：
-1. 簡潔的學習狀況總結
-2. 具體的學習建議
-3. 需要重點關注的領域
-4. 請使用繁體中文回答
+學習階段分析：
+- 新學習者(答題<10)：鼓勵探索，重點建立基礎
+- 初學者(答題10-50)：引導深入，培養學習習慣
+- 進階學習者(答題>50)：精進技能，突破瓶頸
 
-格式：直接輸出文字，不要使用markdown格式。
+請生成適合{learner_stage}階段的學習分析（控制在60字以內）：
+
+1. **學習狀況評估**：考慮學習階段的客觀描述
+2. **具體建議**：階段適配的可操作建議
+3. **重點關注**：階段相關的優先領域
+
+要求：
+- 根據學習階段調整期待值和建議
+- 使用正面的、鼓勵性的語氣
+- 基於數據給出具體建議
+- 使用繁體中文回答
+
+格式：學習狀況：[描述]
+建議：[具體建議]
+重點關注：[領域]
 """
 
         # 調用 AI API（預設使用 Ollama）
         response = model.invoke(prompt)
-        ai_analysis = response.content.strip() if hasattr(response, 'content') else str(response).strip()
+
+        # 解析 AI 響應 - 處理不同模型的響應格式
+        logger.info(f"AI 響應類型: {type(response)}")
+        logger.info(f"AI 響應屬性: {[attr for attr in dir(response) if not attr.startswith('_')]}")
+
+        # 首先嘗試 Gemini 格式（因為我們知道使用的是 Gemini）
+        try:
+            logger.info("嘗試 Gemini 格式解析")
+            if hasattr(response, 'result'):
+                logger.info("有 result 屬性")
+                result = response.result
+                if hasattr(result, 'candidates'):
+                    logger.info("有 candidates 屬性")
+                    candidates = result.candidates
+                    logger.info(f"候選數量: {len(candidates) if candidates else 0}")
+                    if candidates and len(candidates) > 0:
+                        candidate = candidates[0]
+                        if hasattr(candidate, 'content'):
+                            logger.info("有 content 屬性")
+                            content = candidate.content
+                            if hasattr(content, 'parts') and content.parts:
+                                logger.info(f"Parts 數量: {len(content.parts)}")
+                                if len(content.parts) > 0 and hasattr(content.parts[0], 'text'):
+                                    ai_analysis = content.parts[0].text.strip()
+                                    logger.info(f"✅ 成功解析 Gemini 文本: {ai_analysis[:50]}...")
+                                else:
+                                    logger.error("Parts[0] 沒有 text 屬性")
+                                    ai_analysis = "AI 分析格式異常"
+                            else:
+                                logger.error("Content 沒有 parts 屬性")
+                                ai_analysis = "AI 分析格式異常"
+                        else:
+                            logger.error("Candidate 沒有 content 屬性")
+                            ai_analysis = "AI 分析格式異常"
+                    else:
+                        logger.error("沒有候選結果")
+                        ai_analysis = "無法獲取 AI 分析結果"
+                else:
+                    logger.error("Result 沒有 candidates 屬性")
+                    ai_analysis = "AI 分析格式異常"
+            else:
+                logger.error("響應沒有 result 屬性")
+                ai_analysis = "AI 分析格式異常"
+        except Exception as e:
+            logger.error(f"Gemini 解析失敗: {e}")
+            ai_analysis = "AI 分析解析失敗"
+
+        # 如果 Gemini 解析失敗，嘗試其他格式
+        if ai_analysis.startswith("AI 分析"):
+            logger.info("Gemini 解析失敗，嘗試其他格式")
+            try:
+                if hasattr(response, 'content'):
+                    ai_analysis = response.content.strip()
+                    logger.info("使用 content 屬性解析")
+                elif hasattr(response, 'text'):
+                    ai_analysis = response.text.strip()
+                    logger.info("使用 text 屬性解析")
+                else:
+                    logger.warning("所有解析方法都失敗")
+            except Exception as e:
+                logger.error(f"最終解析也失敗: {e}")
+                ai_analysis = "AI 分析暫時無法獲取，請稍後再試"
         
         result = {
             'analysis': ai_analysis,
@@ -2289,11 +2449,25 @@ def generate_learning_path_recommendations(concept_id: str, concept_relations: D
 }}
 """
         
-        # 調用Gemini API
-        # 預設使用 Ollama
-        model = init_ai(ai_type='ollama')
-        response = model.generate_content(prompt)
-        ai_response = response.text.strip()
+        # 調用AI API (支援 Ollama 和 Gemini)
+        # 使用 Gemini
+        model = init_ai(ai_type='gemini')
+        response = model.invoke(prompt)
+        # 處理不同類型的回應
+        try:
+            if hasattr(response, 'content') and response.content:
+                ai_response = str(response.content).strip()  # Ollama AIMessage
+            elif hasattr(response, 'text'):
+                # 處理Gemini回應（新版和舊版）
+                if callable(response.text):
+                    ai_response = str(response.text()).strip()  # 新版Gemini callable text
+                else:
+                    ai_response = str(response.text).strip()  # 舊版Gemini direct text
+            else:
+                ai_response = str(response).strip()  # fallback
+        except Exception as e:
+            logger.error(f"處理AI回應時出錯: {e}, 使用fallback")
+            ai_response = str(response).strip()
         
         # 解析AI回應
         import json
@@ -2825,7 +2999,7 @@ def generate_ai_diagnosis(concept_name: str, domain_name: str, mastery: float,
     try:
         # 初始化Gemini模型
         # 預設使用 Ollama
-        model = init_ai(ai_type='ollama')
+        model = init_ai(ai_type='gemini')
         
         # 準備診斷數據
         wrong_count = total_attempts - correct_attempts
@@ -3031,9 +3205,23 @@ def generate_ai_diagnosis(concept_name: str, domain_name: str, mastery: float,
 重要：action字段必須嚴格使用上述4個標準化類型之一，不要使用其他文字。
 """
 
-        # 調用Gemini API
-        response = model.generate_content(prompt)
-        ai_response = response.text.strip()
+        # 調用AI API (支援 Ollama 和 Gemini)
+        response = model.invoke(prompt)
+        # 處理不同類型的回應
+        try:
+            if hasattr(response, 'content') and response.content:
+                ai_response = str(response.content).strip()  # Ollama AIMessage
+            elif hasattr(response, 'text'):
+                # 處理Gemini回應（新版和舊版）
+                if callable(response.text):
+                    ai_response = str(response.text()).strip()  # 新版Gemini callable text
+                else:
+                    ai_response = str(response.text).strip()  # 舊版Gemini direct text
+            else:
+                ai_response = str(response).strip()  # fallback
+        except Exception as e:
+            logger.error(f"處理AI回應時出錯: {e}, 使用fallback")
+            ai_response = str(response).strip()
         
         # 解析JSON響應
         try:
